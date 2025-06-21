@@ -56,42 +56,8 @@ services:
     container_name: auth_api
     ports:
       - "8080:8080"
-    environment:
-      # Database Configuration
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: root
-      DB_NAME: auth_db
-
-      # Redis Configuration
-      REDIS_ADDR: redis:6379
-      REDIS_DB: 0
-
-      # JWT Configuration
-      JWT_SECRET: supersecretjwtkey
-      ACCESS_TOKEN_EXPIRATION_MINUTES: 15
-      REFRESH_TOKEN_EXPIRATION_HOURS: 720
-
-      # Email Configuration (using your existing settings)
-      EMAIL_HOST: mail.horisen.com
-      EMAIL_PORT: 587
-      EMAIL_USERNAME: goran.jovanovic@horisen.com
-      EMAIL_PASSWORD: R2yV_PpDH_Mu5H_MUqA_2GzS
-      EMAIL_FROM: goran.jovanovic@horisen.com
-
-      # Social Auth Configuration (using your existing settings)
-      GOOGLE_CLIENT_ID: 469439062298-gq7njpnv9c7se122arbvfma02s48448v.apps.googleusercontent.com
-      GOOGLE_CLIENT_SECRET: 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
-      GOOGLE_REDIRECT_URL: http://localhost:8080/auth/google/callback
-
-      FACEBOOK_CLIENT_ID: 1944774179266724
-      FACEBOOK_CLIENT_SECRET: e6b0abb161f008077e6d509a8c9a8bb9
-      FACEBOOK_REDIRECT_URL: http://localhost:8080/auth/facebook/callback
-
-      GITHUB_CLIENT_ID: Ov23liESzpSDiICDk8CI
-      GITHUB_CLIENT_SECRET: b44d1697d638210251e4980ce450babeb1e05b54
-      GITHUB_REDIRECT_URL: http://localhost:8080/auth/github/callback
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,0 +1,26 @@
+# Development Dockerfile with Air hot reload
+FROM golang:1.22-alpine
+
+# Install git and Air for hot reload (compatible version)
+RUN apk add --no-cache git
+RUN go install github.com/cosmtrek/air@v1.49.0
+
+# Set the current working directory inside the container
+WORKDIR /app
+
+# Set Go toolchain to local to prevent version conflicts
+ENV GOTOOLCHAIN=local
+ENV GIN_MODE=debug
+
+# Copy go.mod and go.sum files and download dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the source code into the container
+COPY . .
+
+# Expose the port the application runs on
+EXPOSE 8080
+
+# Run Air for hot reload
+CMD ["air"]

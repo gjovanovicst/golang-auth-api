@@ -101,7 +101,7 @@ jobs:
         run: docker save auth-api:${{ github.sha }} | gzip > auth-api.tar.gz
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: docker-image
           path: auth-api.tar.gz
@@ -122,7 +122,7 @@ jobs:
 
       - name: Run Gosec Security Scanner
         run: |
-          go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
           gosec ./...
 
       - name: Run Nancy vulnerability scanner

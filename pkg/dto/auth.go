@@ -42,3 +42,13 @@ type UserResponse struct {
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
 }
+
+// ErrorResponse represents a standard error response
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
+// MessageResponse represents a standard message response
+type MessageResponse struct {
+	Message string `json:"message"`
+}

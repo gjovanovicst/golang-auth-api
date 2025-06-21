@@ -12,6 +12,7 @@ A modern, production-ready Go REST API for authentication and authorization, fea
 - Redis for token/session management
 - Dockerized for local development & deployment
 - Unit & integration tests
+- **Interactive Swagger API documentation**
 
 ## 🗂️ Project Structure
 ```
@@ -21,6 +22,23 @@ pkg/                    # Models, DTOs, errors, JWT helpers
 .env                    # Environment variables
 Dockerfile, docker-compose.yml, dev.sh, dev.bat
 ```
+
+## 📖 API Documentation (Swagger)
+After starting the server, access the interactive API docs at:
+
+- [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)
+
+You can try out all endpoints, including social logins, directly from the browser.
+
+## 🔄 Regenerating Swagger Documentation
+If you make changes to your API routes or annotations, regenerate the Swagger docs with:
+
+```
+swag init -g cmd/api/main.go -o docs
+```
+
+- Requires the [swag CLI](https://github.com/swaggo/swag) (`go install github.com/swaggo/swag/cmd/swag@latest`)
+- This will update the `docs/` folder with the latest API documentation
 
 ## ⚡ Quick Start (Docker)
 1. Clone the repository

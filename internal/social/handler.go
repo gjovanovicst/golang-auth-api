@@ -51,12 +51,30 @@ func NewHandler(s *Service) *Handler {
 	}
 }
 
-// Google OAuth2 Handlers
+// GoogleLogin godoc
+// @Summary      Google OAuth2 Login
+// @Description  Redirects user to Google OAuth2 login page
+// @Tags         social
+// @Produce      json
+// @Success      307 {string} string "Redirect"
+// @Router       /auth/google/login [get]
 func (h *Handler) GoogleLogin(c *gin.Context) {
 	url := h.GoogleOauthConfig.AuthCodeURL("randomstate") // "randomstate" should be a securely generated state token
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
+// GoogleCallback godoc
+// @Summary      Google OAuth2 Callback
+// @Description  Handles Google OAuth2 callback and returns JWT tokens
+// @Tags         social
+// @Produce      json
+// @Param        state query string true "State token"
+// @Param        code  query string true "Authorization code"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /auth/google/callback [get]
 func (h *Handler) GoogleCallback(c *gin.Context) {
 	state := c.Query("state")
 	if state != "randomstate" { // TODO: Validate state token securely
@@ -88,12 +106,30 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	})
 }
 
-// Facebook OAuth2 Handlers
+// FacebookLogin godoc
+// @Summary      Facebook OAuth2 Login
+// @Description  Redirects user to Facebook OAuth2 login page
+// @Tags         social
+// @Produce      json
+// @Success      307 {string} string "Redirect"
+// @Router       /auth/facebook/login [get]
 func (h *Handler) FacebookLogin(c *gin.Context) {
 	url := h.FacebookOauthConfig.AuthCodeURL("randomstate") // TODO: Securely generate state
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
+// FacebookCallback godoc
+// @Summary      Facebook OAuth2 Callback
+// @Description  Handles Facebook OAuth2 callback and returns JWT tokens
+// @Tags         social
+// @Produce      json
+// @Param        state query string true "State token"
+// @Param        code  query string true "Authorization code"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /auth/facebook/callback [get]
 func (h *Handler) FacebookCallback(c *gin.Context) {
 	state := c.Query("state")
 	if state != "randomstate" { // TODO: Validate state token securely
@@ -125,12 +161,30 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 	})
 }
 
-// GitHub OAuth2 Handlers
+// GithubLogin godoc
+// @Summary      GitHub OAuth2 Login
+// @Description  Redirects user to GitHub OAuth2 login page
+// @Tags         social
+// @Produce      json
+// @Success      307 {string} string "Redirect"
+// @Router       /auth/github/login [get]
 func (h *Handler) GithubLogin(c *gin.Context) {
 	url := h.GithubOauthConfig.AuthCodeURL("randomstate") // TODO: Securely generate state
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
+// GithubCallback godoc
+// @Summary      GitHub OAuth2 Callback
+// @Description  Handles GitHub OAuth2 callback and returns JWT tokens
+// @Tags         social
+// @Produce      json
+// @Param        state query string true "State token"
+// @Param        code  query string true "Authorization code"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      401 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /auth/github/callback [get]
 func (h *Handler) GithubCallback(c *gin.Context) {
 	state := c.Query("state")
 	if state != "randomstate" { // TODO: Validate state token securely

@@ -45,6 +45,9 @@ lint:
 build-prod:
 	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/api ./cmd/api
 
+docker-dev:
+	./dev.sh
+
 # Docker build
 docker-build:
 	docker build -t auth-api .

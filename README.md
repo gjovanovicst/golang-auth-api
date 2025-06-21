@@ -80,13 +80,20 @@ If you discover a vulnerability, please open an issue or contact the maintainer 
 
 ## ⚙️ Environment Variables (example)
 ```
-DB_HOST=localhost
+# For Docker Compose:
+DB_HOST=postgres
 DB_PORT=5432
+REDIS_ADDR=redis:6379
+
+# For manual/local run:
+# DB_HOST=localhost
+# DB_PORT=5432
+# REDIS_ADDR=localhost:6379
+
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
-DB_NAME=your_db_name
+DB_NAME=auth_db
 JWT_SECRET=supersecretjwtkey
-REDIS_ADDR=localhost:6379
 EMAIL_HOST=smtp.example.com
 EMAIL_USERNAME=your_email@example.com
 GOOGLE_CLIENT_ID=your_google_client_id

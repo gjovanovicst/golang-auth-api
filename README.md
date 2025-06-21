@@ -54,6 +54,33 @@ swag init -g cmd/api/main.go -o docs
 3. Install [Air](https://github.com/air-verse/air) for hot reload: `go install github.com/air-verse/air@latest`
 4. Run: `air` or `go run cmd/api/main.go`
 
+## 🛠️ Makefile Commands
+
+The following `make` commands are available for development, testing, building, and Docker operations:
+
+| Command                | Description                                                      |
+|------------------------|------------------------------------------------------------------|
+| `make build`           | Build the application binary (`bin/api.exe`).                    |
+| `make run`             | Run the application without hot reload.                          |
+| `make dev`             | Run with hot reload using [Air](https://github.com/air-verse/air).|
+| `make test`            | Run all Go tests with verbose output.                            |
+| `make clean`           | Remove build artifacts and temporary files.                      |
+| `make install-air`     | Install Air for hot reloading.                                   |
+| `make setup`           | Setup development environment (installs Air, tidy/download deps). |
+| `make fmt`             | Format code using `go fmt`.                                      |
+| `make lint`            | Run linter (`golangci-lint`).                                    |
+| `make build-prod`      | Build for production (Linux, static binary).                     |
+| `make docker-dev`      | Run development environment with Docker (`./dev.sh`).             |
+| `make docker-compose-build` | Build Docker images using docker-compose.                  |
+| `make docker-compose-down`  | Stop and remove Docker containers, networks, images, volumes.|
+| `make docker-compose-up`    | Start Docker containers in detached mode with build.        |
+| `make docker-build`         | Build Docker image (`auth-api`).                            |
+| `make docker-run`           | Run Docker container with environment from `.env`.          |
+| `make swag-init`            | Generate Swagger documentation (`docs/`).                   |
+| `make help`                 | Show all available make commands.                           |
+
+> **Tip:** You can also run `make help` to see this list in your terminal.
+
 ## 🔑 API Endpoints (Summary)
 - `POST /register` — Register
 - `POST /login` — Login

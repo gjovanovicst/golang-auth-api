@@ -14,6 +14,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/middleware"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/social"
+	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -66,8 +67,10 @@ func main() {
 	emailService := email.NewService()
 	userService := user.NewService(userRepo, emailService)
 	socialService := social.NewService(userRepo, socialRepo)
+	twofaService := twofa.NewService(userRepo)
 	userHandler := user.NewHandler(userService)
 	socialHandler := social.NewHandler(socialService)
+	twofaHandler := twofa.NewHandler(twofaService)
 
 	// Setup Gin Router
 	r := gin.Default()
@@ -81,6 +84,8 @@ func main() {
 		public.POST("/forgot-password", userHandler.ForgotPassword)
 		public.POST("/reset-password", userHandler.ResetPassword)
 		public.GET("/verify-email", userHandler.VerifyEmail)
+		// 2FA login verification (public because it needs temp token)
+		public.POST("/2fa/login-verify", twofaHandler.VerifyLogin)
 	}
 
 	// Social authentication routes
@@ -103,8 +108,14 @@ func main() {
 	protected := r.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
-		protected.GET("/profile", userHandler.GetProfile) // Example protected route
-		// Add other protected routes here
+		protected.GET("/profile", userHandler.GetProfile)
+
+		// 2FA management routes
+		protected.POST("/2fa/generate", twofaHandler.Generate2FA)
+		protected.POST("/2fa/verify-setup", twofaHandler.VerifySetup)
+		protected.POST("/2fa/enable", twofaHandler.Enable2FA)
+		protected.POST("/2fa/disable", twofaHandler.Disable2FA)
+		protected.POST("/2fa/recovery-codes", twofaHandler.GenerateRecoveryCodes)
 	}
 
 	// Add Swagger UI endpoint

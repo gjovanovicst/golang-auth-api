@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
+	"github.com/go-playground/validator/v10"
 )
 
 type Handler struct {
@@ -55,6 +55,7 @@ func (h *Handler) Register(c *gin.Context) {
 // @Produce json
 // @Param   login  body      dto.LoginRequest  true  "User Login Data"
 // @Success 200 {object}  dto.LoginResponse
+// @Success 202 {object}  dto.TwoFARequiredResponse
 // @Failure 400 {object}  dto.ErrorResponse
 // @Failure 401 {object}  dto.ErrorResponse
 // @Failure 500 {object}  dto.ErrorResponse
@@ -72,15 +73,22 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, err := h.Service.LoginUser(req.Email, req.Password)
+	loginResult, err := h.Service.LoginUser(req.Email, req.Password)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"access_token":  accessToken,
-		"refresh_token": refreshToken,
+	// Check if 2FA is required
+	if loginResult.RequiresTwoFA {
+		c.JSON(http.StatusAccepted, loginResult.TwoFAResponse)
+		return
+	}
+
+	// Standard login response
+	c.JSON(http.StatusOK, dto.LoginResponse{
+		AccessToken:  loginResult.AccessToken,
+		RefreshToken: loginResult.RefreshToken,
 	})
 }
 
@@ -229,6 +237,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		ID:            user.ID.String(),
 		Email:         user.Email,
 		EmailVerified: user.EmailVerified,
+		TwoFAEnabled:  user.TwoFAEnabled,
 		CreatedAt:     user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:     user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	})

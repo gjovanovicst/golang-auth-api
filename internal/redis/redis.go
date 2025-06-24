@@ -106,3 +106,41 @@ func DeletePasswordResetToken(token string) error {
 	key := fmt.Sprintf("password_reset:%s", token)
 	return Rdb.Del(ctx, key).Err()
 }
+
+// 2FA related functions
+
+// SetTempTwoFASecret stores a temporary 2FA secret during setup
+func SetTempTwoFASecret(userID, secret string, expiration time.Duration) error {
+	key := fmt.Sprintf("temp_2fa_secret:%s", userID)
+	return Rdb.Set(ctx, key, secret, expiration).Err()
+}
+
+// GetTempTwoFASecret retrieves a temporary 2FA secret
+func GetTempTwoFASecret(userID string) (string, error) {
+	key := fmt.Sprintf("temp_2fa_secret:%s", userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteTempTwoFASecret deletes a temporary 2FA secret
+func DeleteTempTwoFASecret(userID string) error {
+	key := fmt.Sprintf("temp_2fa_secret:%s", userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// SetTempUserSession stores a temporary user session for 2FA login
+func SetTempUserSession(tempToken, userID string, expiration time.Duration) error {
+	key := fmt.Sprintf("temp_user_session:%s", tempToken)
+	return Rdb.Set(ctx, key, userID, expiration).Err()
+}
+
+// GetTempUserSession retrieves userID from temporary session
+func GetTempUserSession(tempToken string) (string, error) {
+	key := fmt.Sprintf("temp_user_session:%s", tempToken)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteTempUserSession deletes a temporary user session
+func DeleteTempUserSession(tempToken string) error {
+	key := fmt.Sprintf("temp_user_session:%s", tempToken)
+	return Rdb.Del(ctx, key).Err()
+}

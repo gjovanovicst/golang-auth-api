@@ -1,11 +1,12 @@
 # Authentication API
 
-A modern, production-ready Go REST API for authentication and authorization, featuring social login, email verification, JWT, and Redis integration.
+A modern, production-ready Go REST API for authentication and authorization, featuring social login, email verification, JWT, Two-Factor Authentication (2FA), and Redis integration.
 
 ---
 
 ## 🚀 Features
 - Secure user registration & login (JWT access/refresh tokens)
+- **Two-Factor Authentication (2FA) with TOTP and recovery codes**
 - Social login: Google, Facebook, GitHub
 - Email verification & password reset
 - Role-based access control (middleware)
@@ -13,14 +14,50 @@ A modern, production-ready Go REST API for authentication and authorization, fea
 - Dockerized for local development & deployment
 - Unit & integration tests
 - **Interactive Swagger API documentation**
+- Development and production Docker configurations
 
 ## 🗂️ Project Structure
 ```
 cmd/api/main.go         # Entry point
-internal/               # Core logic (auth, user, social, email, middleware, db)
-pkg/                    # Models, DTOs, errors, JWT helpers
-.env                    # Environment variables
-Dockerfile, docker-compose.yml, dev.sh, dev.bat
+internal/               # Core logic
+├── auth/              # Authentication handlers
+├── user/              # User management
+├── social/            # Social authentication (OAuth2)
+├── twofa/             # Two-Factor Authentication
+├── email/             # Email verification & password reset
+├── middleware/        # JWT auth middleware
+├── database/          # Database connection & migrations
+├── redis/             # Redis connection & session management
+├── config/            # Configuration management
+└── util/              # Utility functions
+pkg/                   # Shared packages
+├── models/            # Database models
+├── dto/               # Data Transfer Objects
+├── errors/            # Custom error types
+└── jwt/               # JWT utilities
+docs/                  # API documentation
+├── swagger.json       # Generated Swagger spec
+├── swagger.yaml       # Generated Swagger spec
+├── docs.go            # Generated Swagger docs
+├── README.md          # Documentation overview
+├── ARCHITECTURE.md    # System architecture
+└── API.md             # API reference
+.env                   # Environment variables
+.github/               # GitHub templates and workflows
+├── ISSUE_TEMPLATE/    # Issue templates
+└── workflows/         # CI/CD workflows (if any)
+Dockerfile             # Production Docker image
+Dockerfile.dev         # Development Docker image
+docker-compose.yml     # Production Docker Compose
+docker-compose.dev.yml # Development Docker Compose
+Makefile               # Build and development commands
+test_api.sh            # API testing script
+.air.toml              # Air configuration for hot reload
+dev.sh, dev.bat        # Development startup scripts
+CONTRIBUTING.md        # Contribution guidelines
+CODE_OF_CONDUCT.md     # Code of conduct
+SECURITY.md            # Security policy
+LICENSE                # MIT License
 ```
 
 ## 📖 API Documentation (Swagger)
@@ -28,12 +65,16 @@ After starting the server, access the interactive API docs at:
 
 - [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)
 
-You can try out all endpoints, including social logins, directly from the browser.
+You can try out all endpoints, including social logins and 2FA operations, directly from the browser.
 
 ## 🔄 Regenerating Swagger Documentation
 If you make changes to your API routes or annotations, regenerate the Swagger docs with:
 
+```bash
+make swag-init
 ```
+or
+```bash
 swag init -g cmd/api/main.go -o docs
 ```
 
@@ -47,6 +88,7 @@ swag init -g cmd/api/main.go -o docs
    - Windows: `dev.bat`
    - Linux/Mac: `./dev.sh`
 4. API available at http://localhost:8080
+5. Swagger docs at http://localhost:8080/swagger/index.html
 
 ## 🛠️ Manual Setup
 1. Create PostgreSQL DB & update `.env`
@@ -81,17 +123,36 @@ The following `make` commands are available for development, testing, building, 
 
 > **Tip:** You can also run `make help` to see this list in your terminal.
 
-## 🔑 API Endpoints (Summary)
-- `POST /register` — Register
-- `POST /login` — Login
-- `POST /refresh-token` — Refresh JWT
-- `POST /forgot-password` — Request password reset
-- `POST /reset-password` — Reset password
-- `GET /verify-email` — Email verification
-- Social login: `/auth/{provider}/login` & `/callback`
-- `GET /profile` — User profile (protected)
+## 🔑 API Endpoints
 
-## 📦 API Response Example
+### Authentication
+- `POST /register` — User registration
+- `POST /login` — User login (with 2FA support)
+- `POST /refresh-token` — Refresh JWT tokens
+- `GET /verify-email` — Email verification
+- `POST /forgot-password` — Request password reset
+- `POST /reset-password` — Reset password with token
+
+### Two-Factor Authentication (2FA)
+- `POST /2fa/generate` — Generate 2FA secret and QR code (protected)
+- `POST /2fa/verify-setup` — Verify initial 2FA setup (protected)
+- `POST /2fa/enable` — Enable 2FA and get recovery codes (protected)
+- `POST /2fa/disable` — Disable 2FA (protected)
+- `POST /2fa/login-verify` — Verify 2FA code during login (public)
+- `POST /2fa/recovery-codes` — Generate new recovery codes (protected)
+
+### Social Authentication
+- `GET /auth/google/login` — Initiate Google OAuth2 login
+- `GET /auth/google/callback` — Google OAuth2 callback
+- `GET /auth/facebook/login` — Initiate Facebook OAuth2 login
+- `GET /auth/facebook/callback` — Facebook OAuth2 callback
+- `GET /auth/github/login` — Initiate GitHub OAuth2 login
+- `GET /auth/github/callback` — GitHub OAuth2 callback
+
+### User Management
+- `GET /profile` — Get user profile (protected)
+
+## 📦 API Response Format
 **Success:**
 ```json
 {
@@ -108,52 +169,132 @@ The following `make` commands are available for development, testing, building, 
 ```
 
 ## 🔒 Authentication Flow
-- Register/login returns JWT access & refresh tokens
-- Access token in `Authorization: Bearer <token>` header
-- Refresh token endpoint issues new access/refresh tokens
-- Social login redirects to provider, then back to `/callback`
+
+### Standard Authentication
+1. Register/login returns JWT access & refresh tokens
+2. Access token in `Authorization: Bearer <token>` header
+3. Refresh token endpoint issues new access/refresh tokens
+
+### Two-Factor Authentication Flow
+1. User enables 2FA via `/2fa/generate`, `/2fa/verify-setup`, and `/2fa/enable`
+2. During login, if 2FA is enabled, a temporary token is returned
+3. User provides TOTP code or recovery code via `/2fa/login-verify`
+4. Final JWT tokens are issued upon successful 2FA verification
+
+### Social Authentication Flow
+1. Redirect to provider login endpoint (e.g., `/auth/google/login`)
+2. User authorizes with social provider
+3. Provider redirects back to callback endpoint
+4. JWT tokens are issued for authenticated user
 
 ## 🧪 Testing
+
+### Automated Testing
 - Run all tests: `make test` or `go test ./...`
 - Coverage: Unit & integration tests for core logic and endpoints
 
-## 🤝 Contributing
-Pull requests and issues are welcome! Please open an issue to discuss changes or improvements.
+### Manual API Testing
+- Use the provided test script: `./test_api.sh`
+- Test basic authentication flows and error handling
+- Interactive testing via Swagger UI at `/swagger/index.html`
 
-## 🛡️ Security
-If you discover a vulnerability, please open an issue or contact the maintainer directly.
+## 🐳 Docker Configuration
 
-## ⚙️ Environment Variables (example)
+### Development Environment
+```bash
+# Start development environment with hot reload
+make docker-dev
+# or
+./dev.sh  # Linux/Mac
+dev.bat   # Windows
 ```
-# For Docker Compose:
-DB_HOST=postgres
+
+### Production Environment
+```bash
+# Build and start production containers
+make docker-compose-up
+# or
+docker-compose up -d --build
+```
+
+## ⚙️ Environment Variables
+
+### Required Configuration
+```bash
+# Database Configuration
+DB_HOST=localhost          # postgres (for Docker)
 DB_PORT=5432
-REDIS_ADDR=redis:6379
-
-# For manual/local run:
-# DB_HOST=localhost
-# DB_PORT=5432
-# REDIS_ADDR=localhost:6379
-
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
 DB_NAME=auth_db
+
+# Redis Configuration  
+REDIS_ADDR=localhost:6379  # redis:6379 (for Docker)
+
+# JWT Configuration
 JWT_SECRET=supersecretjwtkey
+ACCESS_TOKEN_EXPIRATION_MINUTES=15
+REFRESH_TOKEN_EXPIRATION_HOURS=720
+
+# Email Configuration
 EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
 EMAIL_USERNAME=your_email@example.com
+EMAIL_PASSWORD=your_email_password
+
+# Social Authentication (OAuth2)
 GOOGLE_CLIENT_ID=your_google_client_id
-# ...etc
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+FACEBOOK_CLIENT_ID=your_facebook_client_id
+FACEBOOK_CLIENT_SECRET=your_facebook_client_secret
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+
+# Server Configuration
+PORT=8080
 ```
 
-## 🧩 Dependencies
-- Gin, GORM, PostgreSQL, Redis, JWT, OAuth2, Viper, godotenv, validator, mail.v2
+### Docker vs Local Development
+For Docker Compose, use service names:
+- `DB_HOST=postgres`
+- `REDIS_ADDR=redis:6379`
 
-## 🧪 Development Commands
-- `make dev` — Hot reload
-- `make test` — Run tests
-- `make build` — Build binary
+For local development, use localhost:
+- `DB_HOST=localhost`
+- `REDIS_ADDR=localhost:6379`
+
+## 🧩 Key Dependencies
+- **Web Framework**: Gin
+- **Database**: GORM + PostgreSQL
+- **Caching**: Go-Redis + Redis
+- **Authentication**: JWT, OAuth2
+- **Configuration**: Viper, godotenv
+- **Validation**: go-playground/validator
+- **Email**: gopkg.in/mail.v2
+- **2FA**: pquerna/otp, skip2/go-qrcode
+- **Documentation**: Swaggo/Swag
+- **Development**: Air (hot reload)
+
+## 🧪 Development Workflow
+1. `make setup` — Install dependencies and tools
+2. `make dev` — Start development server with hot reload
+3. `make test` — Run tests during development
+4. `make fmt` — Format code before committing
+5. `make lint` — Check code quality
+6. `./test_api.sh` — Test API endpoints manually
+
+## 🤝 Contributing
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
+## 🛡️ Security
+Please read [SECURITY.md](SECURITY.md) for information about reporting security vulnerabilities.
+
+## 📚 Documentation
+- [Architecture Documentation](docs/ARCHITECTURE.md)
+- [API Reference](docs/API.md)
+- [Implementation Phases](docs/implementation_phases/)
 
 ---
 
 ## 📄 License
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

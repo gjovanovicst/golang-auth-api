@@ -63,6 +63,56 @@ definitions:
     - new_password
     - token
     type: object
+  dto.TwoFADisableRequest:
+    properties:
+      code:
+        type: string
+    required:
+    - code
+    type: object
+  dto.TwoFAEnableResponse:
+    properties:
+      message:
+        type: string
+      recovery_codes:
+        items:
+          type: string
+        type: array
+    type: object
+  dto.TwoFALoginRequest:
+    properties:
+      code:
+        type: string
+      recovery_code:
+        type: string
+      temp_token:
+        type: string
+    required:
+    - temp_token
+    type: object
+  dto.TwoFARecoveryCodesResponse:
+    properties:
+      message:
+        type: string
+      recovery_codes:
+        items:
+          type: string
+        type: array
+    type: object
+  dto.TwoFARequiredResponse:
+    properties:
+      message:
+        type: string
+      temp_token:
+        type: string
+    type: object
+  dto.TwoFAVerifyRequest:
+    properties:
+      code:
+        type: string
+    required:
+    - code
+    type: object
   dto.UserResponse:
     properties:
       created_at:
@@ -73,7 +123,20 @@ definitions:
         type: boolean
       id:
         type: string
+      two_fa_enabled:
+        type: boolean
       updated_at:
+        type: string
+    type: object
+  twofa.TwoFASetupResponse:
+    properties:
+      qr_code_data:
+        items:
+          type: integer
+        type: array
+      qr_code_url:
+        type: string
+      secret:
         type: string
     type: object
 host: localhost:8080
@@ -91,6 +154,195 @@ info:
   title: Authentication and Authorization API
   version: "1.0"
 paths:
+  /2fa/disable:
+    post:
+      consumes:
+      - application/json
+      description: Disable 2FA for the user (requires password and/or TOTP code)
+      parameters:
+      - description: Disable 2FA Data
+        in: body
+        name: disable
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TwoFADisableRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Disable 2FA
+      tags:
+      - 2FA
+  /2fa/enable:
+    post:
+      description: Enable 2FA for the user after successful verification
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TwoFAEnableResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Enable 2FA
+      tags:
+      - 2FA
+  /2fa/generate:
+    post:
+      description: Generate a 2FA secret and QR code for user setup
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/twofa.TwoFASetupResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate 2FA setup
+      tags:
+      - 2FA
+  /2fa/login-verify:
+    post:
+      consumes:
+      - application/json
+      description: Verify the TOTP code during the 2FA login process
+      parameters:
+      - description: 2FA Login Data
+        in: body
+        name: verify
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TwoFALoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Verify 2FA during login
+      tags:
+      - 2FA
+  /2fa/recovery-codes:
+    post:
+      consumes:
+      - application/json
+      description: Generate and display new recovery codes (requires password and/or
+        TOTP code)
+      parameters:
+      - description: TOTP Code
+        in: body
+        name: verify
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TwoFAVerifyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TwoFARecoveryCodesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate new recovery codes
+      tags:
+      - 2FA
+  /2fa/verify-setup:
+    post:
+      consumes:
+      - application/json
+      description: Verify the initial 2FA setup with a TOTP code
+      parameters:
+      - description: TOTP Code
+        in: body
+        name: setup
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TwoFAVerifyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Verify 2FA setup
+      tags:
+      - 2FA
   /auth/facebook/callback:
     get:
       description: Handles Facebook OAuth2 callback and returns JWT tokens
@@ -311,6 +563,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/dto.LoginResponse'
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/dto.TwoFARequiredResponse'
         "400":
           description: Bad Request
           schema:

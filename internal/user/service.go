@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
-	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
+	"github.com/gjovanovicst/auth_api/pkg/models"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Service struct {
@@ -20,6 +21,14 @@ type Service struct {
 
 func NewService(r *Repository, es *email.Service) *Service {
 	return &Service{Repo: r, EmailService: es}
+}
+
+// LoginResult represents the result of a login attempt
+type LoginResult struct {
+	RequiresTwoFA bool
+	AccessToken   string
+	RefreshToken  string
+	TwoFAResponse *dto.TwoFARequiredResponse
 }
 
 func (s *Service) RegisterUser(email, password string) *errors.AppError {
@@ -48,7 +57,7 @@ func (s *Service) RegisterUser(email, password string) *errors.AppError {
 	// Generate email verification token and send email
 	verificationToken := uuid.New().String()
 	fmt.Printf("DEBUG: Generated verification token: %s for user: %s\n", verificationToken, user.Email)
-	
+
 	if err := redis.SetEmailVerificationToken(user.ID.String(), verificationToken, 24*time.Hour); err != nil {
 		fmt.Printf("DEBUG: Failed to store token in Redis: %v\n", err)
 		return errors.NewAppError(errors.ErrInternal, "Failed to store verification token")
@@ -65,39 +74,60 @@ func (s *Service) RegisterUser(email, password string) *errors.AppError {
 	return nil
 }
 
-func (s *Service) LoginUser(email, password string) (string, string, *errors.AppError) {
+func (s *Service) LoginUser(email, password string) (*LoginResult, *errors.AppError) {
 	user, err := s.Repo.GetUserByEmail(email)
 	if err != nil { // User not found
-		return "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
+		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
 	}
 
 	// Compare password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
+		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
 	}
 
 	// Check if email is verified
 	if !user.EmailVerified {
-		return "", "", errors.NewAppError(errors.ErrForbidden, "Email not verified. Please check your inbox.")
+		return nil, errors.NewAppError(errors.ErrForbidden, "Email not verified. Please check your inbox.")
 	}
 
-	// Generate JWTs
+	// Check if 2FA is enabled
+	if user.TwoFAEnabled {
+		// Generate temporary token for 2FA verification
+		tempToken := uuid.New().String()
+		if err := redis.SetTempUserSession(tempToken, user.ID.String(), 10*time.Minute); err != nil {
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to create temporary session")
+		}
+
+		return &LoginResult{
+			RequiresTwoFA: true,
+			TwoFAResponse: &dto.TwoFARequiredResponse{
+				Message:   "2FA verification required",
+				TempToken: tempToken,
+			},
+		}, nil
+	}
+
+	// Generate JWTs for standard login
 	accessToken, err := jwt.GenerateAccessToken(user.ID.String())
 	if err != nil {
-		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
 
 	refreshToken, err := jwt.GenerateRefreshToken(user.ID.String())
 	if err != nil {
-		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
 
 	// Store refresh token in Redis
 	if err := redis.SetRefreshToken(user.ID.String(), refreshToken); err != nil {
-		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 	}
 
-	return accessToken, refreshToken, nil
+	return &LoginResult{
+		RequiresTwoFA: false,
+		AccessToken:   accessToken,
+		RefreshToken:  refreshToken,
+	}, nil
 }
 
 func (s *Service) RefreshUserToken(refreshToken string) (string, string, *errors.AppError) {

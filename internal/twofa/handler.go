@@ -5,10 +5,13 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -99,6 +102,13 @@ func (h *Handler) Enable2FA(c *gin.Context) {
 		return
 	}
 
+	// Log 2FA enable activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.Log2FAEnable(userUUID, ipAddress, userAgent)
+	}
+
 	c.JSON(http.StatusOK, dto.TwoFAEnableResponse{
 		Message:       "2FA enabled successfully",
 		RecoveryCodes: recoveryCodes,
@@ -141,6 +151,13 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 		return
 	}
 
+	// Log 2FA disable activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.Log2FADisable(userUUID, ipAddress, userAgent)
+	}
+
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "2FA disabled successfully"})
 }
 
@@ -169,12 +186,24 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		return
 	}
 
-	// Verify TOTP code or recovery code
+	// Determine verification method for logging
+	var method string
 	var verificationErr *errors.AppError
+
+	// Verify TOTP code or recovery code
 	if req.Code != "" {
+		method = "totp"
 		verificationErr = h.Service.VerifyTOTP(userID, req.Code)
 	} else if req.RecoveryCode != "" {
+		method = "recovery_code"
 		verificationErr = h.Service.VerifyRecoveryCode(userID, req.RecoveryCode)
+
+		// Log recovery code usage
+		ipAddress, userAgent := util.GetClientInfo(c)
+		userUUID, parseErr := uuid.Parse(userID)
+		if parseErr == nil {
+			log.LogRecoveryCodeUsed(userUUID, ipAddress, userAgent)
+		}
 	} else {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Either TOTP code or recovery code is required"})
 		return
@@ -190,6 +219,13 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to generate tokens"})
 		return
+	}
+
+	// Log successful 2FA login
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr == nil {
+		log.Log2FALogin(userUUID, ipAddress, userAgent, method)
 	}
 
 	// Clear temporary session
@@ -236,6 +272,13 @@ func (h *Handler) GenerateRecoveryCodes(c *gin.Context) {
 	if err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
+	}
+
+	// Log recovery code generation
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.LogRecoveryCodeGenerate(userUUID, ipAddress, userAgent)
 	}
 
 	c.JSON(http.StatusOK, dto.TwoFARecoveryCodesResponse{

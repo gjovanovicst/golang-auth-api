@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/log"
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/spf13/viper"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -94,11 +96,15 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, appErr := h.Service.HandleGoogleCallback(token.AccessToken)
+	accessToken, refreshToken, userID, appErr := h.Service.HandleGoogleCallback(token.AccessToken)
 	if appErr != nil {
 		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
 		return
 	}
+
+	// Log social login activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogSocialLogin(userID, ipAddress, userAgent, "google")
 
 	c.JSON(http.StatusOK, gin.H{
 		"access_token":  accessToken,
@@ -149,11 +155,15 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, appErr := h.Service.HandleFacebookCallback(token.AccessToken)
+	accessToken, refreshToken, userID, appErr := h.Service.HandleFacebookCallback(token.AccessToken)
 	if appErr != nil {
 		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
 		return
 	}
+
+	// Log social login activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogSocialLogin(userID, ipAddress, userAgent, "facebook")
 
 	c.JSON(http.StatusOK, gin.H{
 		"access_token":  accessToken,
@@ -204,11 +214,15 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, appErr := h.Service.HandleGithubCallback(token.AccessToken)
+	accessToken, refreshToken, userID, appErr := h.Service.HandleGithubCallback(token.AccessToken)
 	if appErr != nil {
 		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
 		return
 	}
+
+	// Log social login activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogSocialLogin(userID, ipAddress, userAgent, "github")
 
 	c.JSON(http.StatusOK, gin.H{
 		"access_token":  accessToken,

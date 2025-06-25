@@ -10,3 +10,4 @@ This folder contains detailed plans for each phase of the project:
 - Phase 6: Testing and Deployment Strategy
 - Phase 7: Documentation and Deployment
 - Phase 8: Two Factor Authentication Implementation
+- Phase 9: User Activity Logs Implementation

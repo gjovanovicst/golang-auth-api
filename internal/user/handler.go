@@ -4,8 +4,11 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/log"
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 )
 
 type Handler struct {
@@ -40,10 +43,15 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.RegisterUser(req.Email, req.Password); err != nil {
+	userID, err := h.Service.RegisterUser(req.Email, req.Password)
+	if err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
+
+	// Log registration activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogRegister(userID, ipAddress, userAgent, req.Email)
 
 	c.JSON(http.StatusCreated, dto.MessageResponse{Message: "User registered successfully. Please check your email for verification."})
 }
@@ -79,11 +87,25 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
+	// Get client info for logging
+	ipAddress, userAgent := util.GetClientInfo(c)
+
 	// Check if 2FA is required
 	if loginResult.RequiresTwoFA {
+		// Log partial login (2FA required)
+		details := map[string]interface{}{
+			"requires_2fa": true,
+		}
+		log.LogLogin(loginResult.UserID, ipAddress, userAgent, details)
 		c.JSON(http.StatusAccepted, loginResult.TwoFAResponse)
 		return
 	}
+
+	// Log successful login
+	details := map[string]interface{}{
+		"requires_2fa": false,
+	}
+	log.LogLogin(loginResult.UserID, ipAddress, userAgent, details)
 
 	// Standard login response
 	c.JSON(http.StatusOK, dto.LoginResponse{
@@ -110,10 +132,17 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	newAccessToken, newRefreshToken, err := h.Service.RefreshUserToken(req.RefreshToken)
+	newAccessToken, newRefreshToken, userID, err := h.Service.RefreshUserToken(req.RefreshToken)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
+	}
+
+	// Log token refresh activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr == nil {
+		log.LogTokenRefresh(userUUID, ipAddress, userAgent)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -145,6 +174,8 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
+	// Note: We don't log password reset requests for security reasons
+	// as it could be used to enumerate valid email addresses
 	if err := h.Service.RequestPasswordReset(req.Email); err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
@@ -177,10 +208,15 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.ConfirmPasswordReset(req.Token, req.NewPassword); err != nil {
+	userID, err := h.Service.ConfirmPasswordReset(req.Token, req.NewPassword)
+	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
+
+	// Log password reset completion
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogPasswordReset(userID, ipAddress, userAgent)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password has been reset successfully."})
 }
@@ -202,10 +238,15 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.VerifyEmail(token); err != nil {
+	userID, err := h.Service.VerifyEmail(token)
+	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
+
+	// Log email verification
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogEmailVerify(userID, ipAddress, userAgent)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Email verified successfully!"})
 }
@@ -231,6 +272,10 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "User not found"})
 		return
 	}
+
+	// Log profile access (optional, can be disabled for performance)
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogProfileAccess(user.ID, ipAddress, userAgent)
 
 	// Return user profile without sensitive information
 	c.JSON(http.StatusOK, dto.UserResponse{
@@ -278,6 +323,13 @@ func (h *Handler) Logout(c *gin.Context) {
 	if err := h.Service.LogoutUser(userID.(string), req.RefreshToken); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
+	}
+
+	// Log logout activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.LogLogout(userUUID, ipAddress, userAgent)
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Successfully logged out"})

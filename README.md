@@ -7,6 +7,7 @@ A modern, production-ready Go REST API for authentication and authorization, fea
 ## 🚀 Features
 - Secure user registration & login (JWT access/refresh tokens)
 - **Two-Factor Authentication (2FA) with TOTP and recovery codes**
+- **User Activity Logs with pagination and filtering**
 - Social login: Google, Facebook, GitHub
 - Email verification & password reset
 - Role-based access control (middleware)
@@ -24,6 +25,7 @@ internal/               # Core logic
 ├── user/              # User management
 ├── social/            # Social authentication (OAuth2)
 ├── twofa/             # Two-Factor Authentication
+├── log/               # Activity logging system
 ├── email/             # Email verification & password reset
 ├── middleware/        # JWT auth middleware
 ├── database/          # Database connection & migrations
@@ -158,6 +160,12 @@ The following `make` commands are available for development, testing, building, 
 ### User Management
 - `GET /profile` — Get user profile (protected)
 
+### Activity Logs
+- `GET /activity-logs` — Get authenticated user's activity logs with pagination and filtering (protected)
+- `GET /activity-logs/:id` — Get specific activity log by ID (protected)
+- `GET /activity-logs/event-types` — Get available event types for filtering (protected)
+- `GET /admin/activity-logs` — Get all users' activity logs for admin use (protected)
+
 ## 📦 API Response Format
 **Success:**
 ```json
@@ -192,6 +200,83 @@ The following `make` commands are available for development, testing, building, 
 2. User authorizes with social provider
 3. Provider redirects back to callback endpoint
 4. JWT tokens are issued for authenticated user
+
+## 📋 Activity Logs
+
+### Overview
+The Activity Logs system provides comprehensive tracking of user actions for security auditing, compliance, and debugging purposes. All user activities are automatically logged with detailed context information.
+
+### Tracked Events
+The following events are automatically logged:
+- `LOGIN` — User successfully logged in
+- `LOGOUT` — User logged out
+- `REGISTER` — New user registration
+- `PASSWORD_CHANGE` — User changed their password
+- `PASSWORD_RESET` — User reset their password
+- `EMAIL_VERIFY` — User verified their email address
+- `2FA_ENABLE` — User enabled two-factor authentication
+- `2FA_DISABLE` — User disabled two-factor authentication
+- `2FA_LOGIN` — User logged in using 2FA
+- `TOKEN_REFRESH` — User refreshed their access token
+- `SOCIAL_LOGIN` — User logged in via social media (Google, Facebook, GitHub)
+- `PROFILE_ACCESS` — User accessed their profile
+- `RECOVERY_CODE_USED` — User used a 2FA recovery code
+- `RECOVERY_CODE_GEN` — User generated new 2FA recovery codes
+
+### Features
+- **Pagination**: Efficient handling of large datasets with configurable page sizes (1-100 items)
+- **Filtering**: Filter by event type, date ranges (YYYY-MM-DD format)
+- **Security**: Users can only access their own logs; admin endpoint for comprehensive access
+- **Performance**: Optimized database queries with proper indexing on UserID, EventType, and Timestamp
+- **Audit Trail**: IP addresses, user agents, and contextual details captured for forensic analysis
+
+### API Examples
+
+#### Get User's Recent Login Activities
+```bash
+curl -X GET "http://localhost:8080/activity-logs?event_type=LOGIN&limit=5" \
+     -H "Authorization: Bearer your-jwt-token"
+```
+
+#### Get Activities from Date Range
+```bash
+curl -X GET "http://localhost:8080/activity-logs?start_date=2024-01-01&end_date=2024-01-31&page=1&limit=20" \
+     -H "Authorization: Bearer your-jwt-token"
+```
+
+#### Get Available Event Types
+```bash
+curl -X GET "http://localhost:8080/activity-logs/event-types" \
+     -H "Authorization: Bearer your-jwt-token"
+```
+
+### Response Format
+```json
+{
+  "data": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174000",
+      "user_id": "987fcdeb-51a2-43d8-a456-426614174001",
+      "event_type": "LOGIN",
+      "timestamp": "2024-01-15T10:30:00Z",
+      "ip_address": "192.168.1.100",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      "details": {
+        "login_method": "password",
+        "success": true
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total_records": 45,
+    "total_pages": 3,
+    "has_next": true,
+    "has_previous": false
+  }
+}
+```
 
 ## 🧪 Testing
 

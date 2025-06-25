@@ -1,5 +1,31 @@
 basePath: /
 definitions:
+  dto.ActivityLogListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/dto.ActivityLogResponse'
+        type: array
+      pagination:
+        $ref: '#/definitions/dto.PaginationResponse'
+    type: object
+  dto.ActivityLogResponse:
+    properties:
+      details:
+        type: object
+      event_type:
+        type: string
+      id:
+        type: string
+      ip_address:
+        type: string
+      timestamp:
+        type: string
+      user_agent:
+        type: string
+      user_id:
+        type: string
+    type: object
   dto.ErrorResponse:
     properties:
       error:
@@ -40,6 +66,21 @@ definitions:
     properties:
       message:
         type: string
+    type: object
+  dto.PaginationResponse:
+    properties:
+      has_next:
+        type: boolean
+      has_previous:
+        type: boolean
+      limit:
+        type: integer
+      page:
+        type: integer
+      total_pages:
+        type: integer
+      total_records:
+        type: integer
     type: object
   dto.RefreshTokenRequest:
     properties:
@@ -350,6 +391,179 @@ paths:
       summary: Verify 2FA setup
       tags:
       - 2FA
+  /activity-logs:
+    get:
+      description: Retrieve the authenticated user's activity logs with pagination
+        and filtering
+      parameters:
+      - description: 'Page number (default: 1)'
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - description: 'Items per page (default: 20, max: 100)'
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Start date filter (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date filter (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ActivityLogListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get user activity logs
+      tags:
+      - Activity Logs
+  /activity-logs/{id}:
+    get:
+      description: Retrieve a specific activity log by ID (users can only access their
+        own logs)
+      parameters:
+      - description: Activity Log ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ActivityLogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get activity log by ID
+      tags:
+      - Activity Logs
+  /activity-logs/event-types:
+    get:
+      description: Retrieve list of available activity log event types for filtering
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get available event types
+      tags:
+      - Activity Logs
+  /admin/activity-logs:
+    get:
+      description: Retrieve all users' activity logs with pagination and filtering
+        (admin access required)
+      parameters:
+      - description: 'Page number (default: 1)'
+        in: query
+        minimum: 1
+        name: page
+        type: integer
+      - description: 'Items per page (default: 20, max: 100)'
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Start date filter (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date filter (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ActivityLogListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get all activity logs (Admin)
+      tags:
+      - Activity Logs
   /auth/facebook/callback:
     get:
       description: Handles Facebook OAuth2 callback and returns JWT tokens

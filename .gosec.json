@@ -1,0 +1,16 @@
+{
+  "severity": "medium",
+  "confidence": "medium",
+  "exclude-rules": [],
+  "include-rules": [],
+  "exclude-dirs": ["vendor/", "node_modules/"],
+  "tests": true,
+  "exclude-generated": true,
+  "nosec": false,
+  "nosec-tag": "nosec",
+  "fmt": "json",
+  "stdout": true,
+  "verbose": false,
+  "output": "",
+  "log": ""
+}

@@ -1,6 +1,7 @@
 package twofa
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -272,5 +273,8 @@ func generateTokensForUser(userID string) (string, string, error) {
 
 // clearTempSession clears the temporary 2FA session
 func clearTempSession(tempToken string) {
-	redis.DeleteTempUserSession(tempToken)
+	if err := redis.DeleteTempUserSession(tempToken); err != nil {
+		// Log the error but don't fail the operation since the user is already authenticated
+		fmt.Printf("Warning: Failed to delete temporary user session %s: %v\n", tempToken, err)
+	}
 }

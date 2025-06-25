@@ -242,3 +242,43 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		UpdatedAt:     user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	})
 }
+
+// @Summary User logout
+// @Description Logout user and revoke refresh token
+// @Tags Auth
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   logout  body      dto.LogoutRequest  true  "Logout Data"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /logout [post]
+func (h *Handler) Logout(c *gin.Context) {
+	// Get userID from context (set by AuthMiddleware)
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	var req dto.LogoutRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.Service.LogoutUser(userID.(string), req.RefreshToken); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Successfully logged out"})
+}

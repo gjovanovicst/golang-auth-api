@@ -18,6 +18,16 @@ dev:
 test:
 	go test -v ./...
 
+# Run the TOTP test (requires TEST_TOTP_SECRET environment variable)
+test-totp:
+	@if [ -z "$$TEST_TOTP_SECRET" ]; then \
+		echo "Error: TEST_TOTP_SECRET environment variable is required"; \
+		echo "Set it with: export TEST_TOTP_SECRET=your_secret_here"; \
+		echo "Or run: ./run_test_secret.sh"; \
+		exit 1; \
+	fi
+	go run test_specific_secret.go
+
 # Clean build artifacts and temporary files
 clean:
 	rm -rf bin/
@@ -40,6 +50,22 @@ fmt:
 # Run linter (requires golangci-lint)
 lint:
 	golangci-lint run
+
+# Install security scanning tools
+install-security-tools:
+	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	go install github.com/sonatype-nexus-community/nancy@latest
+
+# Run security scan with gosec
+security-scan:
+	gosec -conf .gosec.json ./...
+
+# Run vulnerability scan with nancy
+vulnerability-scan:
+	go list -json -deps ./... | nancy sleuth
+
+# Run all security checks
+security: security-scan vulnerability-scan
 
 # Build for production
 build-prod:
@@ -82,11 +108,16 @@ help:
 	@echo "  run                  - Run the application"
 	@echo "  dev                  - Run with hot reload (Air)"
 	@echo "  test                 - Run tests"
+	@echo "  test-totp            - Run TOTP test (requires TEST_TOTP_SECRET env var)"
 	@echo "  clean                - Clean build artifacts"
 	@echo "  install-air          - Install Air for hot reloading"
 	@echo "  setup                - Setup development environment"
 	@echo "  fmt                  - Format code"
 	@echo "  lint                 - Run linter"
+	@echo "  install-security-tools - Install gosec and nancy security scanners"
+	@echo "  security-scan        - Run gosec security scanner"
+	@echo "  vulnerability-scan   - Run nancy vulnerability scanner"
+	@echo "  security             - Run all security checks"
 	@echo "  build-prod           - Build for production"
 	@echo "  docker-dev           - Run development environment with Docker"
 	@echo "  docker-compose-build - Build Docker images using docker-compose"

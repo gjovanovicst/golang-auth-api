@@ -109,6 +109,7 @@ func main() {
 	protected.Use(middleware.AuthMiddleware())
 	{
 		protected.GET("/profile", userHandler.GetProfile)
+		protected.POST("/logout", userHandler.Logout)
 
 		// 2FA management routes
 		protected.POST("/2fa/generate", twofaHandler.Generate2FA)

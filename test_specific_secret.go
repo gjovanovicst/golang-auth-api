@@ -2,14 +2,21 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/pquerna/otp/totp"
 )
 
 func main() {
-	// Use the secret from the previous API call
-	secret := "RZCH2POUGIOAIDZJ2R2M4E62AIACDYVLF6WLDXG3KHWBCLZQL2ZA===="
+	// Get the secret from environment variable or use a test default
+	secret := os.Getenv("TEST_TOTP_SECRET")
+	if secret == "" {
+		fmt.Println("Error: TEST_TOTP_SECRET environment variable is required")
+		fmt.Println("Please set it with: export TEST_TOTP_SECRET=your_secret_here")
+		return
+	}
+
 	fmt.Printf("Testing with secret: %s\n", secret)
 	fmt.Printf("Secret length: %d\n", len(secret))
 

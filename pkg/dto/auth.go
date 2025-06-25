@@ -17,6 +17,11 @@ type RefreshTokenRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
+// LogoutRequest represents the request payload for user logout
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
 // ForgotPasswordRequest represents the request payload for forgot password
 type ForgotPasswordRequest struct {
 	Email string `json:"email" validate:"required,email"`

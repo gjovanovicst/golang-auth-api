@@ -106,11 +106,16 @@ The following `make` commands are available for development, testing, building, 
 | `make run`             | Run the application without hot reload.                          |
 | `make dev`             | Run with hot reload using [Air](https://github.com/air-verse/air).|
 | `make test`            | Run all Go tests with verbose output.                            |
+| `make test-totp`       | Run TOTP test (requires `TEST_TOTP_SECRET` environment variable). |
 | `make clean`           | Remove build artifacts and temporary files.                      |
 | `make install-air`     | Install Air for hot reloading.                                   |
 | `make setup`           | Setup development environment (installs Air, tidy/download deps). |
 | `make fmt`             | Format code using `go fmt`.                                      |
 | `make lint`            | Run linter (`golangci-lint`).                                    |
+| `make install-security-tools` | Install security scanning tools (`gosec` and `nancy`).    |
+| `make security-scan`   | Run gosec security scanner.                                      |
+| `make vulnerability-scan` | Run nancy vulnerability scanner.                               |
+| `make security`        | Run all security checks (gosec + nancy).                         |
 | `make build-prod`      | Build for production (Linux, static binary).                     |
 | `make docker-dev`      | Run development environment with Docker (`./dev.sh`).             |
 | `make docker-compose-build` | Build Docker images using docker-compose.                  |
@@ -128,6 +133,7 @@ The following `make` commands are available for development, testing, building, 
 ### Authentication
 - `POST /register` — User registration
 - `POST /login` — User login (with 2FA support)
+- `POST /logout` — User logout and token revocation (protected)
 - `POST /refresh-token` — Refresh JWT tokens
 - `GET /verify-email` — Email verification
 - `POST /forgot-password` — Request password reset

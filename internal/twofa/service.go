@@ -107,7 +107,10 @@ func (s *Service) Enable2FA(userID string) ([]string, *errors.AppError) {
 	}
 
 	// Remove temporary secret from Redis
-	redis.DeleteTempTwoFASecret(userID)
+	if err := redis.DeleteTempTwoFASecret(userID); err != nil {
+		// Log the error but don't fail the entire operation since 2FA was already enabled
+		fmt.Printf("Warning: Failed to delete temporary 2FA secret for user %s: %v\n", userID, err)
+	}
 
 	return recoveryCodes, nil
 }
@@ -201,7 +204,11 @@ func (s *Service) GenerateNewRecoveryCodes(userID string) ([]string, *errors.App
 // generateSecretKey generates a random base32 encoded secret key
 func generateSecretKey() string {
 	secret := make([]byte, 32)
-	rand.Read(secret)
+	if _, err := rand.Read(secret); err != nil {
+		// In case of random number generation failure, use a timestamp-based fallback
+		// This should never happen in practice, but we handle the error for security scanning
+		panic(fmt.Sprintf("Failed to generate secure random bytes: %v", err))
+	}
 	return base32.StdEncoding.EncodeToString(secret)
 }
 
@@ -210,7 +217,10 @@ func generateRecoveryCodes(count int) []string {
 	codes := make([]string, count)
 	for i := 0; i < count; i++ {
 		code := make([]byte, 8)
-		rand.Read(code)
+		if _, err := rand.Read(code); err != nil {
+			// In case of random number generation failure, panic as this is critical for security
+			panic(fmt.Sprintf("Failed to generate secure random bytes for recovery code: %v", err))
+		}
 		codes[i] = fmt.Sprintf("%x", code)
 	}
 	return codes

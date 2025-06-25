@@ -162,6 +162,15 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, *errors
 	return newAccessToken, newRefreshToken, nil
 }
 
+// LogoutUser logs out a user by revoking their refresh token
+func (s *Service) LogoutUser(userID, refreshToken string) *errors.AppError {
+	// Revoke the refresh token in Redis
+	if err := redis.RevokeRefreshToken(userID, refreshToken); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to revoke refresh token")
+	}
+	return nil
+}
+
 func (s *Service) RequestPasswordReset(email string) *errors.AppError {
 	user, err := s.Repo.GetUserByEmail(email)
 	if err != nil {

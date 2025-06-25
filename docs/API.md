@@ -12,6 +12,12 @@
 - Request: `{ "email": "user@example.com", "password": "..." }`
 - Response: `{ "success": true, "data": { "token": "..." } }`
 
+### Logout
+- `POST /logout`
+- Header: `Authorization: Bearer <access_token>`
+- Request: `{ "refresh_token": "..." }`
+- Response: `{ "message": "Successfully logged out" }`
+
 ### Refresh Token
 - `POST /refresh-token`
 - Request: `{ "refresh_token": "..." }`

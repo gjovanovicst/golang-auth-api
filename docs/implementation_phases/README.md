@@ -9,3 +9,4 @@ This folder contains detailed plans for each phase of the project:
 - Phase 5: API Endpoints and Middleware Implementation
 - Phase 6: Testing and Deployment Strategy
 - Phase 7: Documentation and Deployment
+- Phase 8: Two Factor Authentication Implementation

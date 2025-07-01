@@ -1,0 +1,74 @@
+---
+description: development workflow
+globs: 
+alwaysApply: false
+---
+# Development Workflow and Tools
+
+## Development Setup
+Reference [Makefile](mdc:Makefile) for all available commands.
+
+### Initial Setup
+```bash
+make setup              # Install dependencies and tools
+cp .env.example .env    # Configure environment variables
+make docker-dev         # Start development environment
+```
+
+### Daily Development
+```bash
+make dev               # Start with hot reload using Air
+make swag-init         # Regenerate Swagger docs after API changes
+make test              # Run tests
+make security          # Run security scans
+make fmt               # Format code
+```
+
+## Key Development Tools
+
+### Hot Reload with Air
+- Configuration in [.air.toml](mdc:.air.toml)
+- Watches for Go file changes and rebuilds automatically
+- Excludes test files and temporary directories
+
+### Docker Development
+- [Dockerfile.dev](mdc:Dockerfile.dev) - Development container
+- [docker-compose.dev.yml](mdc:docker-compose.dev.yml) - Development services
+- [Dockerfile](mdc:Dockerfile) - Production container
+- [docker-compose.yml](mdc:docker-compose.yml) - Production services
+
+### Security Scanning
+- Configuration in [.gosec.json](mdc:.gosec.json)
+- `make security` runs gosec and nancy vulnerability scans
+- Required before committing
+
+### API Documentation
+- Swagger annotations in handler functions
+- Auto-generated docs in `docs/` directory
+- Accessible at `/swagger/index.html` during development
+
+## Testing Strategy
+- Unit tests for service layer functions
+- Integration tests for complete flows
+- Table-driven tests where appropriate
+- Mock external dependencies
+- Coverage tracking
+
+## Git Workflow
+- Feature branches from main
+- Descriptive commit messages
+- Include tests for new functionality
+- Run `make security` before committing
+- Update documentation when needed
+
+## Environment Variables
+- Use [.env](mdc:.env) for local development
+- Never commit sensitive data
+- Reference environment variables in code via viper
+- Default values defined in [cmd/api/main.go](mdc:cmd/api/main.go)
+
+## Build and Deployment
+- `make build-prod` for production builds
+- Multi-stage Docker builds for optimization
+- Environment-specific configurations
+

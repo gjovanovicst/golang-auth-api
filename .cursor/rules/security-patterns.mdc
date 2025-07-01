@@ -1,0 +1,134 @@
+---
+description: Security patterns
+globs: 
+alwaysApply: false
+---
+# Security Patterns and Best Practices
+
+## Authentication Flow
+
+### JWT Token Management
+- Access tokens: Short-lived (15 minutes default)
+- Refresh tokens: Long-lived (720 hours default)
+- Token rotation on refresh
+- Redis-based session management
+
+### Two-Factor Authentication (2FA)
+- TOTP (Time-based One-Time Password) implementation
+- QR code generation for authenticator apps
+- Recovery codes for backup access
+- Secure secret generation and storage
+
+### Social Authentication
+- OAuth2 flow with state verification
+- Secure provider callback handling
+- User account linking/creation
+- Scope validation
+
+## Security Configuration
+
+### Security Scanning
+Configuration in [.gosec.json](mdc:.gosec.json):
+- Medium severity and confidence thresholds
+- Excludes vendor and node_modules directories
+- Includes test files in scanning
+- JSON output format for CI/CD integration
+
+### Environment Security
+- Never expose sensitive data in responses
+- Use environment variables for secrets
+- Hash passwords with bcrypt
+- Secure session management with Redis
+
+## Authorization Patterns
+
+### Middleware Protection
+- JWT validation in `middleware.AuthMiddleware()`
+- User context extraction
+- Route-level protection in [cmd/api/main.go](mdc:cmd/api/main.go)
+
+### Role-Based Access Control (Future)
+- Admin routes prepared for role checking
+- Extensible middleware pattern
+- User role management ready
+
+## Input Validation and Sanitization
+
+### Request Validation
+- Use `go-playground/validator` tags in DTOs
+- Validate all user inputs before processing
+- Sanitize data before database operations
+- Parameterized queries to prevent SQL injection
+
+### Rate Limiting (Recommended)
+- Implement rate limiting for authentication endpoints
+- Protect against brute force attacks
+- Monitor suspicious activity patterns
+
+## Security Event Logging
+
+### Activity Logging System
+- Log all authentication events
+- Track user activities with context
+- Include IP address, user agent, timestamps
+- Pagination and filtering for security analysis
+
+### Security-Relevant Events
+- Login attempts (success/failure)
+- Password changes
+- 2FA enable/disable
+- Account modifications
+- Suspicious activity detection
+
+## Data Protection
+
+### Password Security
+- Bcrypt hashing with appropriate cost
+- Password complexity requirements
+- Secure password reset flow
+- Protection against timing attacks
+
+### Sensitive Data Handling
+- Never log sensitive information
+- Secure token storage and transmission
+- Proper secret rotation procedures
+- Clean error messages (no information leakage)
+
+## Network Security
+
+### HTTPS Requirements
+- Enforce HTTPS in production
+- Secure cookie settings
+- CORS policy implementation
+- Security headers configuration
+
+### Database Security
+- Connection pooling with limits
+- Secure connection strings
+- Database access control
+- Regular security updates
+
+## Vulnerability Management
+
+### Security Scanning Tools
+- gosec for Go-specific security issues
+- nancy for vulnerability scanning
+- Regular dependency updates
+- Automated security checks in CI/CD
+
+### Security Testing
+- Include security test cases
+- Test authentication flows
+- Validate authorization controls
+- Test input validation boundaries
+
+## Production Security Checklist
+
+### Deployment Security
+- Environment variable protection
+- Secure container images
+- Network isolation
+- Monitoring and alerting
+- Regular security audits
+- Incident response procedures
+

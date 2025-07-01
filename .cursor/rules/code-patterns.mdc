@@ -1,0 +1,263 @@
+---
+description: Code patterns
+globs: 
+alwaysApply: false
+---
+# Go Code Patterns and Conventions
+
+## Architecture Pattern: Repository-Service-Handler
+
+### Repository Layer
+```go
+type Repository interface {
+    Create(entity *Entity) error
+    GetByID(id uint) (*Entity, error)
+    Update(entity *Entity) error
+    Delete(id uint) error
+}
+
+type repository struct {
+    db *gorm.DB
+}
+
+func NewRepository(db *gorm.DB) Repository {
+    return &repository{db: db}
+}
+```
+
+### Service Layer
+```go
+type Service interface {
+    BusinessOperation(input Input) (*Output, error)
+}
+
+type service struct {
+    repo Repository
+    // other dependencies
+}
+
+func NewService(repo Repository) Service {
+    return &service{repo: repo}
+}
+```
+
+### Handler Layer
+```go
+type Handler struct {
+    service Service
+}
+
+func NewHandler(service Service) *Handler {
+    return &Handler{service: service}
+}
+
+// @Summary Operation description
+// @Router /endpoint [method]
+func (h *Handler) HandlerMethod(c *gin.Context) {
+    // Request binding
+    // Validation
+    // Service call
+    // Response
+}
+```
+
+## Dependency Injection Pattern
+
+### Constructor Functions
+All components use constructor functions with dependency injection:
+```go
+func NewService(repo Repository, emailService EmailService) Service {
+    return &service{
+        repo:         repo,
+        emailService: emailService,
+    }
+}
+```
+
+### Main Function Organization
+In [cmd/api/main.go](mdc:cmd/api/main.go):
+1. Initialize infrastructure (DB, Redis)
+2. Create repositories
+3. Create services with dependencies
+4. Create handlers
+5. Setup routes
+
+## Error Handling Patterns
+
+### Custom Error Types
+Define in `pkg/errors/`:
+```go
+type AuthError struct {
+    Code    string
+    Message string
+    Err     error
+}
+
+func (e *AuthError) Error() string {
+    return e.Message
+}
+```
+
+### Error Response Pattern
+```go
+if err != nil {
+    c.JSON(http.StatusBadRequest, gin.H{
+        "success": false,
+        "error":   err.Error(),
+    })
+    return
+}
+```
+
+### Success Response Pattern
+```go
+c.JSON(http.StatusOK, gin.H{
+    "success": true,
+    "data":    result,
+})
+```
+
+## Database Patterns
+
+### GORM Models
+Located in `pkg/models/`:
+```go
+type User struct {
+    ID        uint      `gorm:"primaryKey" json:"id"`
+    Email     string    `gorm:"unique;not null" json:"email"`
+    Password  string    `gorm:"not null" json:"-"`
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
+}
+```
+
+### Repository Methods
+```go
+func (r *repository) GetByEmail(email string) (*models.User, error) {
+    var user models.User
+    if err := r.db.Where("email = ?", email).First(&user).Error; err != nil {
+        return nil, err
+    }
+    return &user, nil
+}
+```
+
+## DTO (Data Transfer Object) Patterns
+
+### Request DTOs
+```go
+type LoginRequest struct {
+    Email    string `json:"email" validate:"required,email" example:"user@example.com"`
+    Password string `json:"password" validate:"required,min=8" example:"password123"`
+}
+```
+
+### Response DTOs
+```go
+type UserResponse struct {
+    ID        uint   `json:"id" example:"1"`
+    Email     string `json:"email" example:"user@example.com"`
+    CreatedAt string `json:"created_at" example:"2023-01-01T00:00:00Z"`
+}
+```
+
+## Swagger Documentation Pattern
+
+### Handler Annotations
+```go
+// @Summary User login
+// @Description Authenticate user with email and password
+// @Tags authentication
+// @Accept json
+// @Produce json
+// @Param request body dto.LoginRequest true "Login credentials"
+// @Success 200 {object} dto.APIResponse{data=dto.LoginResponse}
+// @Failure 400 {object} dto.APIResponse
+// @Router /login [post]
+```
+
+## Configuration Pattern
+
+### Environment Variables
+Using Viper in [cmd/api/main.go](mdc:cmd/api/main.go):
+```go
+viper.AutomaticEnv()
+viper.SetDefault("PORT", "8080")
+viper.SetDefault("ACCESS_TOKEN_EXPIRATION_MINUTES", 15)
+```
+
+## Testing Patterns
+
+### Table-Driven Tests
+```go
+func TestService_Method(t *testing.T) {
+    tests := []struct {
+        name    string
+        input   Input
+        want    Output
+        wantErr bool
+    }{
+        // test cases
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // test implementation
+        })
+    }
+}
+```
+
+### Mock Interfaces
+Use interfaces for all dependencies to enable mocking in tests.
+
+## Security Code Patterns
+
+### Password Hashing
+```go
+func HashPassword(password string) (string, error) {
+    bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+    return string(bytes), err
+}
+```
+
+### JWT Token Generation
+```go
+func GenerateToken(userID uint, tokenType string) (string, error) {
+    claims := jwt.MapClaims{
+        "user_id": userID,
+        "type":    tokenType,
+        "exp":     time.Now().Add(expiration).Unix(),
+    }
+    // token generation logic
+}
+```
+
+## Activity Logging Pattern
+
+### Log Service Usage
+```go
+logService.LogActivity(logService.ActivityLogParams{
+    UserID:      userID,
+    EventType:   "login_success",
+    Description: "User logged in successfully",
+    IPAddress:   c.ClientIP(),
+    UserAgent:   c.GetHeader("User-Agent"),
+})
+```
+
+## File Organization Rules
+
+### Package Structure
+- One responsibility per package
+- Internal packages in `internal/`
+- Shared packages in `pkg/`
+- Feature-based organization
+
+### File Naming
+- `handler.go` for HTTP handlers
+- `service.go` for business logic
+- `repository.go` for data access
+- `models.go` for database models
+- `dto.go` for data transfer objects
+

@@ -1,0 +1,122 @@
+---
+description: API development
+globs: 
+alwaysApply: false
+---
+# API Development Patterns
+
+## Route Organization in Main
+Routes are defined in [cmd/api/main.go](mdc:cmd/api/main.go) with clear groupings:
+
+### Public Routes
+- No authentication required
+- Registration, login, password reset
+- Social OAuth callbacks
+
+### Protected Routes  
+- Require JWT authentication via `middleware.AuthMiddleware()`
+- User profile, logout, 2FA management
+- Activity logs
+
+### Admin Routes
+- Protected with auth middleware
+- Future role-based access control
+
+## Adding New API Endpoints
+
+### 1. Create DTOs
+Define request/response structures in `pkg/dto/`:
+```go
+type CreateSomethingRequest struct {
+    Name        string `json:"name" validate:"required" example:"Sample Name"`
+    Description string `json:"description,omitempty" example:"Sample description"`
+}
+
+type SomethingResponse struct {
+    ID          uint   `json:"id" example:"1"`
+    Name        string `json:"name" example:"Sample Name"`
+    CreatedAt   string `json:"created_at" example:"2023-01-01T00:00:00Z"`
+}
+```
+
+### 2. Add Handler with Swagger Annotations
+```go
+// CreateSomething creates a new something
+// @Summary Create something
+// @Description Create a new something with the provided data
+// @Tags something
+// @Accept json
+// @Produce json
+// @Param request body dto.CreateSomethingRequest true "Something data"
+// @Success 201 {object} dto.APIResponse{data=dto.SomethingResponse}
+// @Failure 400 {object} dto.APIResponse
+// @Security ApiKeyAuth
+// @Router /something [post]
+func (h *Handler) CreateSomething(c *gin.Context) {
+    // Implementation
+}
+```
+
+### 3. Register Route
+Add to appropriate group in [cmd/api/main.go](mdc:cmd/api/main.go):
+```go
+protected.POST("/something", handler.CreateSomething)
+```
+
+### 4. Regenerate Documentation
+```bash
+make swag-init
+```
+
+## Authentication Patterns
+
+### JWT Middleware
+- Applied to protected routes in [cmd/api/main.go](mdc:cmd/api/main.go)
+- Validates JWT tokens and extracts user information
+- Sets user context for handlers
+
+### 2FA Flow
+- Temporary tokens for 2FA verification
+- Separate verification endpoint
+- Recovery code support
+
+### Social Authentication
+- OAuth2 flow with state verification
+- Provider-specific callbacks
+- User linking/creation logic
+
+## Response Format Standards
+
+### Success Response
+```go
+{
+  "success": true,
+  "data": {...}
+}
+```
+
+### Error Response
+```go
+{
+  "success": false,
+  "error": "descriptive error message"
+}
+```
+
+## Input Validation
+- Use `go-playground/validator` tags in DTOs
+- Validate in handlers before service calls
+- Return appropriate HTTP status codes
+
+## Activity Logging
+- Log security-relevant events
+- Include user ID, IP address, user agent
+- Use structured logging format
+- Examples: login attempts, password changes, 2FA events
+
+## Database Operations
+- Use GORM models from `pkg/models/`
+- Repository pattern for data access
+- Transaction support for multi-step operations
+- Proper error handling and logging
+

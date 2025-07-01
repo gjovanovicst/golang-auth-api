@@ -1,0 +1,65 @@
+---
+description: Project structure
+globs: 
+alwaysApply: false
+---
+# Project Structure and Architecture
+
+## Overview
+This is a Go REST API for authentication and authorization with JWT tokens, 2FA, social login, and comprehensive security features.
+
+## Key Entry Points
+- [cmd/api/main.go](mdc:cmd/api/main.go) - Application entry point with route definitions and dependency injection
+- [go.mod](mdc:go.mod) - Go module dependencies
+- [Makefile](mdc:Makefile) - Development, testing, and deployment commands
+- [.air.toml](mdc:.air.toml) - Hot reload configuration for development
+
+## Core Architecture Layers
+
+### Repository Layer (`internal/*/repository.go`)
+- Data access layer using GORM
+- Database operations and queries
+- Located in each feature package
+
+### Service Layer (`internal/*/service.go`) 
+- Business logic implementation
+- Orchestrates repository calls
+- Handles complex business rules
+
+### Handler Layer (`internal/*/handler.go`)
+- HTTP request/response handling
+- Input validation and Swagger documentation
+- Route-specific logic
+
+## Package Structure
+
+### `internal/` - Core Business Logic
+- `auth/` - Authentication handlers and logic
+- `user/` - User management (registration, profile, etc.)
+- `social/` - OAuth2 social login providers
+- `twofa/` - Two-Factor Authentication with TOTP
+- `log/` - Activity logging system
+- `email/` - Email verification and password reset
+- `middleware/` - JWT authentication middleware
+- `database/` - Database connection and migrations
+- `redis/` - Redis session management
+- `config/` - Configuration management
+- `util/` - Utility functions
+
+### `pkg/` - Shared Packages
+- `models/` - Database models with GORM tags
+- `dto/` - Data Transfer Objects for API requests/responses
+- `errors/` - Custom error types
+- `jwt/` - JWT token utilities
+
+### `docs/` - API Documentation
+- Auto-generated Swagger documentation
+- [docs/swagger.json](mdc:docs/swagger.json) and [docs/swagger.yaml](mdc:docs/swagger.yaml)
+
+## Development Patterns
+- Constructor functions for dependency injection (e.g., `NewService()`, `NewHandler()`)
+- Interface-based design for testability
+- Clean separation between layers
+- Comprehensive error handling with custom types
+- Activity logging for security auditing
+

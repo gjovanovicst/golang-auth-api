@@ -165,12 +165,31 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, string,
 	return newAccessToken, newRefreshToken, claims.UserID, nil
 }
 
-// LogoutUser logs out a user by revoking their refresh token
-func (s *Service) LogoutUser(userID, refreshToken string) *errors.AppError {
+// LogoutUser logs out a user by revoking their refresh token and blacklisting their access token
+func (s *Service) LogoutUser(userID, refreshToken, accessToken string) *errors.AppError {
 	// Revoke the refresh token in Redis
 	if err := redis.RevokeRefreshToken(userID, refreshToken); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to revoke refresh token")
 	}
+
+	// Blacklist the access token to prevent further use
+	// Parse the access token to get its expiration time
+	claims, err := jwt.ParseToken(accessToken)
+	if err == nil {
+		// Calculate remaining TTL of access token for blacklist expiration
+		remainingTime := time.Until(claims.ExpiresAt.Time)
+		if remainingTime > 0 {
+			// Only blacklist if token hasn't expired yet
+			if err := redis.BlacklistAccessToken(accessToken, userID, remainingTime); err != nil {
+				// Log the error but don't fail logout completely
+				fmt.Printf("Warning: Failed to blacklist access token: %v\n", err)
+			}
+		}
+	} else {
+		// Log the error but don't fail logout completely
+		fmt.Printf("Warning: Failed to parse access token during logout: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -241,6 +260,11 @@ func (s *Service) ConfirmPasswordReset(token, newPassword string) (uuid.UUID, *e
 		fmt.Printf("Warning: Failed to delete used password reset token from Redis: %v\n", err)
 	}
 
+	// Security: Revoke all existing tokens for this user after password change
+	if err := s.RevokeAllUserTokens(userID); err != nil {
+		fmt.Printf("Warning: Failed to revoke all user tokens after password reset: %v\n", err.Message)
+	}
+
 	// Parse UUID for return
 	userUUID, parseErr := uuid.Parse(userID)
 	if parseErr != nil {
@@ -248,4 +272,25 @@ func (s *Service) ConfirmPasswordReset(token, newPassword string) (uuid.UUID, *e
 	}
 
 	return userUUID, nil
+}
+
+// RevokeAllUserTokens revokes all access and refresh tokens for a user
+// This is used for security events like password changes, account compromise, etc.
+func (s *Service) RevokeAllUserTokens(userID string) *errors.AppError {
+	// Revoke the current refresh token (if any)
+	currentRefreshToken, err := redis.GetRefreshToken(userID)
+	if err == nil && currentRefreshToken != "" {
+		if err := redis.RevokeRefreshToken(userID, currentRefreshToken); err != nil {
+			fmt.Printf("Warning: Failed to revoke refresh token for user %s: %v\n", userID, err)
+		}
+	}
+
+	// Blacklist all tokens for this user for the maximum possible token lifetime
+	// Use the longer of access token or refresh token expiration time
+	maxTokenLifetime := time.Hour * time.Duration(24*30) // 30 days should cover most token lifetimes
+	if err := redis.BlacklistAllUserTokens(userID, maxTokenLifetime); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to blacklist user tokens")
+	}
+
+	return nil
 }

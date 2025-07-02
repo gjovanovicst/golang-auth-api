@@ -57,9 +57,12 @@ definitions:
     type: object
   dto.LogoutRequest:
     properties:
+      access_token:
+        type: string
       refresh_token:
         type: string
     required:
+    - access_token
     - refresh_token
     type: object
   dto.MessageResponse:

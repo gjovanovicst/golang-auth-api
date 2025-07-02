@@ -1333,9 +1333,13 @@ const docTemplate = `{
         "dto.LogoutRequest": {
             "type": "object",
             "required": [
+                "access_token",
                 "refresh_token"
             ],
             "properties": {
+                "access_token": {
+                    "type": "string"
+                },
                 "refresh_token": {
                     "type": "string"
                 }

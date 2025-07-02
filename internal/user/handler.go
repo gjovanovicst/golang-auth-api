@@ -320,7 +320,7 @@ func (h *Handler) Logout(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.LogoutUser(userID.(string), req.RefreshToken); err != nil {
+	if err := h.Service.LogoutUser(userID.(string), req.RefreshToken, req.AccessToken); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}

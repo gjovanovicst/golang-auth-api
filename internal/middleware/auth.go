@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 )
 
@@ -21,9 +22,40 @@ func AuthMiddleware() gin.HandlerFunc {
 			tokenString = authHeader[7:]
 		}
 
+		// Parse and validate JWT
 		claims, err := jwt.ParseToken(tokenString)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			return
+		}
+
+		// Check Redis blacklists only if Redis is available
+		if redis.Rdb != nil {
+			// Check if the specific access token is blacklisted
+			blacklisted, err := redis.IsAccessTokenBlacklisted(tokenString)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Token validation error"})
+				return
+			}
+			if blacklisted {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token has been revoked"})
+				return
+			}
+
+			// Check if all tokens for this user are blacklisted (e.g., after password change)
+			userBlacklisted, err := redis.IsUserTokensBlacklisted(claims.UserID)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Token validation error"})
+				return
+			}
+			if userBlacklisted {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "All user tokens have been revoked"})
+				return
+			}
+		} else {
+			// Redis not available - log warning in production, but allow for testing
+			// In production, this should be treated as an error
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Token validation service unavailable"})
 			return
 		}
 

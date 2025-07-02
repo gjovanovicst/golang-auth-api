@@ -70,12 +70,13 @@ else
 fi
 
 echo ""
-echo "🚪 Step 4: Logout using the refresh token"
+echo "🚪 Step 4: Logout using both refresh and access tokens"
 LOGOUT_RESPONSE=$(curl -s -X POST $BASE_URL/logout \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -d "{
-    \"refresh_token\": \"$REFRESH_TOKEN\"
+    \"refresh_token\": \"$REFRESH_TOKEN\",
+    \"access_token\": \"$ACCESS_TOKEN\"
   }")
 
 echo "Logout Response: $LOGOUT_RESPONSE"
@@ -88,7 +89,20 @@ else
 fi
 
 echo ""
-echo "🔍 Step 5: Try to use refresh token after logout (should fail)"
+echo "🔍 Step 5: Try to access protected endpoint after logout (should fail)"
+PROFILE_AFTER_LOGOUT=$(curl -s -X GET $BASE_URL/profile \
+    -H "Authorization: Bearer $ACCESS_TOKEN")
+
+echo "Profile After Logout Response: $PROFILE_AFTER_LOGOUT"
+
+if echo $PROFILE_AFTER_LOGOUT | grep -q "error"; then
+    echo -e "${GREEN}✅ Access token correctly blacklisted!${NC}"
+else
+    echo -e "${RED}❌ Access token was not properly blacklisted${NC}"
+fi
+
+echo ""
+echo "🔍 Step 6: Try to use refresh token after logout (should fail)"
 REFRESH_AFTER_LOGOUT=$(curl -s -X POST $BASE_URL/refresh-token \
     -H "Content-Type: application/json" \
     -d "{
@@ -108,6 +122,7 @@ echo "🎉 Logout functionality test completed!"
 echo ""
 echo "Summary:"
 echo "- ✅ User can logout successfully"
+echo "- ✅ Access token is blacklisted after logout"
 echo "- ✅ Refresh token is revoked after logout"
 echo "- ✅ Logout requires authentication (access token)"
 echo "- ✅ Logout endpoint returns proper success message"

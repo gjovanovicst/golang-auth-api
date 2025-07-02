@@ -129,18 +129,56 @@ func DeleteTempTwoFASecret(userID string) error {
 
 // SetTempUserSession stores a temporary user session for 2FA login
 func SetTempUserSession(tempToken, userID string, expiration time.Duration) error {
-	key := fmt.Sprintf("temp_user_session:%s", tempToken)
+	key := fmt.Sprintf("temp_session:%s", tempToken)
 	return Rdb.Set(ctx, key, userID, expiration).Err()
 }
 
-// GetTempUserSession retrieves userID from temporary session
+// GetTempUserSession retrieves a temporary user session
 func GetTempUserSession(tempToken string) (string, error) {
-	key := fmt.Sprintf("temp_user_session:%s", tempToken)
+	key := fmt.Sprintf("temp_session:%s", tempToken)
 	return Rdb.Get(ctx, key).Result()
 }
 
 // DeleteTempUserSession deletes a temporary user session
 func DeleteTempUserSession(tempToken string) error {
-	key := fmt.Sprintf("temp_user_session:%s", tempToken)
+	key := fmt.Sprintf("temp_session:%s", tempToken)
 	return Rdb.Del(ctx, key).Err()
+}
+
+// Access Token Blacklisting Functions
+
+// BlacklistAccessToken adds an access token to the blacklist with its remaining TTL
+func BlacklistAccessToken(tokenString string, userID string, expiration time.Duration) error {
+	key := fmt.Sprintf("blacklist_token:%s", tokenString)
+	return Rdb.Set(ctx, key, userID, expiration).Err()
+}
+
+// IsAccessTokenBlacklisted checks if an access token is blacklisted
+func IsAccessTokenBlacklisted(tokenString string) (bool, error) {
+	key := fmt.Sprintf("blacklist_token:%s", tokenString)
+	_, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil // Token not found in blacklist
+	} else if err != nil {
+		return false, err // Redis error
+	}
+	return true, nil // Token found in blacklist
+}
+
+// BlacklistAllUserTokens blacklists all tokens for a specific user (useful for password changes, account compromise)
+func BlacklistAllUserTokens(userID string, expiration time.Duration) error {
+	key := fmt.Sprintf("blacklist_user:%s", userID)
+	return Rdb.Set(ctx, key, "all_tokens_revoked", expiration).Err()
+}
+
+// IsUserTokensBlacklisted checks if all tokens for a user are blacklisted
+func IsUserTokensBlacklisted(userID string) (bool, error) {
+	key := fmt.Sprintf("blacklist_user:%s", userID)
+	_, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil // User tokens not blacklisted
+	} else if err != nil {
+		return false, err // Redis error
+	}
+	return true, nil // All user tokens are blacklisted
 }

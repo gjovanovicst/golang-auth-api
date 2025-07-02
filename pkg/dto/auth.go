@@ -20,6 +20,7 @@ type RefreshTokenRequest struct {
 // LogoutRequest represents the request payload for user logout
 type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
+	AccessToken  string `json:"access_token" validate:"required"`
 }
 
 // ForgotPasswordRequest represents the request payload for forgot password

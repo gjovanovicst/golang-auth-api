@@ -317,13 +317,43 @@ func TestLogoutHandlerValidation(t *testing.T) {
 	})
 	router.POST("/logout", handler.Logout)
 
-	// Test missing refresh token
+	// Test missing both tokens
 	logoutData := map[string]interface{}{}
 	jsonData, _ := json.Marshal(logoutData)
 	req, _ := http.NewRequest("POST", "/logout", bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 
 	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status code 400 for missing tokens, got %d", w.Code)
+	}
+
+	// Test missing access token
+	logoutData = map[string]interface{}{
+		"refresh_token": "valid-refresh-token",
+	}
+	jsonData, _ = json.Marshal(logoutData)
+	req, _ = http.NewRequest("POST", "/logout", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status code 400 for missing access token, got %d", w.Code)
+	}
+
+	// Test missing refresh token
+	logoutData = map[string]interface{}{
+		"access_token": "valid-access-token",
+	}
+	jsonData, _ = json.Marshal(logoutData)
+	req, _ = http.NewRequest("POST", "/logout", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+
+	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
@@ -342,6 +372,7 @@ func TestLogoutHandlerMissingUserID(t *testing.T) {
 	// Test valid logout request but missing userID
 	logoutData := map[string]interface{}{
 		"refresh_token": "valid-refresh-token",
+		"access_token":  "valid-access-token",
 	}
 	jsonData, _ := json.Marshal(logoutData)
 	req, _ := http.NewRequest("POST", "/logout", bytes.NewBuffer(jsonData))

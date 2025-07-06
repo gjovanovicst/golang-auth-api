@@ -82,6 +82,9 @@ func main() {
 	// Setup Gin Router
 	r := gin.Default()
 
+	// Add CORS middleware
+	r.Use(middleware.CORSMiddleware())
+
 	// Public routes
 	public := r.Group("/")
 	{

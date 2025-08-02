@@ -334,3 +334,39 @@ func (h *Handler) Logout(c *gin.Context) {
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Successfully logged out"})
 }
+
+// ValidateToken godoc
+// @Summary      Validate JWT Token
+// @Description  Validates a JWT token and returns basic user info for external services
+// @Tags         auth
+// @Security     ApiKeyAuth
+// @Produce      json
+// @Success      200 {object} map[string]interface{}
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /auth/validate [get]
+func (h *Handler) ValidateToken(c *gin.Context) {
+	// Get user ID from context (set by AuthMiddleware)
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{
+			Error: "User ID not found in context",
+		})
+		return
+	}
+
+	// Get user basic info
+	user, err := h.Service.Repo.GetUserByID(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{
+			Error: "User not found",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"valid":  true,
+		"userID": user.ID,
+		"email":  user.Email,
+	})
+}

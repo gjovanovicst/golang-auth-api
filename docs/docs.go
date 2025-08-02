@@ -660,6 +660,14 @@ const docTemplate = `{
                     "social"
                 ],
                 "summary": "Facebook OAuth2 Login",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Frontend callback URL",
+                        "name": "redirect_uri",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "307": {
                         "description": "Redirect",
@@ -746,6 +754,14 @@ const docTemplate = `{
                     "social"
                 ],
                 "summary": "GitHub OAuth2 Login",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Frontend callback URL",
+                        "name": "redirect_uri",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "307": {
                         "description": "Redirect",
@@ -832,11 +848,57 @@ const docTemplate = `{
                     "social"
                 ],
                 "summary": "Google OAuth2 Login",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Frontend callback URL",
+                        "name": "redirect_uri",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "307": {
                         "description": "Redirect",
                         "schema": {
                             "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/validate": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Validates a JWT token and returns basic user info for external services",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Validate JWT Token",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     }
                 }

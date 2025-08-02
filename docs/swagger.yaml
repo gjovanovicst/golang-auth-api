@@ -614,6 +614,11 @@ paths:
   /auth/facebook/login:
     get:
       description: Redirects user to Facebook OAuth2 login page
+      parameters:
+      - description: Frontend callback URL
+        in: query
+        name: redirect_uri
+        type: string
       produces:
       - application/json
       responses:
@@ -671,6 +676,11 @@ paths:
   /auth/github/login:
     get:
       description: Redirects user to GitHub OAuth2 login page
+      parameters:
+      - description: Frontend callback URL
+        in: query
+        name: redirect_uri
+        type: string
       produces:
       - application/json
       responses:
@@ -728,6 +738,11 @@ paths:
   /auth/google/login:
     get:
       description: Redirects user to Google OAuth2 login page
+      parameters:
+      - description: Frontend callback URL
+        in: query
+        name: redirect_uri
+        type: string
       produces:
       - application/json
       responses:
@@ -738,6 +753,31 @@ paths:
       summary: Google OAuth2 Login
       tags:
       - social
+  /auth/validate:
+    get:
+      description: Validates a JWT token and returns basic user info for external
+        services
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Validate JWT Token
+      tags:
+      - auth
   /forgot-password:
     post:
       consumes:

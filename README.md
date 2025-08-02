@@ -159,6 +159,7 @@ The following `make` commands are available for development, testing, building, 
 
 ### User Management
 - `GET /profile` — Get user profile (protected)
+- `GET /auth/validate` — Validate JWT token for external services (protected)
 
 ### Activity Logs
 - `GET /activity-logs` — Get authenticated user's activity logs with pagination and filtering (protected)

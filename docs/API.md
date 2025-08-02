@@ -46,5 +46,10 @@
 - Header: `Authorization: Bearer <token>`
 - Response: `{ "success": true, "data": { ...user... } }`
 
+### Token Validation (for external services)
+- `GET /auth/validate`
+- Header: `Authorization: Bearer <token>`
+- Response: `{ "valid": true, "userID": "uuid", "email": "user@example.com" }`
+
 ---
 For more details, see the OpenAPI spec (if available) or code comments.

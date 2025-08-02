@@ -18,6 +18,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - default
+      - shared-api-network
 
   # Redis Cache
   redis:
@@ -32,6 +35,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - default
+      - shared-api-network
 
   # Redis Commander - Web UI for Redis Management
   redis-commander:
@@ -47,6 +53,8 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
+    networks:
+      - default
 
   # Go Auth API Application
   auth-api:
@@ -64,7 +72,14 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - default
+      - shared-api-network
 
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  shared-api-network:
+    external: true

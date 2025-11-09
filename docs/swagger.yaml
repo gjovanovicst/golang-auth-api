@@ -26,6 +26,18 @@ definitions:
       user_id:
         type: string
     type: object
+  dto.DeleteAccountRequest:
+    properties:
+      confirm_deletion:
+        example: true
+        type: boolean
+      password:
+        example: password123
+        type: string
+    required:
+    - confirm_deletion
+    - password
+    type: object
   dto.ErrorResponse:
     properties:
       error:
@@ -190,6 +202,57 @@ definitions:
         type: string
     required:
     - code
+    type: object
+  dto.UpdateEmailRequest:
+    properties:
+      email:
+        example: newemail@example.com
+        type: string
+      password:
+        example: currentpassword123
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  dto.UpdatePasswordRequest:
+    properties:
+      current_password:
+        example: oldpassword123
+        type: string
+      new_password:
+        example: newpassword123
+        minLength: 8
+        type: string
+    required:
+    - current_password
+    - new_password
+    type: object
+  dto.UpdateProfileRequest:
+    properties:
+      first_name:
+        example: John
+        maxLength: 50
+        minLength: 1
+        type: string
+      last_name:
+        example: Doe
+        maxLength: 50
+        minLength: 1
+        type: string
+      locale:
+        example: en-US
+        maxLength: 10
+        minLength: 2
+        type: string
+      name:
+        example: John Doe
+        maxLength: 100
+        minLength: 1
+        type: string
+      profile_picture:
+        example: https://example.com/avatar.jpg
+        type: string
     type: object
   dto.UserResponse:
     properties:
@@ -924,6 +987,42 @@ paths:
       tags:
       - Auth
   /profile:
+    delete:
+      consumes:
+      - application/json
+      description: Delete authenticated user's account permanently (requires password
+        verification and confirmation)
+      parameters:
+      - description: Account Deletion Data
+        in: body
+        name: delete
+        required: true
+        schema:
+          $ref: '#/definitions/dto.DeleteAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete user account
+      tags:
+      - User
     get:
       description: Retrieve authenticated user's profile information
       produces:
@@ -944,6 +1043,120 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Get user profile
+      tags:
+      - User
+    put:
+      consumes:
+      - application/json
+      description: Update authenticated user's profile information (name, first_name,
+        last_name, profile_picture, locale)
+      parameters:
+      - description: Profile Update Data
+        in: body
+        name: profile
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Update user profile
+      tags:
+      - User
+  /profile/email:
+    put:
+      consumes:
+      - application/json
+      description: Update authenticated user's email address (requires password verification
+        and email re-verification)
+      parameters:
+      - description: Email Update Data
+        in: body
+        name: email
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Update user email
+      tags:
+      - User
+  /profile/password:
+    put:
+      consumes:
+      - application/json
+      description: Update authenticated user's password (requires current password
+        verification)
+      parameters:
+      - description: Password Update Data
+        in: body
+        name: password
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdatePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Update user password
       tags:
       - User
   /refresh-token:

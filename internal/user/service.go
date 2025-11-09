@@ -294,3 +294,144 @@ func (s *Service) RevokeAllUserTokens(userID string) *errors.AppError {
 
 	return nil
 }
+
+// UpdateUserProfile updates the user profile information (name, first_name, last_name, profile_picture, locale)
+func (s *Service) UpdateUserProfile(userID string, req dto.UpdateProfileRequest) *errors.AppError {
+	// Build updates map with only provided fields
+	updates := make(map[string]interface{})
+	
+	if req.Name != "" {
+		updates["name"] = req.Name
+	}
+	if req.FirstName != "" {
+		updates["first_name"] = req.FirstName
+	}
+	if req.LastName != "" {
+		updates["last_name"] = req.LastName
+	}
+	if req.ProfilePicture != "" {
+		updates["profile_picture"] = req.ProfilePicture
+	}
+	if req.Locale != "" {
+		updates["locale"] = req.Locale
+	}
+
+	// If no fields to update, return early
+	if len(updates) == 0 {
+		return errors.NewAppError(errors.ErrBadRequest, "No fields provided for update")
+	}
+
+	// Update user profile in database
+	if err := s.Repo.UpdateUserProfile(userID, updates); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to update profile")
+	}
+
+	return nil
+}
+
+// UpdateUserEmail updates the user's email address after verifying password
+func (s *Service) UpdateUserEmail(userID string, req dto.UpdateEmailRequest) *errors.AppError {
+	// Get current user to verify password
+	user, err := s.Repo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+
+	// Verify current password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		return errors.NewAppError(errors.ErrUnauthorized, "Invalid password")
+	}
+
+	// Check if new email is already in use
+	existingUser, err := s.Repo.GetUserByEmail(req.Email)
+	if err == nil && existingUser.ID != user.ID {
+		return errors.NewAppError(errors.ErrConflict, "Email already in use")
+	}
+
+	// Update email and set email_verified to false
+	if err := s.Repo.UpdateUserEmail(userID, req.Email); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to update email")
+	}
+
+	// Generate and send new email verification token
+	verificationToken := uuid.New().String()
+	if err := redis.SetEmailVerificationToken(userID, verificationToken, 24*time.Hour); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to generate verification token")
+	}
+
+	if err := s.EmailService.SendVerificationEmail(req.Email, verificationToken); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
+	}
+
+	return nil
+}
+
+// UpdateUserPassword updates the user's password after verifying current password
+func (s *Service) UpdateUserPassword(userID string, req dto.UpdatePasswordRequest) *errors.AppError {
+	// Get current user to verify password
+	user, err := s.Repo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+
+	// Verify current password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		return errors.NewAppError(errors.ErrUnauthorized, "Invalid current password")
+	}
+
+	// Check new password is different from current
+	if req.CurrentPassword == req.NewPassword {
+		return errors.NewAppError(errors.ErrBadRequest, "New password must be different from current password")
+	}
+
+	// Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to hash new password")
+	}
+
+	// Update password
+	if err := s.Repo.UpdateUserPassword(userID, string(hashedPassword)); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to update password")
+	}
+
+	// Revoke all existing tokens for security
+	if err := s.RevokeAllUserTokens(userID); err != nil {
+		fmt.Printf("Warning: Failed to revoke all user tokens after password change: %v\n", err.Message)
+	}
+
+	return nil
+}
+
+// DeleteUserAccount deletes the user account after verifying password
+func (s *Service) DeleteUserAccount(userID string, req dto.DeleteAccountRequest) *errors.AppError {
+	// Get current user to verify password
+	user, err := s.Repo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+
+	// Verify password (if user has password - social login users might not)
+	if user.PasswordHash != "" {
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+			return errors.NewAppError(errors.ErrUnauthorized, "Invalid password")
+		}
+	}
+
+	// Verify confirmation flag
+	if !req.ConfirmDeletion {
+		return errors.NewAppError(errors.ErrBadRequest, "Account deletion must be confirmed")
+	}
+
+	// Revoke all tokens
+	if err := s.RevokeAllUserTokens(userID); err != nil {
+		fmt.Printf("Warning: Failed to revoke all user tokens before account deletion: %v\n", err.Message)
+	}
+
+	// Delete user from database (cascade will delete related records)
+	if err := s.Repo.DeleteUser(userID); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to delete account")
+	}
+
+	return nil
+}

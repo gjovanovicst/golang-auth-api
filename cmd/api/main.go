@@ -118,7 +118,14 @@ func main() {
 	protected := r.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
+		// User profile routes
 		protected.GET("/profile", userHandler.GetProfile)
+		protected.PUT("/profile", userHandler.UpdateProfile)
+		protected.DELETE("/profile", userHandler.DeleteAccount)
+		protected.PUT("/profile/email", userHandler.UpdateEmail)
+		protected.PUT("/profile/password", userHandler.UpdatePassword)
+
+		// Auth routes
 		protected.GET("/auth/validate", userHandler.ValidateToken)
 		protected.POST("/logout", userHandler.Logout)
 

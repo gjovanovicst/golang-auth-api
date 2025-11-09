@@ -19,12 +19,15 @@ const (
 	EventPasswordChange   = "PASSWORD_CHANGE"
 	EventPasswordReset    = "PASSWORD_RESET"
 	EventEmailVerify      = "EMAIL_VERIFY"
+	EventEmailChange      = "EMAIL_CHANGE"
 	Event2FAEnable        = "2FA_ENABLE"
 	Event2FADisable       = "2FA_DISABLE"
 	Event2FALogin         = "2FA_LOGIN"
 	EventTokenRefresh     = "TOKEN_REFRESH"
 	EventSocialLogin      = "SOCIAL_LOGIN"
 	EventProfileAccess    = "PROFILE_ACCESS"
+	EventProfileUpdate    = "PROFILE_UPDATE"
+	EventAccountDeletion  = "ACCOUNT_DELETION"
 	EventRecoveryCodeUsed = "RECOVERY_CODE_USED"
 	EventRecoveryCodeGen  = "RECOVERY_CODE_GENERATE"
 )
@@ -267,4 +270,19 @@ func LogRecoveryCodeUsed(userID uuid.UUID, ipAddress, userAgent string) {
 // LogRecoveryCodeGenerate logs when new recovery codes are generated
 func LogRecoveryCodeGenerate(userID uuid.UUID, ipAddress, userAgent string) {
 	GetLogService().LogActivity(userID, EventRecoveryCodeGen, ipAddress, userAgent, nil)
+}
+
+// LogEmailChange logs an email change event
+func LogEmailChange(userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(userID, EventEmailChange, ipAddress, userAgent, details)
+}
+
+// LogProfileUpdate logs a profile update event
+func LogProfileUpdate(userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(userID, EventProfileUpdate, ipAddress, userAgent, details)
+}
+
+// LogAccountDeletion logs an account deletion event
+func LogAccountDeletion(userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(userID, EventAccountDeletion, ipAddress, userAgent, nil)
 }

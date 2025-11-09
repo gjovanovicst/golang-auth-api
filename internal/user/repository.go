@@ -65,3 +65,21 @@ func (r *Repository) Disable2FA(userID string) error {
 func (r *Repository) UpdateRecoveryCodes(userID, recoveryCodes string) error {
 	return r.DB.Model(&models.User{}).Where("id = ?", userID).Update("two_fa_recovery_codes", recoveryCodes).Error
 }
+
+// DeleteUser deletes a user and all related data (cascade)
+func (r *Repository) DeleteUser(userID string) error {
+	return r.DB.Where("id = ?", userID).Delete(&models.User{}).Error
+}
+
+// UpdateUserProfile updates user profile fields (name, first_name, last_name, profile_picture, locale)
+func (r *Repository) UpdateUserProfile(userID string, updates map[string]interface{}) error {
+	return r.DB.Model(&models.User{}).Where("id = ?", userID).Updates(updates).Error
+}
+
+// UpdateUserEmail updates user email and sets email_verified to false
+func (r *Repository) UpdateUserEmail(userID, newEmail string) error {
+	return r.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"email":          newEmail,
+		"email_verified": false,
+	}).Error
+}

@@ -116,3 +116,30 @@ type ErrorResponse struct {
 type MessageResponse struct {
 	Message string `json:"message"`
 }
+
+// UpdateProfileRequest represents the request payload for profile update
+type UpdateProfileRequest struct {
+	Name           string `json:"name,omitempty" validate:"omitempty,min=1,max=100" example:"John Doe"`
+	FirstName      string `json:"first_name,omitempty" validate:"omitempty,min=1,max=50" example:"John"`
+	LastName       string `json:"last_name,omitempty" validate:"omitempty,min=1,max=50" example:"Doe"`
+	ProfilePicture string `json:"profile_picture,omitempty" validate:"omitempty,url" example:"https://example.com/avatar.jpg"`
+	Locale         string `json:"locale,omitempty" validate:"omitempty,min=2,max=10" example:"en-US"`
+}
+
+// UpdateEmailRequest represents the request payload for email update
+type UpdateEmailRequest struct {
+	Email    string `json:"email" validate:"required,email" example:"newemail@example.com"`
+	Password string `json:"password" validate:"required" example:"currentpassword123"`
+}
+
+// UpdatePasswordRequest represents the request payload for password update
+type UpdatePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required" example:"oldpassword123"`
+	NewPassword     string `json:"new_password" validate:"required,min=8" example:"newpassword123"`
+}
+
+// DeleteAccountRequest represents the request payload for account deletion
+type DeleteAccountRequest struct {
+	Password        string `json:"password" validate:"required" example:"password123"`
+	ConfirmDeletion bool   `json:"confirm_deletion" validate:"required,eq=true" example:"true"`
+}

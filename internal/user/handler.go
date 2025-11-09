@@ -395,3 +395,230 @@ func (h *Handler) ValidateToken(c *gin.Context) {
 		"email":  user.Email,
 	})
 }
+
+// @Summary Update user profile
+// @Description Update authenticated user's profile information (name, first_name, last_name, profile_picture, locale)
+// @Tags User
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   profile  body      dto.UpdateProfileRequest  true  "Profile Update Data"
+// @Success 200 {object}  dto.UserResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /profile [put]
+func (h *Handler) UpdateProfile(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	var req dto.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.Service.UpdateUserProfile(userID.(string), req); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Get updated user profile
+	user, err := h.Service.Repo.GetUserByID(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "User not found"})
+		return
+	}
+
+	// Log profile update
+	ipAddress, userAgent := util.GetClientInfo(c)
+	details := map[string]interface{}{
+		"updated_fields": req,
+	}
+	log.LogProfileUpdate(user.ID, ipAddress, userAgent, details)
+
+	// Convert social accounts to DTO
+	socialAccounts := make([]dto.SocialAccountResponse, len(user.SocialAccounts))
+	for i, sa := range user.SocialAccounts {
+		socialAccounts[i] = dto.SocialAccountResponse{
+			ID:             sa.ID.String(),
+			Provider:       sa.Provider,
+			ProviderUserID: sa.ProviderUserID,
+			Email:          sa.Email,
+			Name:           sa.Name,
+			FirstName:      sa.FirstName,
+			LastName:       sa.LastName,
+			ProfilePicture: sa.ProfilePicture,
+			Username:       sa.Username,
+			Locale:         sa.Locale,
+			CreatedAt:      sa.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:      sa.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+	}
+
+	c.JSON(http.StatusOK, dto.UserResponse{
+		ID:             user.ID.String(),
+		Email:          user.Email,
+		EmailVerified:  user.EmailVerified,
+		Name:           user.Name,
+		FirstName:      user.FirstName,
+		LastName:       user.LastName,
+		ProfilePicture: user.ProfilePicture,
+		Locale:         user.Locale,
+		TwoFAEnabled:   user.TwoFAEnabled,
+		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		SocialAccounts: socialAccounts,
+	})
+}
+
+// @Summary Update user email
+// @Description Update authenticated user's email address (requires password verification and email re-verification)
+// @Tags User
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   email  body      dto.UpdateEmailRequest  true  "Email Update Data"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse
+// @Failure 409 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /profile/email [put]
+func (h *Handler) UpdateEmail(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	var req dto.UpdateEmailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.Service.UpdateUserEmail(userID.(string), req); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Log email update
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		details := map[string]interface{}{
+			"new_email": req.Email,
+		}
+		log.LogEmailChange(userUUID, ipAddress, userAgent, details)
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Email updated successfully. Please check your new email for verification."})
+}
+
+// @Summary Update user password
+// @Description Update authenticated user's password (requires current password verification)
+// @Tags User
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   password  body      dto.UpdatePasswordRequest  true  "Password Update Data"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /profile/password [put]
+func (h *Handler) UpdatePassword(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	var req dto.UpdatePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.Service.UpdateUserPassword(userID.(string), req); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Log password change
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.LogPasswordChange(userUUID, ipAddress, userAgent)
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Password updated successfully. All sessions have been logged out for security."})
+}
+
+// @Summary Delete user account
+// @Description Delete authenticated user's account permanently (requires password verification and confirmation)
+// @Tags User
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   delete  body      dto.DeleteAccountRequest  true  "Account Deletion Data"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /profile [delete]
+func (h *Handler) DeleteAccount(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	var req dto.DeleteAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	// Log account deletion before actually deleting
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.LogAccountDeletion(userUUID, ipAddress, userAgent)
+	}
+
+	if err := h.Service.DeleteUserAccount(userID.(string), req); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Account deleted successfully. We're sorry to see you go."})
+}

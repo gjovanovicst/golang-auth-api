@@ -25,8 +25,12 @@ func (r *Repository) GetUserByEmail(email string) (*models.User, error) {
 
 func (r *Repository) GetUserByID(id string) (*models.User, error) {
 	var user models.User
-	err := r.DB.Where("id = ?", id).First(&user).Error
+	err := r.DB.Preload("SocialAccounts").Where("id = ?", id).First(&user).Error
 	return &user, err
+}
+
+func (r *Repository) UpdateUser(user *models.User) error {
+	return r.DB.Save(user).Error
 }
 
 func (r *Repository) UpdateUserPassword(userID, hashedPassword string) error {

@@ -114,6 +114,33 @@ definitions:
     - new_password
     - token
     type: object
+  dto.SocialAccountResponse:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      first_name:
+        type: string
+      id:
+        type: string
+      last_name:
+        type: string
+      locale:
+        type: string
+      name:
+        type: string
+      profile_picture:
+        type: string
+      provider:
+        type: string
+      provider_user_id:
+        type: string
+      updated_at:
+        type: string
+      username:
+        type: string
+    type: object
   dto.TwoFADisableRequest:
     properties:
       code:
@@ -172,8 +199,22 @@ definitions:
         type: string
       email_verified:
         type: boolean
+      first_name:
+        type: string
       id:
         type: string
+      last_name:
+        type: string
+      locale:
+        type: string
+      name:
+        type: string
+      profile_picture:
+        type: string
+      social_accounts:
+        items:
+          $ref: '#/definitions/dto.SocialAccountResponse'
+        type: array
       two_fa_enabled:
         type: boolean
       updated_at:

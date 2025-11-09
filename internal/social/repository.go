@@ -29,6 +29,10 @@ func (r *Repository) GetSocialAccountsByUserID(userID string) ([]models.SocialAc
 	return socialAccounts, err
 }
 
+func (r *Repository) UpdateSocialAccount(socialAccount *models.SocialAccount) error {
+	return r.DB.Save(socialAccount).Error
+}
+
 func (r *Repository) UpdateSocialAccountTokens(id string, accessToken, refreshToken string) error {
 	return r.DB.Model(&models.SocialAccount{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"access_token":  accessToken,

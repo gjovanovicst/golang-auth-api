@@ -277,14 +277,39 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	log.LogProfileAccess(user.ID, ipAddress, userAgent)
 
+	// Convert social accounts to DTO
+	socialAccounts := make([]dto.SocialAccountResponse, len(user.SocialAccounts))
+	for i, sa := range user.SocialAccounts {
+		socialAccounts[i] = dto.SocialAccountResponse{
+			ID:             sa.ID.String(),
+			Provider:       sa.Provider,
+			ProviderUserID: sa.ProviderUserID,
+			Email:          sa.Email,
+			Name:           sa.Name,
+			FirstName:      sa.FirstName,
+			LastName:       sa.LastName,
+			ProfilePicture: sa.ProfilePicture,
+			Username:       sa.Username,
+			Locale:         sa.Locale,
+			CreatedAt:      sa.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:      sa.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+	}
+
 	// Return user profile without sensitive information
 	c.JSON(http.StatusOK, dto.UserResponse{
-		ID:            user.ID.String(),
-		Email:         user.Email,
-		EmailVerified: user.EmailVerified,
-		TwoFAEnabled:  user.TwoFAEnabled,
-		CreatedAt:     user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:     user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:             user.ID.String(),
+		Email:          user.Email,
+		EmailVerified:  user.EmailVerified,
+		Name:           user.Name,
+		FirstName:      user.FirstName,
+		LastName:       user.LastName,
+		ProfilePicture: user.ProfilePicture,
+		Locale:         user.Locale,
+		TwoFAEnabled:   user.TwoFAEnabled,
+		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		SocialAccounts: socialAccounts,
 	})
 }
 

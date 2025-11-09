@@ -1481,6 +1481,47 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.SocialAccountResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "locale": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "profile_picture": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "provider_user_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "dto.TwoFADisableRequest": {
             "type": "object",
             "required": [
@@ -1571,8 +1612,29 @@ const docTemplate = `{
                 "email_verified": {
                     "type": "boolean"
                 },
+                "first_name": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "locale": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "profile_picture": {
+                    "type": "string"
+                },
+                "social_accounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.SocialAccountResponse"
+                    }
                 },
                 "two_fa_enabled": {
                     "type": "boolean"

@@ -75,14 +75,36 @@ type TwoFARecoveryCodesResponse struct {
 	RecoveryCodes []string `json:"recovery_codes"`
 }
 
+// SocialAccountResponse represents social account data in user profile
+type SocialAccountResponse struct {
+	ID             string `json:"id"`
+	Provider       string `json:"provider"`
+	ProviderUserID string `json:"provider_user_id"`
+	Email          string `json:"email,omitempty"`
+	Name           string `json:"name,omitempty"`
+	FirstName      string `json:"first_name,omitempty"`
+	LastName       string `json:"last_name,omitempty"`
+	ProfilePicture string `json:"profile_picture,omitempty"`
+	Username       string `json:"username,omitempty"`
+	Locale         string `json:"locale,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
 // UserResponse represents the user data in responses
 type UserResponse struct {
-	ID            string `json:"id"`
-	Email         string `json:"email"`
-	EmailVerified bool   `json:"email_verified"`
-	TwoFAEnabled  bool   `json:"two_fa_enabled"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	ID             string                  `json:"id"`
+	Email          string                  `json:"email"`
+	EmailVerified  bool                    `json:"email_verified"`
+	Name           string                  `json:"name,omitempty"`
+	FirstName      string                  `json:"first_name,omitempty"`
+	LastName       string                  `json:"last_name,omitempty"`
+	ProfilePicture string                  `json:"profile_picture,omitempty"`
+	Locale         string                  `json:"locale,omitempty"`
+	TwoFAEnabled   bool                    `json:"two_fa_enabled"`
+	CreatedAt      string                  `json:"created_at"`
+	UpdatedAt      string                  `json:"updated_at"`
+	SocialAccounts []SocialAccountResponse `json:"social_accounts,omitempty"`
 }
 
 // ErrorResponse represents a standard error response

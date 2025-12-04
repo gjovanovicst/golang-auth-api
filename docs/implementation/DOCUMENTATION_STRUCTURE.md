@@ -17,7 +17,7 @@ The documentation has been fully reorganized following GitHub best practices wit
 ├── SECURITY.md                   ✅ Security policy
 ├── CHANGELOG.md                  ✅ Version history
 ├── BREAKING_CHANGES.md           ✅ Breaking changes tracker
-├── MIGRATIONS.md                 ✅ Migration system overview
+├── (moved to docs/migrations/)   ✅ Migration system overview
 ├── LICENSE                       ✅ MIT License
 └── DOCUMENTATION_STRUCTURE.md    📝 This file (can be removed after review)
 ```

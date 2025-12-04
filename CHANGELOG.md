@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test configuration to respect environment variables via `viper.AutomaticEnv()` and `viper.SetDefault()`
 - Artifact operations now skip when running locally with `act` using `if: ${{ !env.ACT }}` condition
 - Security scanner false positive for non-cryptographic random number usage in log sampling
+- Nancy vulnerability scanner now uses `continue-on-error` to prevent CI failures when OSS Index authentication is not configured
 
 ### Changed
 - CI workflow now uses different ports to avoid conflicts with local development environments

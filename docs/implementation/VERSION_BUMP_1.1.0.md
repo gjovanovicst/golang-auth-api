@@ -45,7 +45,8 @@
 
 3. **Security Scanning**
    - Gosec security scanner integration (0 issues)
-   - Nancy vulnerability scanner (optional, requires authentication)
+   - Nancy vulnerability scanner (optional, requires OSS Index authentication)
+   - Nancy configured with `continue-on-error` to not block CI if authentication fails
    - Proper security exception documentation
 
 ### Test Infrastructure Improvements

@@ -50,7 +50,12 @@ func ConnectDatabase() {
 func MigrateDatabase() {
 	// AutoMigrate will create tables, missing columns, and missing indexes
 	// It will NOT change existing column types or delete unused columns
-	err := DB.AutoMigrate(&models.User{}, &models.SocialAccount{}, &models.ActivityLog{})
+	err := DB.AutoMigrate(
+		&models.User{},
+		&models.SocialAccount{},
+		&models.ActivityLog{},
+		&models.SchemaMigration{}, // Migration tracking table
+	)
 
 	if err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)

@@ -22,7 +22,7 @@ import (
 )
 
 // @title           Authentication and Authorization API
-// @version         1.0
+// @version         1.1.0
 // @description     This is a sample authentication and authorization API built with Go and Gin.
 // @termsOfService  http://swagger.io/terms/
 
@@ -64,6 +64,13 @@ func main() {
 
 	// Initialize Activity Log Service
 	logService.InitializeLogService()
+
+	// Initialize Activity Log Cleanup Service
+	cleanupService := logService.InitializeCleanupService(database.DB)
+	if cleanupService != nil {
+		// Ensure graceful shutdown of cleanup service
+		defer cleanupService.Shutdown()
+	}
 
 	// Initialize Services and Handlers
 	userRepo := user.NewRepository(database.DB)

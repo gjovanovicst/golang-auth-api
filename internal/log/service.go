@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math/rand"
 	"time"
 
+	"github.com/gjovanovicst/auth_api/internal/config"
 	"github.com/gjovanovicst/auth_api/internal/database"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
@@ -40,6 +42,7 @@ type LogEntry struct {
 	UserAgent string
 	Details   map[string]interface{}
 	Timestamp time.Time
+	IsAnomaly bool
 }
 
 // Service handles asynchronous activity logging
@@ -79,8 +82,60 @@ func GetLogService() *Service {
 	return serviceInstance
 }
 
-// LogActivity logs a user activity asynchronously
+// LogActivity logs a user activity asynchronously with smart filtering
 func (s *Service) LogActivity(userID uuid.UUID, eventType, ipAddress, userAgent string, details map[string]interface{}) {
+	// Get logging configuration
+	cfg := config.GetLoggingConfig()
+
+	// Check if event is enabled
+	if !cfg.IsEventEnabled(eventType) {
+		return
+	}
+
+	// Check sampling rate for high-frequency events
+	samplingRate := cfg.GetSamplingRate(eventType)
+	// #nosec G404 -- Using math/rand for non-cryptographic sampling is acceptable
+	if samplingRate < 1.0 && rand.Float64() > samplingRate {
+		// Skip this log entry based on sampling
+		return
+	}
+
+	// For informational events with anomaly detection enabled, check for anomalies
+	isAnomaly := false
+	if cfg.AnomalyDetection.Enabled {
+		severity := cfg.GetEventSeverity(eventType)
+		if severity == config.SeverityInformational {
+			detector := GetAnomalyDetector()
+			ctx := UserContext{
+				UserID:    userID,
+				IPAddress: ipAddress,
+				UserAgent: userAgent,
+				Timestamp: time.Now().UTC(),
+			}
+			anomalyCfg := AnomalyConfig{
+				Enabled:                cfg.AnomalyDetection.Enabled,
+				LogOnNewIP:             cfg.AnomalyDetection.LogOnNewIP,
+				LogOnNewUserAgent:      cfg.AnomalyDetection.LogOnNewUserAgent,
+				LogOnUnusualTimeAccess: cfg.AnomalyDetection.LogOnUnusualTimeAccess,
+				SessionWindow:          cfg.AnomalyDetection.SessionWindow,
+			}
+			result := detector.DetectAnomaly(ctx, anomalyCfg)
+
+			// If no anomaly detected and this is informational, skip logging
+			if !result.ShouldLog {
+				return
+			}
+
+			isAnomaly = result.IsAnomaly
+			if isAnomaly && details == nil {
+				details = make(map[string]interface{})
+			}
+			if isAnomaly {
+				details["anomaly_reasons"] = result.Reasons
+			}
+		}
+	}
+
 	logEntry := LogEntry{
 		UserID:    userID,
 		EventType: eventType,
@@ -88,6 +143,7 @@ func (s *Service) LogActivity(userID uuid.UUID, eventType, ipAddress, userAgent 
 		UserAgent: userAgent,
 		Details:   details,
 		Timestamp: time.Now().UTC(),
+		IsAnomaly: isAnomaly,
 	}
 
 	// Non-blocking send to channel
@@ -133,6 +189,14 @@ func (s *Service) processLogEntry(entry LogEntry) {
 		detailsJSON = json.RawMessage("{}")
 	}
 
+	// Get logging configuration for severity and retention
+	cfg := config.GetLoggingConfig()
+	severity := cfg.GetEventSeverity(entry.EventType)
+	retentionDays := cfg.GetRetentionDays(severity)
+
+	// Calculate expiration time
+	expiresAt := entry.Timestamp.AddDate(0, 0, retentionDays)
+
 	activityLog := models.ActivityLog{
 		UserID:    entry.UserID,
 		EventType: entry.EventType,
@@ -140,6 +204,9 @@ func (s *Service) processLogEntry(entry LogEntry) {
 		IPAddress: entry.IPAddress,
 		UserAgent: entry.UserAgent,
 		Details:   detailsJSON,
+		Severity:  string(severity),
+		ExpiresAt: &expiresAt,
+		IsAnomaly: entry.IsAnomaly,
 	}
 
 	var lastErr error

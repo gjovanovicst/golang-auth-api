@@ -14,15 +14,16 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// Setup test configuration
-	viper.Set("JWT_SECRET", "testsecret")
-	viper.Set("ACCESS_TOKEN_EXPIRATION_MINUTES", 15)
-	viper.Set("REFRESH_TOKEN_EXPIRATION_HOURS", 720)
+	// Enable viper to read from environment variables
+	viper.AutomaticEnv()
 
-	// Setup test Redis - use a mock/test Redis instance
-	viper.Set("REDIS_ADDR", "localhost:6379")
-	viper.Set("REDIS_PASSWORD", "")
-	viper.Set("REDIS_DB", 1) // Use DB 1 for testing
+	// Setup test configuration with defaults (will be overridden by env vars if present)
+	viper.SetDefault("JWT_SECRET", "testsecret")
+	viper.SetDefault("ACCESS_TOKEN_EXPIRATION_MINUTES", 15)
+	viper.SetDefault("REFRESH_TOKEN_EXPIRATION_HOURS", 720)
+	viper.SetDefault("REDIS_ADDR", "localhost:6379")
+	viper.SetDefault("REDIS_PASSWORD", "")
+	viper.SetDefault("REDIS_DB", 1) // Use DB 1 for testing by default
 
 	// Try to connect to Redis for testing, if it fails, use a mock
 	setupTestRedis()

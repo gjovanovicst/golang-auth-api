@@ -307,7 +307,7 @@ info:
     url: http://www.apache.org/licenses/LICENSE-2.0.html
   termsOfService: http://swagger.io/terms/
   title: Authentication and Authorization API
-  version: "1.0"
+  version: 1.1.0
 paths:
   /2fa/disable:
     post:

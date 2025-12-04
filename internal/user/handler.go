@@ -273,7 +273,8 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	// Log profile access (optional, can be disabled for performance)
+	// Log profile access (now controlled by configuration and anomaly detection)
+	// This will only log if enabled in config or if an anomaly is detected
 	ipAddress, userAgent := util.GetClientInfo(c)
 	log.LogProfileAccess(user.ID, ipAddress, userAgent)
 

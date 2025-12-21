@@ -70,11 +70,14 @@ cd <project-directory>
 cp .env.example .env
 # Edit .env with your configuration
 
-# 3. Start with Docker (recommended)
+# 3. Create shared network (Required for first start)
+./setup-network.sh create
+
+# 4. Start with Docker (recommended)
 make docker-dev
 # Or: Windows: dev.bat | Linux/Mac: ./dev.sh
 
-# 4. Optional: Apply database enhancements
+# 5. Optional: Apply database enhancements
 make migrate-up
 ```
 

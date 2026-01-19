@@ -4,7 +4,7 @@ echo "🔍 Testing Authentication API..."
 
 # Test 1: API is responding
 echo "1. Testing API health..."
-curl -s http://localhost:8080/register > /dev/null
+curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" http://localhost:8080/register > /dev/null
 if [ $? -eq 0 ]; then
     echo "✅ API is responding"
 else
@@ -14,7 +14,7 @@ fi
 
 # Test 2: Registration
 echo "2. Testing user registration..."
-REGISTER_RESPONSE=$(curl -s -X POST http://localhost:8080/register \
+REGISTER_RESPONSE=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X POST http://localhost:8080/register \
     -H "Content-Type: application/json" \
 -d '{"email": "test@example.com", "password": "password123"}')
 
@@ -26,7 +26,7 @@ fi
 
 # Test 3: Invalid login (email not verified)
 echo "3. Testing login with unverified email..."
-LOGIN_RESPONSE=$(curl -s -X POST http://localhost:8080/login \
+LOGIN_RESPONSE=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X POST http://localhost:8080/login \
     -H "Content-Type: application/json" \
 -d '{"email": "test@example.com", "password": "password123"}')
 
@@ -38,7 +38,7 @@ fi
 
 # Test 4: Invalid credentials
 echo "4. Testing invalid credentials..."
-INVALID_LOGIN=$(curl -s -X POST http://localhost:8080/login \
+INVALID_LOGIN=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X POST http://localhost:8080/login \
     -H "Content-Type: application/json" \
 -d '{"email": "wrong@email.com", "password": "wrongpass"}')
 
@@ -50,7 +50,7 @@ fi
 
 # Test 5: Protected route without token
 echo "5. Testing protected route without token..."
-PROTECTED_RESPONSE=$(curl -s http://localhost:8080/profile)
+PROTECTED_RESPONSE=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" http://localhost:8080/profile)
 
 if [[ $PROTECTED_RESPONSE == *"Authorization header required"* ]]; then
     echo "✅ Protected route security working"

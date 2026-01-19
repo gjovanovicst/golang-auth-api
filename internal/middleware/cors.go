@@ -37,6 +37,7 @@ func CORSMiddleware() gin.HandlerFunc {
 			"Accept",
 			"Cache-Control",
 			"X-Requested-With",
+			"X-App-ID",
 		},
 		ExposeHeaders: []string{
 			"Content-Length",

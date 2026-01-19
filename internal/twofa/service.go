@@ -10,6 +10,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/user"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
+	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/skip2/go-qrcode"
 	"github.com/spf13/viper"
@@ -32,7 +33,7 @@ type TwoFASetupResponse struct {
 }
 
 // Generate2FASecret generates a new TOTP secret for a user
-func (s *Service) Generate2FASecret(userID string) (*TwoFASetupResponse, *errors.AppError) {
+func (s *Service) Generate2FASecret(appID uuid.UUID, userID string) (*TwoFASetupResponse, *errors.AppError) {
 	user, err := s.UserRepo.GetUserByID(userID)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrNotFound, "User not found")
@@ -42,7 +43,7 @@ func (s *Service) Generate2FASecret(userID string) (*TwoFASetupResponse, *errors
 	secret := generateSecretKey()
 
 	// Store the secret temporarily in Redis (expires in 10 minutes)
-	if err := redis.SetTempTwoFASecret(userID, secret, 10*time.Minute); err != nil {
+	if err := redis.SetTempTwoFASecret(appID.String(), userID, secret, 10*time.Minute); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to store temporary secret")
 	}
 
@@ -69,9 +70,9 @@ func (s *Service) Generate2FASecret(userID string) (*TwoFASetupResponse, *errors
 }
 
 // VerifySetup verifies the initial 2FA setup with a TOTP code
-func (s *Service) VerifySetup(userID, totpCode string) *errors.AppError {
+func (s *Service) VerifySetup(appID uuid.UUID, userID, totpCode string) *errors.AppError {
 	// Get the temporary secret from Redis
-	secret, err := redis.GetTempTwoFASecret(userID)
+	secret, err := redis.GetTempTwoFASecret(appID.String(), userID)
 	if err != nil {
 		fmt.Printf("Failed to get temp 2FA secret for user %s: %v\n", userID, err)
 		return errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired setup session")
@@ -90,9 +91,9 @@ func (s *Service) VerifySetup(userID, totpCode string) *errors.AppError {
 }
 
 // Enable2FA enables 2FA for a user after successful verification
-func (s *Service) Enable2FA(userID string) ([]string, *errors.AppError) {
+func (s *Service) Enable2FA(appID uuid.UUID, userID string) ([]string, *errors.AppError) {
 	// Get the temporary secret from Redis
-	secret, err := redis.GetTempTwoFASecret(userID)
+	secret, err := redis.GetTempTwoFASecret(appID.String(), userID)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired setup session")
 	}
@@ -107,7 +108,7 @@ func (s *Service) Enable2FA(userID string) ([]string, *errors.AppError) {
 	}
 
 	// Remove temporary secret from Redis
-	if err := redis.DeleteTempTwoFASecret(userID); err != nil {
+	if err := redis.DeleteTempTwoFASecret(appID.String(), userID); err != nil {
 		// Log the error but don't fail the entire operation since 2FA was already enabled
 		fmt.Printf("Warning: Failed to delete temporary 2FA secret for user %s: %v\n", userID, err)
 	}

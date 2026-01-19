@@ -12,49 +12,75 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
 type Handler struct {
-	Service             *Service
-	GoogleOauthConfig   *oauth2.Config
-	FacebookOauthConfig *oauth2.Config
-	GithubOauthConfig   *oauth2.Config
+	Service *Service
 }
 
 func NewHandler(s *Service) *Handler {
 	return &Handler{
 		Service: s,
-		GoogleOauthConfig: &oauth2.Config{
-			RedirectURL:  viper.GetString("GOOGLE_REDIRECT_URL"),
-			ClientID:     viper.GetString("GOOGLE_CLIENT_ID"),
-			ClientSecret: viper.GetString("GOOGLE_CLIENT_SECRET"),
-			Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
-			Endpoint:     google.Endpoint,
-		},
-		FacebookOauthConfig: &oauth2.Config{
-			RedirectURL:  viper.GetString("FACEBOOK_REDIRECT_URL"),
-			ClientID:     viper.GetString("FACEBOOK_CLIENT_ID"),
-			ClientSecret: viper.GetString("FACEBOOK_CLIENT_SECRET"),
-			Scopes:       []string{"email", "public_profile"},
-			Endpoint: oauth2.Endpoint{
-				AuthURL:  "https://www.facebook.com/v18.0/dialog/oauth",
-				TokenURL: "https://graph.facebook.com/v18.0/oauth/access_token",
-			},
-		},
-		GithubOauthConfig: &oauth2.Config{
-			RedirectURL:  viper.GetString("GITHUB_REDIRECT_URL"),
-			ClientID:     viper.GetString("GITHUB_CLIENT_ID"),
-			ClientSecret: viper.GetString("GITHUB_CLIENT_SECRET"),
-			Scopes:       []string{"user:email"}, // Request email scope
-			Endpoint: oauth2.Endpoint{
-				AuthURL:  "https://github.com/login/oauth/authorize",
-				TokenURL: "https://github.com/login/oauth/access_token",
-			},
-		},
 	}
+}
+
+func (h *Handler) getGoogleConfig(appID string) (*oauth2.Config, error) {
+	config, err := h.Service.SocialRepo.GetOAuthProviderConfig(appID, "google")
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsEnabled {
+		return nil, fmt.Errorf("google login is disabled for this app")
+	}
+	return &oauth2.Config{
+		RedirectURL:  config.RedirectURL,
+		ClientID:     config.ClientID,
+		ClientSecret: config.ClientSecret,
+		Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
+		Endpoint:     google.Endpoint,
+	}, nil
+}
+
+func (h *Handler) getFacebookConfig(appID string) (*oauth2.Config, error) {
+	config, err := h.Service.SocialRepo.GetOAuthProviderConfig(appID, "facebook")
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsEnabled {
+		return nil, fmt.Errorf("facebook login is disabled for this app")
+	}
+	return &oauth2.Config{
+		RedirectURL:  config.RedirectURL,
+		ClientID:     config.ClientID,
+		ClientSecret: config.ClientSecret,
+		Scopes:       []string{"email", "public_profile"},
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://www.facebook.com/v18.0/dialog/oauth",
+			TokenURL: "https://graph.facebook.com/v18.0/oauth/access_token",
+		},
+	}, nil
+}
+
+func (h *Handler) getGithubConfig(appID string) (*oauth2.Config, error) {
+	config, err := h.Service.SocialRepo.GetOAuthProviderConfig(appID, "github")
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsEnabled {
+		return nil, fmt.Errorf("github login is disabled for this app")
+	}
+	return &oauth2.Config{
+		RedirectURL:  config.RedirectURL,
+		ClientID:     config.ClientID,
+		ClientSecret: config.ClientSecret,
+		Scopes:       []string{"user:email"},
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://github.com/login/oauth/authorize",
+			TokenURL: "https://github.com/login/oauth/access_token",
+		},
+	}, nil
 }
 
 // GoogleLogin godoc
@@ -66,6 +92,19 @@ func NewHandler(s *Service) *Handler {
 // @Success      307 {string} string "Redirect"
 // @Router       /auth/google/login [get]
 func (h *Handler) GoogleLogin(c *gin.Context) {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	googleConfig, err := h.getGoogleConfig(appID.String())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Google config: " + err.Error()})
+		return
+	}
+
 	// Get redirect URI from query parameter or use default
 	redirectURI := c.Query("redirect_uri")
 	if redirectURI == "" {
@@ -73,7 +112,7 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 	}
 
 	// Create secure state with redirect URI
-	state, err := CreateOAuthState(redirectURI)
+	state, err := CreateOAuthState(redirectURI, appID.String())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid redirect URI",
@@ -83,7 +122,7 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 	}
 
 	// Generate OAuth URL with secure state
-	url := h.GoogleOauthConfig.AuthCodeURL(state)
+	url := googleConfig.AuthCodeURL(state)
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
@@ -129,7 +168,32 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	// Use the validated redirect URI from state
 	redirectURI := state.RedirectURI
 
-	token, err := h.GoogleOauthConfig.Exchange(context.Background(), code)
+	var appID uuid.UUID
+	appIDVal, exists := c.Get("app_id")
+	if exists {
+		appID = appIDVal.(uuid.UUID)
+	} else if state.AppID != "" {
+		parsedAppID, err := uuid.Parse(state.AppID)
+		if err != nil {
+			frontendURL := fmt.Sprintf("%s?error=invalid_app_id_state", redirectURI)
+			c.Redirect(http.StatusFound, frontendURL)
+			return
+		}
+		appID = parsedAppID
+	} else {
+		frontendURL := fmt.Sprintf("%s?error=app_id_missing", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	googleConfig, err := h.getGoogleConfig(appID.String())
+	if err != nil {
+		frontendURL := fmt.Sprintf("%s?error=config_error", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	token, err := googleConfig.Exchange(context.Background(), code)
 	if err != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(fmt.Sprintf("Could not retrieve token: %v", err))
@@ -138,7 +202,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleGoogleCallback(token.AccessToken)
+	accessToken, refreshToken, userID, appErr := h.Service.HandleGoogleCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -159,7 +223,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 
 	if user.TwoFAEnabled {
 		tempToken := uuid.New().String()
-		err := redis.SetTempUserSession(tempToken, user.ID.String(), 10*time.Minute)
+		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {
 			// Redirect to frontend with error
 			errorMsg := url.QueryEscape("Failed to create temporary session for 2FA")
@@ -195,6 +259,19 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 // @Success      307 {string} string "Redirect"
 // @Router       /auth/facebook/login [get]
 func (h *Handler) FacebookLogin(c *gin.Context) {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	facebookConfig, err := h.getFacebookConfig(appID.String())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Facebook config: " + err.Error()})
+		return
+	}
+
 	// Get redirect URI from query parameter or use default
 	redirectURI := c.Query("redirect_uri")
 	if redirectURI == "" {
@@ -202,7 +279,7 @@ func (h *Handler) FacebookLogin(c *gin.Context) {
 	}
 
 	// Create secure state with redirect URI
-	state, err := CreateOAuthState(redirectURI)
+	state, err := CreateOAuthState(redirectURI, appID.String())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid redirect URI",
@@ -212,7 +289,7 @@ func (h *Handler) FacebookLogin(c *gin.Context) {
 	}
 
 	// Generate OAuth URL with secure state
-	url := h.FacebookOauthConfig.AuthCodeURL(state)
+	url := facebookConfig.AuthCodeURL(state)
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
@@ -258,7 +335,32 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 	// Use the validated redirect URI from state
 	redirectURI := state.RedirectURI
 
-	token, err := h.FacebookOauthConfig.Exchange(context.Background(), code)
+	var appID uuid.UUID
+	appIDVal, exists := c.Get("app_id")
+	if exists {
+		appID = appIDVal.(uuid.UUID)
+	} else if state.AppID != "" {
+		parsedAppID, err := uuid.Parse(state.AppID)
+		if err != nil {
+			frontendURL := fmt.Sprintf("%s?error=invalid_app_id_state", redirectURI)
+			c.Redirect(http.StatusFound, frontendURL)
+			return
+		}
+		appID = parsedAppID
+	} else {
+		frontendURL := fmt.Sprintf("%s?error=app_id_missing", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	facebookConfig, err := h.getFacebookConfig(appID.String())
+	if err != nil {
+		frontendURL := fmt.Sprintf("%s?error=config_error", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	token, err := facebookConfig.Exchange(context.Background(), code)
 	if err != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(fmt.Sprintf("Could not retrieve token: %v", err))
@@ -267,7 +369,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleFacebookCallback(token.AccessToken)
+	accessToken, refreshToken, userID, appErr := h.Service.HandleFacebookCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -288,7 +390,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 
 	if user.TwoFAEnabled {
 		tempToken := uuid.New().String()
-		err := redis.SetTempUserSession(tempToken, user.ID.String(), 10*time.Minute)
+		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {
 			// Redirect to frontend with error
 			errorMsg := url.QueryEscape("Failed to create temporary session for 2FA")
@@ -324,6 +426,19 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 // @Success      307 {string} string "Redirect"
 // @Router       /auth/github/login [get]
 func (h *Handler) GithubLogin(c *gin.Context) {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	githubConfig, err := h.getGithubConfig(appID.String())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub config: " + err.Error()})
+		return
+	}
+
 	// Get redirect URI from query parameter or use default
 	redirectURI := c.Query("redirect_uri")
 	if redirectURI == "" {
@@ -331,7 +446,7 @@ func (h *Handler) GithubLogin(c *gin.Context) {
 	}
 
 	// Create secure state with redirect URI
-	state, err := CreateOAuthState(redirectURI)
+	state, err := CreateOAuthState(redirectURI, appID.String())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "Invalid redirect URI",
@@ -341,7 +456,7 @@ func (h *Handler) GithubLogin(c *gin.Context) {
 	}
 
 	// Generate OAuth URL with secure state
-	url := h.GithubOauthConfig.AuthCodeURL(state)
+	url := githubConfig.AuthCodeURL(state)
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
@@ -387,7 +502,32 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 	// Use the validated redirect URI from state
 	redirectURI := state.RedirectURI
 
-	token, err := h.GithubOauthConfig.Exchange(context.Background(), code)
+	var appID uuid.UUID
+	appIDVal, exists := c.Get("app_id")
+	if exists {
+		appID = appIDVal.(uuid.UUID)
+	} else if state.AppID != "" {
+		parsedAppID, err := uuid.Parse(state.AppID)
+		if err != nil {
+			frontendURL := fmt.Sprintf("%s?error=invalid_app_id_state", redirectURI)
+			c.Redirect(http.StatusFound, frontendURL)
+			return
+		}
+		appID = parsedAppID
+	} else {
+		frontendURL := fmt.Sprintf("%s?error=app_id_missing", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	githubConfig, err := h.getGithubConfig(appID.String())
+	if err != nil {
+		frontendURL := fmt.Sprintf("%s?error=config_error", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	token, err := githubConfig.Exchange(context.Background(), code)
 	if err != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(fmt.Sprintf("Could not retrieve token: %v", err))
@@ -396,7 +536,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleGithubCallback(token.AccessToken)
+	accessToken, refreshToken, userID, appErr := h.Service.HandleGithubCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -417,7 +557,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 
 	if user.TwoFAEnabled {
 		tempToken := uuid.New().String()
-		err := redis.SetTempUserSession(tempToken, user.ID.String(), 10*time.Minute)
+		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {
 			// Redirect to frontend with error
 			errorMsg := url.QueryEscape("Failed to create temporary session for 2FA")

@@ -18,6 +18,11 @@ dev:
 test:
 	go test -v ./...
 
+# Create database backup
+backup-db:
+	@echo "Creating database backup..."
+	@./scripts/backup_db.sh
+
 # Run the TOTP test (requires TEST_TOTP_SECRET environment variable)
 test-totp:
 	@if [ -z "$$TEST_TOTP_SECRET" ]; then \
@@ -108,27 +113,15 @@ migrate-status:
 	@echo "Running migration status check..."
 	@docker exec -it auth_db psql -U postgres -d auth_db -c "\dt" || echo "Database not running. Start with: make docker-dev"
 
-# Apply all pending migrations (Docker-aware)
+# Apply all pending migrations (Auto-discovery)
 migrate-up:
-	@echo "Applying migrations..."
-	@if [ ! -f "migrations/20240103_add_activity_log_smart_fields.sql" ]; then \
-		echo "Error: Migration file not found!"; \
-		exit 1; \
-	fi
-	@echo "Applying: 20240103_add_activity_log_smart_fields.sql"
-	@docker exec -i auth_db psql -U postgres -d auth_db < migrations/20240103_add_activity_log_smart_fields.sql
-	@echo "✅ Migrations applied successfully!"
+	@chmod +x scripts/apply_pending_migrations.sh
+	@./scripts/apply_pending_migrations.sh
 
-# Rollback last migration (Docker-aware)
+# Rollback last migration (Auto-discovery)
 migrate-down:
-	@echo "Rolling back migration..."
-	@if [ ! -f "migrations/20240103_add_activity_log_smart_fields_rollback.sql" ]; then \
-		echo "Error: Rollback file not found!"; \
-		exit 1; \
-	fi
-	@echo "Rolling back: 20240103_add_activity_log_smart_fields_rollback.sql"
-	@docker exec -i auth_db psql -U postgres -d auth_db < migrations/20240103_add_activity_log_smart_fields_rollback.sql
-	@echo "✅ Rollback completed!"
+	@chmod +x scripts/rollback_last_migration.sh
+	@./scripts/rollback_last_migration.sh
 
 # List available migrations
 migrate-list:

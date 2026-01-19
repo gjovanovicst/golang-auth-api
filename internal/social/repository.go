@@ -17,9 +17,15 @@ func (r *Repository) CreateSocialAccount(socialAccount *models.SocialAccount) er
 	return r.DB.Create(socialAccount).Error
 }
 
-func (r *Repository) GetSocialAccountByProviderAndUserID(provider, providerUserID string) (*models.SocialAccount, error) {
+func (r *Repository) GetOAuthProviderConfig(appID string, provider string) (*models.OAuthProviderConfig, error) {
+	var config models.OAuthProviderConfig
+	err := r.DB.Where("app_id = ? AND provider = ?", appID, provider).First(&config).Error
+	return &config, err
+}
+
+func (r *Repository) GetSocialAccountByProviderAndUserID(appID, provider, providerUserID string) (*models.SocialAccount, error) {
 	var socialAccount models.SocialAccount
-	err := r.DB.Where("provider = ? AND provider_user_id = ?", provider, providerUserID).First(&socialAccount).Error
+	err := r.DB.Where("app_id = ? AND provider = ? AND provider_user_id = ?", appID, provider, providerUserID).First(&socialAccount).Error
 	return &socialAccount, err
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/social"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
+	"github.com/gjovanovicst/auth_api/internal/admin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
@@ -40,6 +41,11 @@ import (
 // @in header
 // @name Authorization
 // @description Type "Bearer" + your JWT token
+
+// @securityDefinitions.apikey AppID
+// @in header
+// @name X-App-ID
+// @description The UUID of the application context
 
 func main() {
 	// Load environment variables from .env file
@@ -85,12 +91,15 @@ func main() {
 	socialHandler := social.NewHandler(socialService)
 	twofaHandler := twofa.NewHandler(twofaService)
 	logHandler := logService.NewHandler(logQueryService)
+	adminRepo := admin.NewRepository(database.DB)
+	adminHandler := admin.NewHandler(adminRepo)
 
 	// Setup Gin Router
 	r := gin.Default()
 
 	// Add CORS middleware
 	r.Use(middleware.CORSMiddleware())
+	r.Use(middleware.AppIDMiddleware())
 
 	// Public routes
 	public := r.Group("/")
@@ -150,11 +159,18 @@ func main() {
 	}
 
 	// Admin routes (for future role-based access control)
-	admin := r.Group("/admin")
-	admin.Use(middleware.AuthMiddleware())
+	adminRoutes := r.Group("/admin")
+	adminRoutes.Use(middleware.AuthMiddleware())
 	// TODO: Add admin role check middleware
 	{
-		admin.GET("/activity-logs", logHandler.GetAllActivityLogs)
+		adminRoutes.GET("/activity-logs", logHandler.GetAllActivityLogs)
+		
+		// Multi-tenancy Management
+		adminRoutes.POST("/tenants", adminHandler.CreateTenant)
+		adminRoutes.GET("/tenants", adminHandler.ListTenants)
+		adminRoutes.POST("/apps", adminHandler.CreateApp)
+		adminRoutes.GET("/apps/:id", adminHandler.GetAppDetails)
+		adminRoutes.POST("/apps/:id/oauth-config", adminHandler.UpsertOAuthConfig)
 	}
 
 	// Add Swagger UI endpoint

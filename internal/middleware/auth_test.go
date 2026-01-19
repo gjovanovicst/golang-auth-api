@@ -55,7 +55,7 @@ func TestAuthMiddlewareValidTokenNoRedis(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken(userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestAuthMiddlewareRedisUnavailable(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken(userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken(userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -222,13 +222,13 @@ func TestAuthMiddlewareBlacklistedToken(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken(userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
 
 	// Blacklist the token
-	if err := redis.BlacklistAccessToken(token, userID, time.Hour); err != nil {
+	if err := redis.BlacklistAccessToken("test-app-id", token, userID, time.Hour); err != nil {
 		t.Fatalf("Failed to blacklist token: %v", err)
 	}
 
@@ -256,7 +256,7 @@ func TestAuthMiddlewareBlacklistedToken(t *testing.T) {
 	}
 
 	// Cleanup: remove the blacklisted token
-	redis.Rdb.Del(ctx, "blacklist_token:"+token)
+	redis.Rdb.Del(ctx, "app:test-app-id:blacklist_token:"+token)
 }
 
 func TestAuthMiddlewareUserTokensBlacklisted(t *testing.T) {
@@ -275,13 +275,13 @@ func TestAuthMiddlewareUserTokensBlacklisted(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id-" + time.Now().Format("20060102150405") // Unique userID for this test
-	token, err := jwt.GenerateAccessToken(userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
 
 	// Blacklist all tokens for this user
-	if err := redis.BlacklistAllUserTokens(userID, time.Hour); err != nil {
+	if err := redis.BlacklistAllUserTokens("test-app-id", userID, time.Hour); err != nil {
 		t.Fatalf("Failed to blacklist user tokens: %v", err)
 	}
 
@@ -309,7 +309,7 @@ func TestAuthMiddlewareUserTokensBlacklisted(t *testing.T) {
 	}
 
 	// Cleanup: remove the blacklisted user
-	redis.Rdb.Del(ctx, "blacklist_user:"+userID)
+	redis.Rdb.Del(ctx, "app:test-app-id:blacklist_user:"+userID)
 }
 
 // Helper function to check if a string contains a substring
@@ -376,7 +376,7 @@ func TestAuthMiddlewareTokenWithoutBearer(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken(userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestAuthMiddlewareAndAuthorizeRoleTogether(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken(userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}

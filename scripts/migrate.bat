@@ -36,20 +36,24 @@ echo.
 echo 1. Show migration status
 echo 2. Apply smart logging migration (v1.1.0)
 echo 3. Rollback smart logging migration
-echo 4. List all available migrations
-echo 5. Backup database
-echo 6. Test database connection
+echo 4. Apply multi-tenancy migration (v1.2.0)
+echo 5. Rollback multi-tenancy migration
+echo 6. List all available migrations
+echo 7. Backup database
+echo 8. Test database connection
 echo 0. Exit
 echo.
 
-set /p choice="Enter your choice (0-6): "
+set /p choice="Enter your choice (0-8): "
 
 if "%choice%"=="1" goto show_status
 if "%choice%"=="2" goto apply_migration
 if "%choice%"=="3" goto rollback_migration
-if "%choice%"=="4" goto list_migrations
-if "%choice%"=="5" goto backup_database
-if "%choice%"=="6" goto test_connection
+if "%choice%"=="4" goto apply_mt_migration
+if "%choice%"=="5" goto rollback_mt_migration
+if "%choice%"=="6" goto list_migrations
+if "%choice%"=="7" goto backup_database
+if "%choice%"=="8" goto test_connection
 if "%choice%"=="0" goto exit_script
 goto invalid_choice
 
@@ -151,6 +155,100 @@ echo.
 
 echo Rolling back...
 psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f migrations\20240103_add_activity_log_smart_fields_rollback.sql
+
+if %ERRORLEVEL% EQU 0 (
+    echo.
+    echo Rollback completed!
+) else (
+    echo.
+    echo Rollback failed! Check errors above.
+    exit /b 1
+)
+
+goto end
+
+:apply_mt_migration
+echo.
+echo Applying Multi-Tenancy Migration (v1.2.0)
+echo.
+
+if not exist "migrations\20260105_add_multi_tenancy.sql" (
+    echo Error: Migration file not found!
+    echo Expected: migrations\20260105_add_multi_tenancy.sql
+    exit /b 1
+)
+
+echo This will:
+echo - Create tenants, applications, oauth_provider_configs tables
+echo - Add default tenant and app
+echo - Add app_id to users, social_accounts, activity_logs
+echo - Migrate existing data to default app
+echo.
+
+set /p confirm="Apply migration? (yes/no): "
+if not "%confirm%"=="yes" (
+    echo Operation cancelled.
+    goto end
+)
+
+echo.
+echo Creating backup first...
+for /f "tokens=2-4 delims=/ " %%a in ('date /t') do (set mydate=%%c%%a%%b)
+for /f "tokens=1-2 delims=/:" %%a in ('time /t') do (set mytime=%%a%%b)
+set timestamp=%mydate%_%mytime%
+set backup_file=backup_before_mt_%timestamp%.sql
+
+pg_dump -h %DB_HOST% -p %DB_PORT% -U %DB_USER% %DB_NAME% > %backup_file%
+echo Backup saved to: %backup_file%
+echo.
+
+echo Applying migration...
+psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f migrations\20260105_add_multi_tenancy.sql
+
+if %ERRORLEVEL% EQU 0 (
+    echo.
+    echo Migration completed successfully!
+) else (
+    echo.
+    echo Migration failed! Check errors above.
+    exit /b 1
+)
+
+goto end
+
+:rollback_mt_migration
+echo.
+echo Rollback Multi-Tenancy Migration
+echo.
+
+if not exist "migrations\20260105_add_multi_tenancy_rollback.sql" (
+    echo Error: Rollback file not found!
+    echo Expected: migrations\20260105_add_multi_tenancy_rollback.sql
+    exit /b 1
+)
+
+echo WARNING: This will drop tenants, applications tables and remove app_id columns!
+echo.
+
+set /p confirm="Are you sure you want to rollback? (yes/no): "
+if not "%confirm%"=="yes" (
+    echo Operation cancelled.
+    goto end
+)
+
+echo.
+echo Creating backup first...
+for /f "tokens=2-4 delims=/ " %%a in ('date /t') do (set mydate=%%c%%a%%b)
+for /f "tokens=1-2 delims=/:" %%a in ('time /t') do (set mytime=%%a%%b)
+set timestamp=%mydate%_%mytime%
+set backup_file=backup_before_mt_rollback_%timestamp%.sql
+
+pg_dump -h %DB_HOST% -p %DB_PORT% -U %DB_USER% %DB_NAME% > %backup_file%
+echo Backup saved to: %backup_file%
+echo.
+
+echo Rolling back...
+psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d %DB_NAME% -f migrations\20260105_add_multi_tenancy_rollback.sql
 
 if %ERRORLEVEL% EQU 0 (
     echo.

@@ -26,6 +26,40 @@ definitions:
       user_id:
         type: string
     type: object
+  dto.AppResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      tenant_id:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.CreateAppRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      tenant_id:
+        type: string
+    required:
+    - name
+    - tenant_id
+    type: object
+  dto.CreateTenantRequest:
+    properties:
+      name:
+        type: string
+    required:
+    - name
+    type: object
   dto.DeleteAccountRequest:
     properties:
       confirm_deletion:
@@ -80,6 +114,25 @@ definitions:
   dto.MessageResponse:
     properties:
       message:
+        type: string
+    type: object
+  dto.OAuthConfigResponse:
+    properties:
+      app_id:
+        type: string
+      client_id:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      is_enabled:
+        type: boolean
+      provider:
+        type: string
+      redirect_url:
+        type: string
+      updated_at:
         type: string
     type: object
   dto.PaginationResponse:
@@ -151,6 +204,17 @@ definitions:
       updated_at:
         type: string
       username:
+        type: string
+    type: object
+  dto.TenantResponse:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
         type: string
     type: object
   dto.TwoFADisableRequest:
@@ -253,6 +317,23 @@ definitions:
       profile_picture:
         example: https://example.com/avatar.jpg
         type: string
+    type: object
+  dto.UpsertOAuthConfigRequest:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      provider:
+        description: e.g., "google", "github"
+        type: string
+      redirect_url:
+        type: string
+    required:
+    - client_id
+    - client_secret
+    - provider
+    - redirect_url
     type: object
   dto.UserResponse:
     properties:
@@ -671,6 +752,144 @@ paths:
       summary: Get all activity logs (Admin)
       tags:
       - Activity Logs
+  /admin/apps:
+    post:
+      consumes:
+      - application/json
+      description: Register a new application under a specific tenant
+      parameters:
+      - description: Application Creation Data
+        in: body
+        name: app
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateAppRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.AppResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      - AppID: []
+      summary: Create a new application
+      tags:
+      - Admin
+  /admin/apps/{id}/oauth-config:
+    post:
+      consumes:
+      - application/json
+      description: Configure OAuth provider credentials (Google, GitHub, etc.) for
+        an application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: OAuth Config Data
+        in: body
+        name: config
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpsertOAuthConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OAuthConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      - AppID: []
+      summary: Set OAuth configuration
+      tags:
+      - Admin
+  /admin/tenants:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve a paginated list of all tenants
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 10
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      - AppID: []
+      summary: List all tenants
+      tags:
+      - Admin
+    post:
+      consumes:
+      - application/json
+      description: Register a new tenant organization in the system
+      parameters:
+      - description: Tenant Creation Data
+        in: body
+        name: tenant
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateTenantRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.TenantResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      - AppID: []
+      summary: Create a new tenant
+      tags:
+      - Admin
   /auth/facebook/callback:
     get:
       description: Handles Facebook OAuth2 callback and returns JWT tokens
@@ -1297,5 +1516,10 @@ securityDefinitions:
     description: Type "Bearer" + your JWT token
     in: header
     name: Authorization
+    type: apiKey
+  AppID:
+    description: The UUID of the application context
+    in: header
+    name: X-App-ID
     type: apiKey
 swagger: "2.0"

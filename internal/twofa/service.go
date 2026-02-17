@@ -27,7 +27,7 @@ func NewService(userRepo *user.Repository) *Service {
 }
 
 type TwoFASetupResponse struct {
-	Secret     string `json:"secret"` // #nosec G101 -- This is a response field for TOTP secret, not a hardcoded credential
+	Secret     string `json:"secret"` // #nosec G101,G117 -- This is a response field for TOTP secret, not a hardcoded credential
 	QRCodeURL  string `json:"qr_code_url"`
 	QRCodeData []byte `json:"qr_code_data,omitempty"`
 }

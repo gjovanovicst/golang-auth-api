@@ -27,8 +27,8 @@ func NewService(r *Repository, es *email.Service) *Service {
 type LoginResult struct {
 	RequiresTwoFA bool
 	UserID        uuid.UUID
-	AccessToken   string
-	RefreshToken  string
+	AccessToken   string // #nosec G101 -- This is a result field, not a hardcoded credential
+	RefreshToken  string // #nosec G101 -- This is a result field, not a hardcoded credential
 	TwoFAResponse *dto.TwoFARequiredResponse
 }
 
@@ -300,7 +300,7 @@ func (s *Service) RevokeAllUserTokens(appID, userID string) *errors.AppError {
 func (s *Service) UpdateUserProfile(userID string, req dto.UpdateProfileRequest) *errors.AppError {
 	// Build updates map with only provided fields
 	updates := make(map[string]interface{})
-	
+
 	if req.Name != "" {
 		updates["name"] = req.Name
 	}

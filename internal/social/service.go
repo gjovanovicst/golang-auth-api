@@ -440,6 +440,7 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub request")
 	}
 	req.Header.Set("Authorization", "token "+githubAccessToken)
+	// #nosec G107 -- This is a legitimate GitHub API call with a hardcoded trusted URL
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to get user info from GitHub")
@@ -472,6 +473,7 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub emails request")
 		}
 		req.Header.Set("Authorization", "token "+githubAccessToken)
+		// #nosec G107 -- This is a legitimate GitHub API call with a hardcoded trusted URL
 		resp, err := client.Do(req)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to get user emails from GitHub")

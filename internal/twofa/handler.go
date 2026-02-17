@@ -38,7 +38,14 @@ func (h *Handler) Generate2FA(c *gin.Context) {
 		return
 	}
 
-	setup, err := h.Service.Generate2FASecret(userID.(string))
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	setup, err := h.Service.Generate2FASecret(appID, userID.(string))
 	if err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
@@ -72,7 +79,14 @@ func (h *Handler) VerifySetup(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.VerifySetup(userID.(string), req.Code); err != nil {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.VerifySetup(appID, userID.(string), req.Code); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
@@ -96,7 +110,14 @@ func (h *Handler) Enable2FA(c *gin.Context) {
 		return
 	}
 
-	recoveryCodes, err := h.Service.Enable2FA(userID.(string))
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	recoveryCodes, err := h.Service.Enable2FA(appID, userID.(string))
 	if err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
@@ -179,8 +200,15 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		return
 	}
 
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
 	// Get userID from temporary session
-	userID, err := getUserIDFromTempSession(req.TempToken)
+	userID, err := getUserIDFromTempSession(appID.String(), req.TempToken)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "Invalid or expired temporary token"})
 		return
@@ -215,7 +243,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	}
 
 	// Generate final tokens
-	accessToken, refreshToken, err := generateTokensForUser(userID)
+	accessToken, refreshToken, err := generateTokensForUser(appID.String(), userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to generate tokens"})
 		return
@@ -229,7 +257,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	}
 
 	// Clear temporary session
-	clearTempSession(req.TempToken)
+	clearTempSession(appID.String(), req.TempToken)
 
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,
@@ -290,24 +318,24 @@ func (h *Handler) GenerateRecoveryCodes(c *gin.Context) {
 // Helper functions
 
 // getUserIDFromTempSession retrieves userID from temporary 2FA session
-func getUserIDFromTempSession(tempToken string) (string, error) {
-	return redis.GetTempUserSession(tempToken)
+func getUserIDFromTempSession(appID, tempToken string) (string, error) {
+	return redis.GetTempUserSession(appID, tempToken)
 }
 
 // generateTokensForUser generates access and refresh tokens for a user
-func generateTokensForUser(userID string) (string, string, error) {
-	accessToken, err := jwt.GenerateAccessToken(userID)
+func generateTokensForUser(appID string, userID string) (string, string, error) {
+	accessToken, err := jwt.GenerateAccessToken(appID, userID)
 	if err != nil {
 		return "", "", err
 	}
 
-	refreshToken, err := jwt.GenerateRefreshToken(userID)
+	refreshToken, err := jwt.GenerateRefreshToken(appID, userID)
 	if err != nil {
 		return "", "", err
 	}
 
 	// Store refresh token in Redis
-	if err := redis.SetRefreshToken(userID, refreshToken); err != nil {
+	if err := redis.SetRefreshToken(appID, userID, refreshToken); err != nil {
 		return "", "", err
 	}
 
@@ -315,8 +343,8 @@ func generateTokensForUser(userID string) (string, string, error) {
 }
 
 // clearTempSession clears the temporary 2FA session
-func clearTempSession(tempToken string) {
-	if err := redis.DeleteTempUserSession(tempToken); err != nil {
+func clearTempSession(appID, tempToken string) {
+	if err := redis.DeleteTempUserSession(appID, tempToken); err != nil {
 		// Log the error but don't fail the operation since the user is already authenticated
 		fmt.Printf("Warning: Failed to delete temporary user session %s: %v\n", tempToken, err)
 	}

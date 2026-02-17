@@ -17,7 +17,7 @@ BASE_URL="http://localhost:8080"
 
 echo ""
 echo "📝 Step 1: Register a test user"
-REGISTER_RESPONSE=$(curl -s -X POST $BASE_URL/register \
+REGISTER_RESPONSE=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X POST $BASE_URL/register \
     -H "Content-Type: application/json" \
     -d '{
     "email": "logout_test@example.com",
@@ -28,7 +28,7 @@ echo "Register Response: $REGISTER_RESPONSE"
 
 echo ""
 echo "🔑 Step 2: Login to get tokens"
-LOGIN_RESPONSE=$(curl -s -X POST $BASE_URL/login \
+LOGIN_RESPONSE=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X POST $BASE_URL/login \
     -H "Content-Type: application/json" \
     -d '{
     "email": "logout_test@example.com",
@@ -58,7 +58,7 @@ echo "Refresh Token: ${REFRESH_TOKEN:0:20}..."
 
 echo ""
 echo "👤 Step 3: Test protected endpoint (profile) before logout"
-PROFILE_RESPONSE=$(curl -s -X GET $BASE_URL/profile \
+PROFILE_RESPONSE=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X GET $BASE_URL/profile \
     -H "Authorization: Bearer $ACCESS_TOKEN")
 
 echo "Profile Response: $PROFILE_RESPONSE"
@@ -71,7 +71,7 @@ fi
 
 echo ""
 echo "🚪 Step 4: Logout using both refresh and access tokens"
-LOGOUT_RESPONSE=$(curl -s -X POST $BASE_URL/logout \
+LOGOUT_RESPONSE=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X POST $BASE_URL/logout \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -d "{
@@ -90,7 +90,7 @@ fi
 
 echo ""
 echo "🔍 Step 5: Try to access protected endpoint after logout (should fail)"
-PROFILE_AFTER_LOGOUT=$(curl -s -X GET $BASE_URL/profile \
+PROFILE_AFTER_LOGOUT=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X GET $BASE_URL/profile \
     -H "Authorization: Bearer $ACCESS_TOKEN")
 
 echo "Profile After Logout Response: $PROFILE_AFTER_LOGOUT"
@@ -103,7 +103,7 @@ fi
 
 echo ""
 echo "🔍 Step 6: Try to use refresh token after logout (should fail)"
-REFRESH_AFTER_LOGOUT=$(curl -s -X POST $BASE_URL/refresh-token \
+REFRESH_AFTER_LOGOUT=$(curl -s -H "X-App-ID: 00000000-0000-0000-0000-000000000001" -X POST $BASE_URL/refresh-token \
     -H "Content-Type: application/json" \
     -d "{
     \"refresh_token\": \"$REFRESH_TOKEN\"

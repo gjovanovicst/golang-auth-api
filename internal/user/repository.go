@@ -17,9 +17,9 @@ func (r *Repository) CreateUser(user *models.User) error {
 	return r.DB.Create(user).Error
 }
 
-func (r *Repository) GetUserByEmail(email string) (*models.User, error) {
+func (r *Repository) GetUserByEmail(appID, email string) (*models.User, error) {
 	var user models.User
-	err := r.DB.Where("email = ?", email).First(&user).Error
+	err := r.DB.Where("app_id = ? AND email = ?", appID, email).First(&user).Error
 	return &user, err
 }
 

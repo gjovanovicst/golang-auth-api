@@ -24,7 +24,7 @@ func NewService(ur *user.Repository, sr *Repository) *Service {
 	return &Service{UserRepo: ur, SocialRepo: sr}
 }
 
-func (s *Service) HandleGoogleCallback(googleAccessToken string) (string, string, uuid.UUID, *errors.AppError) {
+func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string) (string, string, uuid.UUID, *errors.AppError) {
 	// Fetch user info from Google
 	resp, err := http.Get("https://www.googleapis.com/oauth2/v2/userinfo?access_token=" + googleAccessToken)
 	if err != nil {
@@ -52,7 +52,7 @@ func (s *Service) HandleGoogleCallback(googleAccessToken string) (string, string
 	}
 
 	// Check if social account already exists
-	socialAccount, err := s.SocialRepo.GetSocialAccountByProviderAndUserID("google", googleUser.ID)
+	socialAccount, err := s.SocialRepo.GetSocialAccountByProviderAndUserID(appID.String(), "google", googleUser.ID)
 	if err == nil { // Social account found, user exists
 		// Update social account with latest data from provider
 		rawDataJSON, _ := json.Marshal(googleUser)
@@ -102,23 +102,23 @@ func (s *Service) HandleGoogleCallback(googleAccessToken string) (string, string
 		}
 
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(socialAccount.UserID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(socialAccount.UserID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
 		// Store refresh token in Redis
-		if err := redis.SetRefreshToken(socialAccount.UserID.String(), refreshToken); err != nil {
+		if err := redis.SetRefreshToken(appID.String(), socialAccount.UserID.String(), refreshToken); err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 		}
 		return accessToken, refreshToken, socialAccount.UserID, nil
 	}
 
 	// If social account not found, check if user with this email exists
-	user, err := s.UserRepo.GetUserByEmail(googleUser.Email)
+	user, err := s.UserRepo.GetUserByEmail(appID.String(), googleUser.Email)
 	if err == nil { // User with this email exists, link social account
 		// Update user profile with Google data if not already set
 		if user.Name == "" && googleUser.Name != "" {
@@ -142,6 +142,7 @@ func (s *Service) HandleGoogleCallback(googleAccessToken string) (string, string
 
 		rawDataJSON, _ := json.Marshal(googleUser)
 		socialAccount := &models.SocialAccount{
+			AppID:          appID,
 			UserID:         user.ID,
 			Provider:       "google",
 			ProviderUserID: googleUser.ID,
@@ -159,16 +160,16 @@ func (s *Service) HandleGoogleCallback(googleAccessToken string) (string, string
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
 		}
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(user.ID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(user.ID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
 		// Store refresh token in Redis
-		if err := redis.SetRefreshToken(user.ID.String(), refreshToken); err != nil {
+		if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 		}
 		return accessToken, refreshToken, user.ID, nil
@@ -176,6 +177,7 @@ func (s *Service) HandleGoogleCallback(googleAccessToken string) (string, string
 
 	// No existing user or social account, create new user and social account
 	newUser := &models.User{
+		AppID:          appID,
 		Email:          googleUser.Email,
 		EmailVerified:  googleUser.VerifiedEmail,
 		Name:           googleUser.Name,
@@ -191,6 +193,7 @@ func (s *Service) HandleGoogleCallback(googleAccessToken string) (string, string
 
 	rawDataJSON, _ := json.Marshal(googleUser)
 	newSocialAccount := &models.SocialAccount{
+		AppID:          appID,
 		UserID:         newUser.ID,
 		Provider:       "google",
 		ProviderUserID: googleUser.ID,
@@ -209,22 +212,22 @@ func (s *Service) HandleGoogleCallback(googleAccessToken string) (string, string
 	}
 
 	// Authenticate new user
-	accessToken, err := jwt.GenerateAccessToken(newUser.ID.String())
+	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String())
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err := jwt.GenerateRefreshToken(newUser.ID.String())
+	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String())
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
 	// Store refresh token in Redis
-	if err := redis.SetRefreshToken(newUser.ID.String(), refreshToken); err != nil {
+	if err := redis.SetRefreshToken(appID.String(), newUser.ID.String(), refreshToken); err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 	}
 	return accessToken, refreshToken, newUser.ID, nil
 }
 
-func (s *Service) HandleFacebookCallback(facebookAccessToken string) (string, string, uuid.UUID, *errors.AppError) {
+func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken string) (string, string, uuid.UUID, *errors.AppError) {
 	// Fetch user info from Facebook Graph API with extended fields
 	resp, err := http.Get("https://graph.facebook.com/v18.0/me?fields=id,name,email,first_name,last_name,picture.type(large),locale&access_token=" + facebookAccessToken)
 	if err != nil {
@@ -255,7 +258,7 @@ func (s *Service) HandleFacebookCallback(facebookAccessToken string) (string, st
 	}
 
 	// Check if social account already exists
-	socialAccount, err := s.SocialRepo.GetSocialAccountByProviderAndUserID("facebook", facebookUser.ID)
+	socialAccount, err := s.SocialRepo.GetSocialAccountByProviderAndUserID(appID.String(), "facebook", facebookUser.ID)
 	if err == nil { // Social account found, user exists
 		// Update social account with latest data from provider
 		rawDataJSON, _ := json.Marshal(facebookUser)
@@ -305,23 +308,23 @@ func (s *Service) HandleFacebookCallback(facebookAccessToken string) (string, st
 		}
 
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(socialAccount.UserID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(socialAccount.UserID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
 		// Store refresh token in Redis
-		if err := redis.SetRefreshToken(socialAccount.UserID.String(), refreshToken); err != nil {
+		if err := redis.SetRefreshToken(appID.String(), socialAccount.UserID.String(), refreshToken); err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 		}
 		return accessToken, refreshToken, socialAccount.UserID, nil
 	}
 
 	// If social account not found, check if user with this email exists
-	user, err := s.UserRepo.GetUserByEmail(facebookUser.Email)
+	user, err := s.UserRepo.GetUserByEmail(appID.String(), facebookUser.Email)
 	if err == nil { // User with this email exists, link social account
 		// Update user profile with Facebook data if not already set
 		if user.Name == "" && facebookUser.Name != "" {
@@ -345,6 +348,7 @@ func (s *Service) HandleFacebookCallback(facebookAccessToken string) (string, st
 
 		rawDataJSON, _ := json.Marshal(facebookUser)
 		socialAccount := &models.SocialAccount{
+			AppID:          appID,
 			UserID:         user.ID,
 			Provider:       "facebook",
 			ProviderUserID: facebookUser.ID,
@@ -362,16 +366,16 @@ func (s *Service) HandleFacebookCallback(facebookAccessToken string) (string, st
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
 		}
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(user.ID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(user.ID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
 		// Store refresh token in Redis
-		if err := redis.SetRefreshToken(user.ID.String(), refreshToken); err != nil {
+		if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 		}
 		return accessToken, refreshToken, user.ID, nil
@@ -379,6 +383,7 @@ func (s *Service) HandleFacebookCallback(facebookAccessToken string) (string, st
 
 	// No existing user or social account, create new user and social account
 	newUser := &models.User{
+		AppID:          appID,
 		Email:          facebookUser.Email,
 		EmailVerified:  true, // Assuming email from Facebook is verified
 		Name:           facebookUser.Name,
@@ -393,6 +398,7 @@ func (s *Service) HandleFacebookCallback(facebookAccessToken string) (string, st
 
 	rawDataJSON, _ := json.Marshal(facebookUser)
 	newSocialAccount := &models.SocialAccount{
+		AppID:          appID,
 		UserID:         newUser.ID,
 		Provider:       "facebook",
 		ProviderUserID: facebookUser.ID,
@@ -411,22 +417,22 @@ func (s *Service) HandleFacebookCallback(facebookAccessToken string) (string, st
 	}
 
 	// Authenticate new user
-	accessToken, err := jwt.GenerateAccessToken(newUser.ID.String())
+	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String())
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err := jwt.GenerateRefreshToken(newUser.ID.String())
+	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String())
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
 	// Store refresh token in Redis
-	if err := redis.SetRefreshToken(newUser.ID.String(), refreshToken); err != nil {
+	if err := redis.SetRefreshToken(appID.String(), newUser.ID.String(), refreshToken); err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 	}
 	return accessToken, refreshToken, newUser.ID, nil
 }
 
-func (s *Service) HandleGithubCallback(githubAccessToken string) (string, string, uuid.UUID, *errors.AppError) {
+func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string) (string, string, uuid.UUID, *errors.AppError) {
 	// Fetch user info from GitHub API
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
@@ -500,7 +506,7 @@ func (s *Service) HandleGithubCallback(githubAccessToken string) (string, string
 	}
 
 	// Check if social account already exists
-	socialAccount, err := s.SocialRepo.GetSocialAccountByProviderAndUserID("github", strconv.FormatInt(githubUser.ID, 10))
+	socialAccount, err := s.SocialRepo.GetSocialAccountByProviderAndUserID(appID.String(), "github", strconv.FormatInt(githubUser.ID, 10))
 	if err == nil { // Social account found, user exists
 		// Update social account with latest data from provider
 		rawDataJSON, _ := json.Marshal(githubUser)
@@ -536,23 +542,23 @@ func (s *Service) HandleGithubCallback(githubAccessToken string) (string, string
 		}
 
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(socialAccount.UserID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(socialAccount.UserID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
 		// Store refresh token in Redis
-		if err := redis.SetRefreshToken(socialAccount.UserID.String(), refreshToken); err != nil {
+		if err := redis.SetRefreshToken(appID.String(), socialAccount.UserID.String(), refreshToken); err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 		}
 		return accessToken, refreshToken, socialAccount.UserID, nil
 	}
 
 	// If social account not found, check if user with this email exists
-	user, err := s.UserRepo.GetUserByEmail(githubUser.Email)
+	user, err := s.UserRepo.GetUserByEmail(appID.String(), githubUser.Email)
 	if err == nil { // User with this email exists, link social account
 		// Update user profile with GitHub data if not already set
 		if user.Name == "" && githubUser.Name != "" {
@@ -567,6 +573,7 @@ func (s *Service) HandleGithubCallback(githubAccessToken string) (string, string
 
 		rawDataJSON, _ := json.Marshal(githubUser)
 		socialAccount := &models.SocialAccount{
+			AppID:          appID,
 			UserID:         user.ID,
 			Provider:       "github",
 			ProviderUserID: strconv.FormatInt(githubUser.ID, 10),
@@ -582,16 +589,16 @@ func (s *Service) HandleGithubCallback(githubAccessToken string) (string, string
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
 		}
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(user.ID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(user.ID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
 		// Store refresh token in Redis
-		if err := redis.SetRefreshToken(user.ID.String(), refreshToken); err != nil {
+		if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 		}
 		return accessToken, refreshToken, user.ID, nil
@@ -599,6 +606,7 @@ func (s *Service) HandleGithubCallback(githubAccessToken string) (string, string
 
 	// No existing user or social account, create new user and social account
 	newUser := &models.User{
+		AppID:          appID,
 		Email:          githubUser.Email,
 		EmailVerified:  true, // Assuming email from GitHub is verified if primary and verified
 		Name:           githubUser.Name,
@@ -610,6 +618,7 @@ func (s *Service) HandleGithubCallback(githubAccessToken string) (string, string
 
 	rawDataJSON, _ := json.Marshal(githubUser)
 	newSocialAccount := &models.SocialAccount{
+		AppID:          appID,
 		UserID:         newUser.ID,
 		Provider:       "github",
 		ProviderUserID: strconv.FormatInt(githubUser.ID, 10),
@@ -626,16 +635,16 @@ func (s *Service) HandleGithubCallback(githubAccessToken string) (string, string
 	}
 
 	// Authenticate new user
-	accessToken, err := jwt.GenerateAccessToken(newUser.ID.String())
+	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String())
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err := jwt.GenerateRefreshToken(newUser.ID.String())
+	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String())
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
 	// Store refresh token in Redis
-	if err := redis.SetRefreshToken(newUser.ID.String(), refreshToken); err != nil {
+	if err := redis.SetRefreshToken(appID.String(), newUser.ID.String(), refreshToken); err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 	}
 	return accessToken, refreshToken, newUser.ID, nil

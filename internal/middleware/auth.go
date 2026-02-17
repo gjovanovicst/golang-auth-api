@@ -32,7 +32,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		// Check Redis blacklists only if Redis is available
 		if redis.Rdb != nil {
 			// Check if the specific access token is blacklisted
-			blacklisted, err := redis.IsAccessTokenBlacklisted(tokenString)
+			blacklisted, err := redis.IsAccessTokenBlacklisted(claims.AppID, tokenString)
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Token validation error"})
 				return
@@ -43,7 +43,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			}
 
 			// Check if all tokens for this user are blacklisted (e.g., after password change)
-			userBlacklisted, err := redis.IsUserTokensBlacklisted(claims.UserID)
+			userBlacklisted, err := redis.IsUserTokensBlacklisted(claims.AppID, claims.UserID)
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Token validation error"})
 				return

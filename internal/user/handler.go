@@ -43,7 +43,14 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	userID, err := h.Service.RegisterUser(req.Email, req.Password)
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, err := h.Service.RegisterUser(appID, req.Email, req.Password)
 	if err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
@@ -81,7 +88,14 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	loginResult, err := h.Service.LoginUser(req.Email, req.Password)
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
@@ -174,9 +188,16 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 		return
 	}
 
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
 	// Note: We don't log password reset requests for security reasons
 	// as it could be used to enumerate valid email addresses
-	if err := h.Service.RequestPasswordReset(req.Email); err != nil {
+	if err := h.Service.RequestPasswordReset(appID, req.Email); err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
@@ -208,7 +229,14 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	userID, err := h.Service.ConfirmPasswordReset(req.Token, req.NewPassword)
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, err := h.Service.ConfirmPasswordReset(appID, req.Token, req.NewPassword)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
@@ -238,7 +266,14 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 		return
 	}
 
-	userID, err := h.Service.VerifyEmail(token)
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, err := h.Service.VerifyEmail(appID, token)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
@@ -346,7 +381,14 @@ func (h *Handler) Logout(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.LogoutUser(userID.(string), req.RefreshToken, req.AccessToken); err != nil {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.LogoutUser(appID.String(), userID.(string), req.RefreshToken, req.AccessToken); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
@@ -514,7 +556,14 @@ func (h *Handler) UpdateEmail(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.UpdateUserEmail(userID.(string), req); err != nil {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.UpdateUserEmail(appID, userID.(string), req); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
@@ -563,7 +612,14 @@ func (h *Handler) UpdatePassword(c *gin.Context) {
 		return
 	}
 
-	if err := h.Service.UpdateUserPassword(userID.(string), req); err != nil {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.UpdateUserPassword(appID, userID.(string), req); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
@@ -616,7 +672,14 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 		log.LogAccountDeletion(userUUID, ipAddress, userAgent)
 	}
 
-	if err := h.Service.DeleteUserAccount(userID.(string), req); err != nil {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.DeleteUserAccount(appID, userID.(string), req); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}

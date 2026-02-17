@@ -14,6 +14,7 @@ func CORSMiddleware() gin.HandlerFunc {
 		AllowOrigins: []string{
 			"http://localhost:3000",       // React dev server
 			"http://localhost:5173",       // Vite dev server
+			"http://localhost:5174",       // Vite dev server
 			"http://localhost:8080",       // API server itself
 			"https://accounts.google.com", // Google OAuth
 			"https://www.facebook.com",    // Facebook OAuth
@@ -37,6 +38,7 @@ func CORSMiddleware() gin.HandlerFunc {
 			"Accept",
 			"Cache-Control",
 			"X-Requested-With",
+			"X-App-ID",
 		},
 		ExposeHeaders: []string{
 			"Content-Length",

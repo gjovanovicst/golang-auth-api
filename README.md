@@ -2,22 +2,29 @@
 
 # 🔐 Authentication API
 
-### Modern, Production-Ready Go REST API
+### Modern, Production-Ready Go REST API with Multi-Tenancy
 
-A comprehensive authentication and authorization system with social login, email verification, JWT, Two-Factor Authentication, and smart activity logging.
+A comprehensive authentication and authorization system with multi-tenancy support, social login, email verification, JWT, Two-Factor Authentication, and smart activity logging.
 
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 [![Swagger](https://img.shields.io/badge/API-Swagger-85EA2D?style=flat&logo=swagger)](http://localhost:8080/swagger/index.html)
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [API Endpoints](#-api-endpoints) • [Contributing](#-contributing)
+[Features](#-features) • [Quick Start](#-quick-start) • [Multi-Tenancy](#-multi-tenancy-v20) • [Documentation](#-documentation) • [API Endpoints](#-api-endpoints) • [Contributing](#-contributing)
 
 </div>
 
 ---
 
 ## ✨ Features
+
+### 🏢 Multi-Tenancy Architecture (v2.0+)
+- ✅ **Multi-Tenant Support** - Serve multiple organizations from single deployment
+- ✅ **Application Management** - Multiple apps per tenant with data isolation
+- ✅ **Per-App OAuth Configuration** - Database-backed OAuth credentials
+- ✅ **Admin API** - Manage tenants, applications, and OAuth providers
+- ✅ **Complete Data Isolation** - Tenant/app separation at database level
 
 ### 🔑 Authentication & Authorization
 - ✅ **Secure Registration & Login** with JWT access/refresh tokens
@@ -57,7 +64,7 @@ A comprehensive authentication and authorization system with social login, email
 
 ### Prerequisites
 - **Docker & Docker Compose** (recommended)
-- Or: Go 1.22+, PostgreSQL 13+, Redis 6+
+- Or: Go 1.23+, PostgreSQL 13+, Redis 6+
 
 ### Installation
 
@@ -77,21 +84,41 @@ cp .env.example .env
 make docker-dev
 # Or: Windows: dev.bat | Linux/Mac: ./dev.sh
 
-# 5. Optional: Apply database enhancements
+# 5. Apply database migrations (includes multi-tenancy)
 make migrate-up
+
+# 6. (Optional) Migrate OAuth credentials to database
+go run cmd/migrate_oauth/main.go
 ```
 
 **🎉 That's it!** Your API is now running at `http://localhost:8080`
 
 ### What Just Happened?
 - ✅ PostgreSQL & Redis started in Docker containers
-- ✅ Database tables created automatically (GORM AutoMigrate)
+- ✅ Database tables created (multi-tenant architecture)
+- ✅ Default tenant and application created (`00000000-0000-0000-0000-000000000001`)
 - ✅ Application running with hot reload enabled
 - ✅ Swagger docs available at [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html)
+
+### ⚠️ Important: Multi-Tenancy (v2.0+)
+
+**All API requests require the `X-App-ID` header:**
+
+```bash
+curl -X POST http://localhost:8080/auth/register \
+  -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"Pass123!@#"}'
+```
+
+**Default Application ID:** `00000000-0000-0000-0000-000000000001` (created automatically)
+
+**Upgrading from v1.x?** See [Migration Guide](#-upgrading-from-v1x-to-v20) below.
 
 ### Next Steps
 - 📖 [Configure Environment Variables](#-environment-configuration)
 - 🔧 [Set up Social OAuth Providers](#social-authentication-setup)
+- 🏢 [Multi-Tenancy Guide](#-multi-tenancy-v20) - Create tenants and apps
 - 📊 [Configure Activity Logging](docs/features/QUICK_SETUP_LOGGING.md)
 - 🗄️ [Learn About Database Migrations](docs/migrations/README.md)
 
@@ -106,6 +133,8 @@ make migrate-up
 | 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | System architecture and design |
 | 📡 **[API Reference](docs/API.md)** | Detailed API documentation |
 | 🔄 **[Migration Guide](docs/migrations/README.md)** | Database migration system |
+| 🚨 **[Breaking Changes](BREAKING_CHANGES.md)** | v2.0 Multi-tenancy breaking changes |
+| 📋 **[Changelog](CHANGELOG.md)** | Version history and release notes |
 | 🤝 **[Contributing](CONTRIBUTING.md)** | Contribution guidelines |
 | 🛡️ **[Security Policy](SECURITY.md)** | Security and vulnerability reporting |
 
@@ -137,6 +166,20 @@ make migrate-up
 ---
 
 ## 🌐 API Endpoints
+
+**⚠️ Important:** All endpoints (except `/swagger/*`, `/admin/*`, and OAuth callbacks) require the `X-App-ID` header.
+
+### Admin API (Multi-Tenancy Management)
+| Endpoint | Method | Description | Protected |
+|----------|--------|-------------|-----------|
+| `/admin/tenants` | POST | Create new tenant | 🔐 Admin |
+| `/admin/tenants` | GET | List all tenants (paginated) | 🔐 Admin |
+| `/admin/apps` | POST | Create application for tenant | 🔐 Admin |
+| `/admin/apps` | GET | List applications (paginated) | 🔐 Admin |
+| `/admin/oauth-providers` | POST | Configure OAuth provider for app | 🔐 Admin |
+| `/admin/oauth-providers/:app_id` | GET | List OAuth providers for app | 🔐 Admin |
+| `/admin/oauth-providers/:id` | PUT | Update OAuth provider config | 🔐 Admin |
+| `/admin/oauth-providers/:id` | DELETE | Delete OAuth provider config | 🔐 Admin |
 
 ### Authentication
 | Endpoint | Method | Description | Protected |
@@ -213,6 +256,184 @@ make migrate-up
 3. GET /auth/{provider}/callback → Provider redirects back
 4. Receive JWT tokens for authenticated user
 ```
+
+---
+
+## 🏢 Multi-Tenancy (v2.0+)
+
+### Overview
+The API supports **multi-tenancy**, allowing you to serve multiple organizations (tenants) and applications from a single deployment. Each application has isolated users, OAuth configurations, and activity logs.
+
+### Hierarchy
+```
+Tenant (Organization)
+ └── Application (Mobile App, Web App, etc.)
+      ├── Users (isolated per app)
+      ├── OAuth Providers (per-app credentials)
+      └── Activity Logs (per-app audit trail)
+```
+
+### Default Setup
+On first installation, a default tenant and application are created:
+- **Default Tenant ID:** `00000000-0000-0000-0000-000000000001`
+- **Default Application ID:** `00000000-0000-0000-0000-000000000001`
+- All existing data (if upgrading from v1.x) is automatically migrated to this default app
+
+### Required Header
+All API requests must include the `X-App-ID` header:
+
+```bash
+# Example: Register a user
+curl -X POST http://localhost:8080/auth/register \
+  -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePass123!@#"
+  }'
+```
+
+**Exceptions (no header required):**
+- `/swagger/*` - Swagger documentation
+- `/admin/*` - Admin API endpoints
+- OAuth callbacks (app_id in state parameter)
+
+### Creating Tenants & Applications
+
+#### 1. Create a Tenant
+```bash
+curl -X POST http://localhost:8080/admin/tenants \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{
+    "name": "Acme Corporation"
+  }'
+
+# Response:
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Acme Corporation",
+  "created_at": "2026-01-19T12:00:00Z",
+  "updated_at": "2026-01-19T12:00:00Z"
+}
+```
+
+#### 2. Create an Application
+```bash
+curl -X POST http://localhost:8080/admin/apps \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{
+    "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Mobile App",
+    "description": "iOS and Android application"
+  }'
+
+# Response:
+{
+  "id": "660e8400-e29b-41d4-a716-446655440000",
+  "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Mobile App",
+  "description": "iOS and Android application",
+  "created_at": "2026-01-19T12:05:00Z",
+  "updated_at": "2026-01-19T12:05:00Z"
+}
+```
+
+#### 3. Configure OAuth for Application
+```bash
+curl -X POST http://localhost:8080/admin/oauth-providers \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{
+    "app_id": "660e8400-e29b-41d4-a716-446655440000",
+    "provider": "google",
+    "client_id": "your-google-client-id.apps.googleusercontent.com",
+    "client_secret": "your-google-client-secret",
+    "redirect_url": "https://mobile-app.example.com/auth/google/callback",
+    "is_enabled": true
+  }'
+```
+
+### OAuth Configuration
+
+**v2.0+** stores OAuth credentials in the database (per-application):
+- ✅ Different OAuth credentials per application
+- ✅ Runtime configuration changes (no restart needed)
+- ✅ Centralized management via Admin API
+- ✅ Fallback to environment variables for default app
+
+**Migration from v1.x:**
+```bash
+# Migrate OAuth credentials from .env to database
+go run cmd/migrate_oauth/main.go
+
+# This reads from .env and creates database entries for:
+# - Google OAuth
+# - Facebook OAuth  
+# - GitHub OAuth
+```
+
+### Data Isolation
+
+**Complete isolation between applications:**
+- ✅ Users are scoped to `app_id` (same email can exist in different apps)
+- ✅ Social accounts linked per application
+- ✅ Activity logs segmented by application
+- ✅ JWT tokens include `app_id` claim (prevents cross-app token reuse)
+- ✅ 2FA secrets and recovery codes isolated per app
+
+**Database-level enforcement:**
+```sql
+-- Email uniqueness is per-application (not global)
+CREATE UNIQUE INDEX idx_email_app_id ON users(email, app_id);
+
+-- All user data has foreign key to applications
+ALTER TABLE users ADD CONSTRAINT fk_users_app 
+  FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE;
+```
+
+### Use Cases
+
+**SaaS Providers:**
+- Serve multiple clients from single deployment
+- Isolated data per client organization
+- Per-client OAuth branding (different Google/Facebook apps)
+
+**Multiple Applications:**
+- Same company, different apps (mobile, web, desktop)
+- Separate user bases for each platform
+- Isolated analytics and audit logs
+
+**White-Label Solutions:**
+- Deploy once, serve many brands
+- Customized OAuth per brand
+- Complete data separation
+
+### Upgrading from v1.x to v2.0
+
+**📖 See:** [BREAKING_CHANGES.md](BREAKING_CHANGES.md) for complete migration guide
+
+**Quick Summary:**
+1. **Backup database** (critical!)
+2. **Apply migration:** `make migrate-up`
+3. **Migrate OAuth:** `go run cmd/migrate_oauth/main.go`
+4. **Update API clients:** Add `X-App-ID` header to all requests
+5. **Notify users:** They must re-login (JWTs invalidated)
+
+**Data Migration:**
+- All existing users → Default application
+- All social accounts → Default application
+- All activity logs → Default application
+- Email uniqueness changes from global to per-app
+- Rollback available if needed
+
+**Breaking Changes:**
+- ❌ API calls without `X-App-ID` header will fail (400 error)
+- ❌ Old JWT tokens are invalid (users must re-authenticate)
+- ❌ OAuth config moves from env vars to database (migration tool provided)
+
+**📖 Detailed Guide:** [CHANGELOG.md](CHANGELOG.md#200---2026-01-19)
 
 ---
 
@@ -320,6 +541,12 @@ GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
 GITHUB_REDIRECT_URL=http://localhost:8080/auth/github/callback
 ```
+
+**⚠️ v2.0+ Note:** OAuth credentials can be managed via database (Admin API) instead of environment variables. 
+- Environment variables still work for default app (`00000000-0000-0000-0000-000000000001`)
+- Database configuration takes precedence over env vars
+- Use `go run cmd/migrate_oauth/main.go` to migrate env vars to database
+- Recommended for multi-tenant deployments
 
 ### Server
 ```bash
@@ -517,23 +744,33 @@ The project includes:
 
 ```
 project-root/
-├── cmd/api/                    # Application entry point
-│   └── main.go
+├── cmd/
+│   ├── api/                    # Application entry point
+│   │   └── main.go
+│   └── migrate_oauth/          # OAuth migration tool (v2.0+)
+│       └── main.go
 ├── internal/                   # Private application code
+│   ├── admin/                 # Admin API (multi-tenancy management)
 │   ├── auth/                  # Authentication handlers
 │   ├── user/                  # User management
 │   ├── social/                # Social OAuth2 providers
 │   ├── twofa/                 # Two-factor authentication
 │   ├── log/                   # Activity logging system
 │   ├── email/                 # Email verification & reset
-│   ├── middleware/            # JWT auth middleware
+│   ├── middleware/            # JWT auth, AppID, CORS middleware
 │   ├── database/              # Database connection & migrations
 │   ├── redis/                 # Redis connection & operations
 │   ├── config/                # Configuration management
 │   └── util/                  # Utility functions
 ├── pkg/                        # Public packages
 │   ├── models/                # Database models (GORM)
+│   │   ├── tenant.go          # v2.0+
+│   │   ├── application.go     # v2.0+
+│   │   ├── oauth_provider_config.go  # v2.0+
+│   │   └── ...
 │   ├── dto/                   # Data transfer objects
+│   │   ├── admin.go           # v2.0+ Admin DTOs
+│   │   └── ...
 │   ├── errors/                # Custom error types
 │   └── jwt/                   # JWT token utilities
 ├── docs/                       # Documentation
@@ -548,12 +785,18 @@ project-root/
 ├── migrations/                 # SQL migration files
 │   ├── README.md              # Developer migration guide
 │   ├── TEMPLATE.md            # Migration template
+│   ├── 20260105_add_multi_tenancy.sql  # v2.0+ Multi-tenancy
 │   └── *.sql                  # Migration scripts
 ├── scripts/                    # Helper scripts
 │   ├── migrate.sh             # Migration runner (Unix)
 │   ├── migrate.bat            # Migration runner (Windows)
+│   ├── backup_db.sh           # Database backup (Unix)
+│   ├── backup_db.bat          # Database backup (Windows)
+│   ├── apply_pending_migrations.sh
+│   ├── rollback_last_migration.sh
 │   └── cleanup_activity_logs.sh
 ├── .github/                    # GitHub configuration
+│   ├── copilot-instructions.md # AI coding assistant instructions
 │   ├── ISSUE_TEMPLATE/        # Issue templates
 │   └── workflows/             # CI/CD workflows
 ├── Dockerfile                  # Production Docker image
@@ -565,11 +808,12 @@ project-root/
 ├── .env.example                # Environment variables template
 ├── go.mod                      # Go module dependencies
 ├── go.sum                      # Dependency checksums
+├── AGENTS.md                   # AI agent coding guidelines
 ├── CONTRIBUTING.md             # Contribution guidelines
 ├── CODE_OF_CONDUCT.md          # Code of conduct
 ├── SECURITY.md                 # Security policy
 ├── CHANGELOG.md                # Version history
-├── BREAKING_CHANGES.md         # Breaking changes tracker
+├── BREAKING_CHANGES.md         # Breaking changes tracker (v2.0+)
 ├── docs/migrations/MIGRATIONS.md  # Migration system overview
 ├── LICENSE                     # MIT License
 └── README.md                   # This file
@@ -581,7 +825,7 @@ project-root/
 
 | Category | Technology |
 |----------|-----------|
-| **Language** | Go 1.22+ |
+| **Language** | Go 1.23+ |
 | **Web Framework** | [Gin](https://github.com/gin-gonic/gin) |
 | **Database** | PostgreSQL 13+ with [GORM](https://gorm.io/) ORM |
 | **Cache & Sessions** | Redis 6+ with [go-redis](https://github.com/redis/go-redis) |

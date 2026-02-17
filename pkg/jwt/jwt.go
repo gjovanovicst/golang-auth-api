@@ -19,14 +19,16 @@ func init() {
 // Claims struct that will be embedded in JWT
 type Claims struct {
 	UserID string `json:"user_id"`
+	AppID  string `json:"app_id"`
 	jwt.RegisteredClaims
 }
 
 // GenerateAccessToken generates a new access token
-func GenerateAccessToken(userID string) (string, error) {
+func GenerateAccessToken(appID, userID string) (string, error) {
 	expirationTime := time.Now().Add(time.Minute * time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")))
 	claims := &Claims{
 		UserID: userID,
+		AppID:  appID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -37,10 +39,11 @@ func GenerateAccessToken(userID string) (string, error) {
 }
 
 // GenerateRefreshToken generates a new refresh token
-func GenerateRefreshToken(userID string) (string, error) {
+func GenerateRefreshToken(appID, userID string) (string, error) {
 	expirationTime := time.Now().Add(time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS")))
 	claims := &Claims{
 		UserID: userID,
+		AppID:  appID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

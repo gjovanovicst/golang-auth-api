@@ -83,3 +83,10 @@ __debug_bin
 uploads/
 storage/
 cache/
+
+# Backup files
+# Backup files
+*.bak
+*.backups
+*~
+backups/

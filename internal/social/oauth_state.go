@@ -15,6 +15,7 @@ import (
 // OAuthState represents the data stored in OAuth state parameter
 type OAuthState struct {
 	RedirectURI string    `json:"redirect_uri"`
+	AppID       string    `json:"app_id"`
 	Nonce       string    `json:"nonce"`
 	Timestamp   time.Time `json:"timestamp"`
 }
@@ -47,6 +48,7 @@ func IsAllowedRedirectURI(redirectURI string) bool {
 		allowedDomains = []string{
 			"localhost:3000",
 			"localhost:5173",
+			"localhost:5174",
 			"localhost:8080",
 			"127.0.0.1:3000",
 			"127.0.0.1:5173",
@@ -70,7 +72,7 @@ func IsAllowedRedirectURI(redirectURI string) bool {
 }
 
 // CreateOAuthState creates a secure state parameter with redirect URI
-func CreateOAuthState(redirectURI string) (string, error) {
+func CreateOAuthState(redirectURI string, appID string) (string, error) {
 	// Validate redirect URI
 	if !IsAllowedRedirectURI(redirectURI) {
 		return "", fmt.Errorf("redirect URI not allowed: %s", redirectURI)
@@ -85,6 +87,7 @@ func CreateOAuthState(redirectURI string) (string, error) {
 	// Create state object
 	state := OAuthState{
 		RedirectURI: redirectURI,
+		AppID:       appID,
 		Nonce:       nonce,
 		Timestamp:   time.Now(),
 	}

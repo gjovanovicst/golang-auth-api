@@ -67,6 +67,56 @@ confirm() {
     return 0
 }
 
+# Apply multi-tenancy migration
+apply_mt_migration() {
+    echo -e "${GREEN}Applying Multi-Tenancy Migration (v1.2.0)${NC}"
+    echo ""
+    
+    local migration_file="migrations/20260105_add_multi_tenancy.sql"
+    
+    if [ ! -f "$migration_file" ]; then
+        echo -e "${RED}Error: Migration file not found!${NC}"
+        echo "Expected: $migration_file"
+        exit 1
+    fi
+    
+    echo "This will:"
+    echo "- Create tenants, applications, oauth_provider_configs tables"
+    echo "- Add default tenant and app"
+    echo "- Add app_id to users, social_accounts, activity_logs"
+    echo "- Migrate existing data to default app"
+    echo ""
+    
+    if ! confirm "Apply migration?"; then
+        return
+    fi
+    
+    execute_sql_file "$migration_file" "Applying migration..."
+}
+
+# Rollback multi-tenancy migration
+rollback_mt_migration() {
+    echo -e "${GREEN}Rollback Multi-Tenancy Migration${NC}"
+    echo ""
+    
+    local rollback_file="migrations/20260105_add_multi_tenancy_rollback.sql"
+    
+    if [ ! -f "$rollback_file" ]; then
+        echo -e "${RED}Error: Rollback file not found!${NC}"
+        echo "Expected: $rollback_file"
+        exit 1
+    fi
+    
+    echo -e "${RED}WARNING: This will drop tenants, applications tables and remove app_id columns!${NC}"
+    echo ""
+    
+    if ! confirm "Are you sure you want to rollback?"; then
+        return
+    fi
+    
+    execute_sql_file "$rollback_file" "Rolling back..."
+}
+
 # Show current migration status
 show_status() {
     echo -e "${GREEN}Current Database Status:${NC}"
@@ -75,33 +125,33 @@ show_status() {
     # Check if activity_logs table exists
     execute_sql "
         SELECT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_schema = 'public' 
+            SELECT FROM information_schema.tables
+            WHERE table_schema = 'public'
             AND table_name = 'activity_logs'
         ) as activity_logs_exists;
     " "Checking tables..."
     
     # Check if smart logging fields exist
     execute_sql "
-        SELECT column_name, data_type 
-        FROM information_schema.columns 
-        WHERE table_name = 'activity_logs' 
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_name = 'activity_logs'
         AND column_name IN ('severity', 'expires_at', 'is_anomaly')
         ORDER BY column_name;
     " "Checking smart logging fields..."
     
     # Check indexes
     execute_sql "
-        SELECT indexname 
-        FROM pg_indexes 
-        WHERE tablename = 'activity_logs' 
+        SELECT indexname
+        FROM pg_indexes
+        WHERE tablename = 'activity_logs'
         AND indexname LIKE '%cleanup%' OR indexname LIKE '%expires%'
         ORDER BY indexname;
     " "Checking smart logging indexes..."
     
     # Count logs by type
     execute_sql "
-        SELECT 
+        SELECT
             COUNT(*) as total_logs,
             pg_size_pretty(pg_total_relation_size('activity_logs')) as table_size
         FROM activity_logs;
@@ -126,7 +176,7 @@ read -r choice
 case $choice in
     1)
         show_status
-        ;;
+    ;;
     
     2)
         echo -e "${GREEN}Applying Smart Logging Migration (v1.1.0)${NC}"
@@ -162,7 +212,7 @@ case $choice in
             
             show_status
         fi
-        ;;
+    ;;
     
     3)
         echo -e "${RED}Rollback Smart Logging Migration${NC}"
@@ -192,9 +242,11 @@ case $choice in
             
             show_status
         fi
-        ;;
+    ;;
     
-    4)
+    4) apply_mt_migration ;;
+    5) rollback_mt_migration ;;
+    6)
         echo -e "${GREEN}Available Migrations:${NC}"
         echo ""
         
@@ -205,9 +257,9 @@ case $choice in
         else
             echo -e "${RED}Migrations directory not found!${NC}"
         fi
-        ;;
+    ;;
     
-    5)
+    7)
         echo -e "${GREEN}Creating Database Backup${NC}"
         echo ""
         
@@ -226,9 +278,9 @@ case $choice in
             echo -e "${RED}Backup failed!${NC}"
             exit 1
         fi
-        ;;
+    ;;
     
-    6)
+    8)
         echo -e "${GREEN}Testing Database Connection${NC}"
         echo ""
         
@@ -253,17 +305,17 @@ case $choice in
             echo "- Database exists"
             exit 1
         fi
-        ;;
+    ;;
     
     0)
         echo -e "${GREEN}Exiting...${NC}"
         exit 0
-        ;;
+    ;;
     
     *)
         echo -e "${RED}Invalid choice. Exiting.${NC}"
         exit 1
-        ;;
+    ;;
 esac
 
 echo ""

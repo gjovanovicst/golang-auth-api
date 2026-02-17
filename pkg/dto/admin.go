@@ -38,9 +38,9 @@ type AppResponse struct {
 
 // UpsertOAuthConfigRequest represents the payload for setting OAuth credentials
 type UpsertOAuthConfigRequest struct {
-	Provider     string `json:"provider" binding:"required"`      // e.g., "google", "github"
+	Provider     string `json:"provider" binding:"required"` // e.g., "google", "github"
 	ClientID     string `json:"client_id" binding:"required"`
-	ClientSecret string `json:"client_secret" binding:"required"`
+	ClientSecret string `json:"client_secret" binding:"required"` // #nosec G101 -- This is a DTO field, not a hardcoded credential
 	RedirectURL  string `json:"redirect_url" binding:"required"`
 }
 

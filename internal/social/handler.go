@@ -56,6 +56,7 @@ func (h *Handler) getFacebookConfig(appID string) (*oauth2.Config, error) {
 		ClientID:     config.ClientID,
 		ClientSecret: config.ClientSecret,
 		Scopes:       []string{"email", "public_profile"},
+		// #nosec G101 -- These are public OAuth endpoint URLs, not credentials
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  "https://www.facebook.com/v18.0/dialog/oauth",
 			TokenURL: "https://graph.facebook.com/v18.0/oauth/access_token",
@@ -76,6 +77,7 @@ func (h *Handler) getGithubConfig(appID string) (*oauth2.Config, error) {
 		ClientID:     config.ClientID,
 		ClientSecret: config.ClientSecret,
 		Scopes:       []string{"user:email"},
+		// #nosec G101 -- These are public OAuth endpoint URLs, not credentials
 		Endpoint: oauth2.Endpoint{
 			AuthURL:  "https://github.com/login/oauth/authorize",
 			TokenURL: "https://github.com/login/oauth/access_token",

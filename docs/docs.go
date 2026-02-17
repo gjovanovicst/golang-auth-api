@@ -588,10 +588,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "ApiKeyAuth": []
-                    },
-                    {
-                        "AppID": []
+                        "AdminApiKey": []
                     }
                 ],
                 "description": "Register a new application under a specific tenant",
@@ -638,14 +635,60 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/apps/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Retrieve details of a specific application including OAuth configurations",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Get application details",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AppResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/apps/{id}/oauth-config": {
             "post": {
                 "security": [
                     {
-                        "ApiKeyAuth": []
-                    },
-                    {
-                        "AppID": []
+                        "AdminApiKey": []
                     }
                 ],
                 "description": "Configure OAuth provider credentials (Google, GitHub, etc.) for an application",
@@ -703,10 +746,7 @@ const docTemplate = `{
             "get": {
                 "security": [
                     {
-                        "ApiKeyAuth": []
-                    },
-                    {
-                        "AppID": []
+                        "AdminApiKey": []
                     }
                 ],
                 "description": "Retrieve a paginated list of all tenants",
@@ -755,10 +795,7 @@ const docTemplate = `{
             "post": {
                 "security": [
                     {
-                        "ApiKeyAuth": []
-                    },
-                    {
-                        "AppID": []
+                        "AdminApiKey": []
                     }
                 ],
                 "description": "Register a new tenant organization in the system",
@@ -2321,6 +2358,12 @@ const docTemplate = `{
         }
     },
     "securityDefinitions": {
+        "AdminApiKey": {
+            "description": "Admin API Key for protected admin routes",
+            "type": "apiKey",
+            "name": "X-Admin-API-Key",
+            "in": "header"
+        },
         "ApiKeyAuth": {
             "description": "Type \"Bearer\" + your JWT token",
             "type": "apiKey",

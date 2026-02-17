@@ -5,6 +5,258 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-01-19
+
+### 🚨 BREAKING CHANGES - Multi-Tenancy Support
+
+This release introduces **multi-tenancy** architecture, enabling the API to serve multiple tenants and applications. **This is a major breaking change** that requires API client updates.
+
+#### Required API Changes
+
+**All API requests now require the `X-App-ID` header:**
+
+```bash
+# Before (v1.x)
+curl -X POST /auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"secret"}'
+
+# After (v2.x)
+curl -X POST /auth/register \
+  -H "Content-Type: application/json" \
+  -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+  -d '{"email":"user@example.com","password":"secret"}'
+```
+
+**Exceptions (no `X-App-ID` required):**
+- Swagger documentation endpoints (`/swagger/*`)
+- Admin endpoints (`/admin/*`)
+- OAuth callback endpoints (app_id in state parameter)
+
+#### Migration Impact
+
+**Database Schema:**
+- New tables: `tenants`, `applications`, `oauth_provider_configs`
+- Modified tables: `users`, `social_accounts`, `activity_logs` now include `app_id` foreign key
+- Existing data automatically migrated to default tenant/application (`00000000-0000-0000-0000-000000000001`)
+- Email uniqueness now scoped per application (was globally unique)
+
+**JWT Tokens:**
+- JWT tokens now include `app_id` claim
+- Existing tokens issued before upgrade will be invalid
+- Users must re-authenticate after migration
+
+**OAuth Configuration:**
+- OAuth provider credentials (Google, Facebook, GitHub) now configured per-application
+- Use migration tool `cmd/migrate_oauth/main.go` to migrate existing credentials from environment variables to database
+- Legacy environment-based OAuth config still supported for default app
+
+### Added
+
+#### Multi-Tenancy Architecture
+- **Tenant Management**: Create and manage multiple tenant organizations via admin API
+- **Application Management**: Each tenant can have multiple applications with isolated user bases
+- **Per-Application OAuth**: OAuth providers (Google, Facebook, GitHub) configured per-application in database
+- **Admin API Endpoints**:
+  - `POST /admin/tenants` - Create tenant
+  - `GET /admin/tenants` - List tenants (paginated)
+  - `POST /admin/apps` - Create application
+  - `GET /admin/apps` - List applications (paginated)
+  - `POST /admin/oauth-providers` - Configure OAuth provider for app
+  - `GET /admin/oauth-providers/:app_id` - List OAuth providers for app
+  - `PUT /admin/oauth-providers/:id` - Update OAuth provider config
+  - `DELETE /admin/oauth-providers/:id` - Delete OAuth provider config
+
+#### New Middleware
+- **AppID Middleware**: Validates and injects `X-App-ID` header into request context
+- Query parameter fallback: `?app_id=<uuid>` supported when header not available
+
+#### New Models
+- **Tenant Model** (`pkg/models/tenant.go`): Organization-level entity
+- **Application Model** (`pkg/models/application.go`): Tenant's application entity
+- **OAuthProviderConfig Model** (`pkg/models/oauth_provider_config.go`): Per-app OAuth credentials
+
+#### Migration Tools
+- **Migration Script**: `migrations/20260105_add_multi_tenancy.sql` with automatic data migration
+- **Rollback Script**: `migrations/20260105_add_multi_tenancy_rollback.sql` for safe rollback
+- **OAuth Migration Tool**: `cmd/migrate_oauth/main.go` to migrate OAuth credentials from env to database
+- **Enhanced Backup Scripts**: 
+  - `scripts/backup_db.sh` (Unix/Mac)
+  - `scripts/backup_db.bat` (Windows)
+- **Migration Helper Scripts**:
+  - `scripts/apply_pending_migrations.sh` - Apply pending migrations
+  - `scripts/rollback_last_migration.sh` - Rollback last migration
+
+#### Documentation
+- **Copilot Instructions**: `.github/copilot-instructions.md` for AI-assisted development
+- **Migration Documentation**: `migrations/20260105_add_multi_tenancy.md`
+- **Admin API DTOs**: `pkg/dto/admin.go` with request/response structures
+- **Updated Swagger**: Complete API documentation with new admin endpoints
+
+### Changed
+
+#### Authentication Flow
+- JWT generation now includes `app_id` claim (see `pkg/jwt/jwt.go`)
+- Auth middleware validates `app_id` from token against request header
+- User lookup queries now scoped by `app_id`
+
+#### Social Login
+- OAuth state now includes `app_id` for callback routing
+- Social account linkage scoped per application
+- OAuth credentials loaded from database per-application (fallback to env vars for default app)
+
+#### Two-Factor Authentication
+- TOTP secrets and recovery codes now scoped per application
+- 2FA state isolated between applications
+
+#### User Management
+- User registration scoped by `app_id`
+- Email uniqueness constraint now `(email, app_id)` instead of global
+- Profile endpoints return data scoped to request's `app_id`
+
+#### Activity Logging
+- All activity logs include `app_id` for audit trail segmentation
+- Log queries filtered by application context
+
+#### Testing
+- All API tests updated to include `X-App-ID` header
+- Test scripts (`test_api.sh`, `test_logout.sh`) updated with multi-tenancy support
+
+#### Configuration
+- Redis key prefixes now include `app_id` for session isolation
+- CORS middleware allows `X-App-ID` header in requests
+
+### Fixed
+- Docker network creation documentation (`README.md`) - Added step to create shared network before starting containers
+
+### Security
+- **Data Isolation**: Complete tenant/application data isolation at database level
+- **OAuth Security**: OAuth credentials stored per-application with encrypted secrets
+- **JWT Claims**: App ID validation prevents cross-application token reuse
+- **Index Updates**: Optimized indexes for multi-tenant queries
+
+### Migration Guide
+
+#### For Existing Installations (Upgrading from v1.x)
+
+**⚠️ CRITICAL: Backup your database before proceeding!**
+
+1. **Backup Database**:
+   ```bash
+   make migrate-backup
+   # or manually:
+   pg_dump -U postgres -d auth_db > backup_$(date +%Y%m%d_%H%M%S).sql
+   ```
+
+2. **Apply Migration**:
+   ```bash
+   make migrate-up
+   # This automatically:
+   # - Creates tenants, applications, oauth_provider_configs tables
+   # - Adds app_id columns to users, social_accounts, activity_logs
+   # - Migrates all existing data to default tenant/app
+   # - Updates indexes (email uniqueness now per-app)
+   # - Records migration in schema_migrations table
+   ```
+
+3. **Migrate OAuth Credentials** (if using social login):
+   ```bash
+   go run cmd/migrate_oauth/main.go
+   # Reads from .env and creates oauth_provider_configs entries
+   # For providers: Google, Facebook, GitHub
+   ```
+
+4. **Update API Clients**:
+   - Add `X-App-ID: 00000000-0000-0000-0000-000000000001` header to all requests
+   - Default app ID is created automatically during migration
+   - Update documentation/SDKs with new header requirement
+   - Notify users to re-authenticate (existing JWTs are invalid)
+
+5. **Test Endpoints**:
+   ```bash
+   # Test registration
+   curl -X POST http://localhost:8080/auth/register \
+     -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+     -H "Content-Type: application/json" \
+     -d '{"email":"test@example.com","password":"Test123!@#"}'
+   
+   # Test login
+   curl -X POST http://localhost:8080/auth/login \
+     -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+     -H "Content-Type: application/json" \
+     -d '{"email":"test@example.com","password":"Test123!@#"}'
+   ```
+
+6. **Rollback (if needed)**:
+   ```bash
+   # If migration fails or issues arise:
+   make migrate-down
+   # or manually:
+   psql -U postgres -d auth_db -f migrations/20260105_add_multi_tenancy_rollback.sql
+   
+   # Restore from backup if necessary:
+   psql -U postgres -d auth_db < backup_20260119_143022.sql
+   ```
+
+**Estimated Migration Time:**
+- Small databases (<10k users): 1-2 minutes
+- Medium databases (10k-100k users): 3-5 minutes
+- Large databases (>100k users): 5-15 minutes
+
+**Expected Downtime:** 5-15 minutes (application must be stopped during migration)
+
+#### For New Installations
+
+- Multi-tenancy enabled by default
+- Default tenant and application created automatically
+- Use admin API to create additional tenants/applications:
+  ```bash
+  # Create tenant
+  POST /admin/tenants
+  {"name": "Acme Corp"}
+  
+  # Create application
+  POST /admin/apps
+  {"tenant_id": "<tenant_id>", "name": "Mobile App", "description": "iOS/Android app"}
+  
+  # Configure OAuth for app
+  POST /admin/oauth-providers
+  {
+    "app_id": "<app_id>",
+    "provider": "google",
+    "client_id": "xxx",
+    "client_secret": "yyy",
+    "redirect_url": "https://app.example.com/auth/google/callback",
+    "is_enabled": true
+  }
+  ```
+
+#### Troubleshooting
+
+**Issue: "X-App-ID header is required" error**
+- Solution: Add header to all API requests (except /swagger/* and /admin/*)
+- Default app ID: `00000000-0000-0000-0000-000000000001`
+
+**Issue: JWT tokens not working after migration**
+- Solution: This is expected. Users must re-login to get new JWTs with `app_id` claim
+
+**Issue: Social login not working**
+- Solution: Run OAuth migration tool: `go run cmd/migrate_oauth/main.go`
+- Or configure via Admin API: `POST /admin/oauth-providers`
+
+**Issue: Email already exists error for different apps**
+- Solution: This is correct behavior - email uniqueness is now per-app, not global
+
+**Issue: Migration fails with foreign key error**
+- Solution: Check database constraints. Rollback and restore from backup.
+
+**Need Help?**
+- See: [BREAKING_CHANGES.md](BREAKING_CHANGES.md) for detailed migration guide
+- See: `migrations/20260105_add_multi_tenancy.md` for technical details
+- Open GitHub issue with "migration-help" label
+
+---
+
 ## [1.1.0] - 2024-12-04
 
 ### Added

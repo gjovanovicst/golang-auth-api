@@ -28,8 +28,7 @@ func NewHandler(r *Repository) *Handler {
 // @Success 201 {object} dto.TenantResponse
 // @Failure 400 {object} dto.ErrorResponse
 // @Failure 500 {object} dto.ErrorResponse
-// @Security ApiKeyAuth
-// @Security AppID
+// @Security AdminApiKey
 // @Router /admin/tenants [post]
 func (h *Handler) CreateTenant(c *gin.Context) {
 	var req dto.CreateTenantRequest
@@ -65,8 +64,7 @@ func (h *Handler) CreateTenant(c *gin.Context) {
 // @Param   page_size  query     int     false  "Page size" default(10)
 // @Success 200 {object} map[string]interface{}
 // @Failure 500 {object} dto.ErrorResponse
-// @Security ApiKeyAuth
-// @Security AppID
+// @Security AdminApiKey
 // @Router /admin/tenants [get]
 func (h *Handler) ListTenants(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -107,8 +105,7 @@ func (h *Handler) ListTenants(c *gin.Context) {
 // @Success 201 {object} dto.AppResponse
 // @Failure 400 {object} dto.ErrorResponse
 // @Failure 500 {object} dto.ErrorResponse
-// @Security ApiKeyAuth
-// @Security AppID
+// @Security AdminApiKey
 // @Router /admin/apps [post]
 func (h *Handler) CreateApp(c *gin.Context) {
 	var req dto.CreateAppRequest
@@ -153,8 +150,9 @@ func (h *Handler) CreateApp(c *gin.Context) {
 // @Param   id   path      string  true  "Application ID"
 // @Success 200 {object} dto.AppResponse
 // @Failure 400 {object} dto.ErrorResponse
-// @Failure 404 {object} dto.ErrorResponse// @Security ApiKeyAuth
-// @Security AppID// @Router /admin/apps/{id} [get]
+// @Failure 404 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/apps/{id} [get]
 func (h *Handler) GetAppDetails(c *gin.Context) {
 	appID := c.Param("id")
 	app, err := h.Repo.GetAppByID(appID)
@@ -185,8 +183,7 @@ func (h *Handler) GetAppDetails(c *gin.Context) {
 // @Success 200 {object} dto.OAuthConfigResponse
 // @Failure 400 {object} dto.ErrorResponse
 // @Failure 500 {object} dto.ErrorResponse
-// @Security ApiKeyAuth
-// @Security AppID
+// @Security AdminApiKey
 // @Router /admin/apps/{id}/oauth-config [post]
 func (h *Handler) UpsertOAuthConfig(c *gin.Context) {
 	appIDStr := c.Param("id")

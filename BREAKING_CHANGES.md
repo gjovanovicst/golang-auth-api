@@ -15,19 +15,371 @@ A breaking change is any modification that requires action from users to maintai
 
 ---
 
-## Current Version: v1.1.0
+## Current Version: v2.0.0
 
 ### Summary
-- ✅ All changes backward compatible
-- ✅ Smart Activity Logging added (opt-in)
-- ✅ Zero breaking changes
-- ✅ Safe to upgrade from v1.0.0
+- 🚨 **MAJOR BREAKING CHANGES** - Multi-Tenancy Architecture
+- ⚠️ **Requires API client updates** - All requests need `X-App-ID` header
+- ⚠️ **Database migration required** - New tables and schema changes
+- ⚠️ **JWT tokens invalidated** - Users must re-authenticate
+- ⚠️ **OAuth configuration changes** - Credentials now per-application
+- ✅ **Automatic data migration** - Existing data migrated to default tenant/app
+- ✅ **Rollback available** - Safe rollback scripts provided
 
 ---
 
 ## Version History
 
-## [v1.1.0] - 2024-01-03
+## [v2.0.0] - 2026-01-19
+
+### 🚨 BREAKING CHANGE: Multi-Tenancy Architecture
+
+**Type:** Major Breaking Change (API + Database + Configuration)
+
+**Impact:** 🔴 **HIGH** - All API clients must be updated
+
+#### What Changed
+
+**1. API Changes (BREAKING)**
+
+**ALL API endpoints now require `X-App-ID` header:**
+
+```bash
+# ❌ BEFORE (v1.x) - This will FAIL in v2.0
+curl -X POST /auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"secret"}'
+
+# ✅ AFTER (v2.x) - This is REQUIRED
+curl -X POST /auth/register \
+  -H "Content-Type: application/json" \
+  -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+  -d '{"email":"user@example.com","password":"secret"}'
+```
+
+**Exceptions (no header required):**
+- `/swagger/*` - Swagger documentation
+- `/admin/*` - Admin endpoints (uses different auth)
+- OAuth callbacks (app_id in state parameter)
+
+**Error Response Without Header:**
+```json
+{
+  "error": "X-App-ID header is required"
+}
+```
+HTTP Status: `400 Bad Request`
+
+**2. Database Schema Changes (BREAKING)**
+
+**New Tables:**
+```sql
+-- Tenant organizations
+CREATE TABLE tenants (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Applications per tenant
+CREATE TABLE applications (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id),
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE
+);
+
+-- OAuth configuration per application
+CREATE TABLE oauth_provider_configs (
+    id UUID PRIMARY KEY,
+    app_id UUID NOT NULL REFERENCES applications(id),
+    provider TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    client_secret TEXT NOT NULL,
+    redirect_url TEXT NOT NULL,
+    is_enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(app_id, provider)
+);
+```
+
+**Modified Tables:**
+```sql
+-- All existing tables now have app_id
+ALTER TABLE users ADD COLUMN app_id UUID NOT NULL REFERENCES applications(id);
+ALTER TABLE social_accounts ADD COLUMN app_id UUID NOT NULL REFERENCES applications(id);
+ALTER TABLE activity_logs ADD COLUMN app_id UUID NOT NULL REFERENCES applications(id);
+
+-- Email uniqueness now scoped per application (was globally unique)
+DROP INDEX idx_users_email;
+CREATE UNIQUE INDEX idx_email_app_id ON users(email, app_id);
+```
+
+**Data Migration:**
+- Default tenant created: `00000000-0000-0000-0000-000000000001`
+- Default application created: `00000000-0000-0000-0000-000000000001`
+- All existing users, social accounts, and logs migrated to default app
+- Email uniqueness constraint updated (same email can exist in different apps)
+
+**3. JWT Token Changes (BREAKING)**
+
+**JWT tokens now include `app_id` claim:**
+```json
+{
+  "user_id": "123",
+  "email": "user@example.com",
+  "app_id": "00000000-0000-0000-0000-000000000001",  // NEW
+  "exp": 1234567890
+}
+```
+
+**Impact:**
+- ❌ All existing JWT tokens (access + refresh) are INVALID after migration
+- ✅ Users must re-authenticate to get new tokens
+- ✅ Token validation checks `app_id` matches request header
+
+**4. OAuth Configuration Changes (BREAKING)**
+
+**Before (v1.x):** Environment variables (global)
+```bash
+# .env
+GOOGLE_CLIENT_ID=xxx
+GOOGLE_CLIENT_SECRET=xxx
+FACEBOOK_CLIENT_ID=xxx
+FACEBOOK_CLIENT_SECRET=xxx
+GITHUB_CLIENT_ID=xxx
+GITHUB_CLIENT_SECRET=xxx
+```
+
+**After (v2.x):** Database configuration (per-application)
+```bash
+# Use migration tool to transfer env vars to database:
+go run cmd/migrate_oauth/main.go
+
+# OR manually via Admin API:
+POST /admin/oauth-providers
+{
+  "app_id": "00000000-0000-0000-0000-000000000001",
+  "provider": "google",
+  "client_id": "xxx",
+  "client_secret": "xxx",
+  "redirect_url": "http://localhost:8080/auth/google/callback",
+  "is_enabled": true
+}
+```
+
+**Legacy Support:**
+- Environment variables still work for default app (`00000000-0000-0000-0000-000000000001`)
+- Database config takes precedence over environment variables
+- Migration tool provided: `cmd/migrate_oauth/main.go`
+
+**5. New Admin API Endpoints**
+
+**Tenant Management:**
+- `POST /admin/tenants` - Create tenant
+- `GET /admin/tenants` - List tenants (paginated)
+
+**Application Management:**
+- `POST /admin/apps` - Create application
+- `GET /admin/apps` - List applications (paginated)
+
+**OAuth Provider Management:**
+- `POST /admin/oauth-providers` - Configure OAuth provider
+- `GET /admin/oauth-providers/:app_id` - List providers for app
+- `PUT /admin/oauth-providers/:id` - Update provider config
+- `DELETE /admin/oauth-providers/:id` - Delete provider config
+
+#### Migration Required
+
+**YES** - Database migration is MANDATORY
+
+**Migration Files:**
+- Up: `migrations/20260105_add_multi_tenancy.sql`
+- Down: `migrations/20260105_add_multi_tenancy_rollback.sql`
+
+**Apply Migration:**
+```bash
+# Recommended: Use Makefile
+make migrate-backup    # Create backup first
+make migrate-up        # Apply migration
+
+# OR manual:
+pg_dump -U postgres -d auth_db > backup_$(date +%Y%m%d).sql
+psql -U postgres -d auth_db -f migrations/20260105_add_multi_tenancy.sql
+```
+
+**Migration Steps:**
+1. **Backup Database** - CRITICAL, do not skip!
+2. **Apply SQL migration** - Creates tables, migrates data
+3. **Migrate OAuth credentials** - Run `go run cmd/migrate_oauth/main.go`
+4. **Update API clients** - Add `X-App-ID` header to all requests
+5. **Notify users** - Force re-authentication (JWTs invalid)
+6. **Test thoroughly** - Verify all endpoints work
+
+**Estimated Downtime:** 5-15 minutes (depends on database size)
+
+#### Is This Breaking?
+
+**YES** - This is a MAJOR breaking change:
+- ❌ API clients without `X-App-ID` header will FAIL with 400 error
+- ❌ Existing JWT tokens will be INVALID (must re-authenticate)
+- ❌ OAuth configuration must be migrated from env vars to database
+- ❌ Database schema changes require migration (new tables + columns)
+- ❌ Email uniqueness behavior changed (now scoped per app)
+
+#### Who Is Affected?
+
+**All users and integrations:**
+- ✅ **Web/Mobile Apps** - Must add `X-App-ID` header to all API calls
+- ✅ **Third-party Integrations** - Must update API client code
+- ✅ **End Users** - Must re-login after migration (JWTs invalid)
+- ✅ **Administrators** - Must migrate OAuth configuration
+- ✅ **Database** - Migration required (automatic data migration)
+
+#### Migration Path
+
+**Step-by-Step Guide:**
+
+**1. Pre-Migration (Before Upgrade)**
+```bash
+# Backup database
+make migrate-backup
+
+# Review migration script
+cat migrations/20260105_add_multi_tenancy.sql
+
+# Test in staging environment first
+```
+
+**2. Migration (During Upgrade)**
+```bash
+# Stop application
+systemctl stop auth-api  # or docker-compose down
+
+# Apply database migration
+make migrate-up
+
+# Migrate OAuth credentials from env vars to database
+go run cmd/migrate_oauth/main.go
+
+# Verify migration success
+psql -U postgres -d auth_db -c "SELECT * FROM tenants;"
+psql -U postgres -d auth_db -c "SELECT * FROM applications;"
+```
+
+**3. Update Configuration**
+```bash
+# Optional: Remove OAuth credentials from .env (now in database)
+# Keep them as fallback or remove after testing
+
+# Update API clients to include X-App-ID header
+# Default app ID: 00000000-0000-0000-0000-000000000001
+```
+
+**4. Start Application**
+```bash
+# Start with new version
+systemctl start auth-api  # or docker-compose up -d
+
+# Monitor logs for errors
+tail -f /var/log/auth-api/app.log
+
+# Test critical endpoints
+curl -X POST /auth/register \
+  -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"testpass123"}'
+```
+
+**5. Post-Migration**
+```bash
+# Notify users to re-login (JWTs invalid)
+# Update API documentation
+# Monitor application logs
+# Keep database backup for at least 7 days
+```
+
+#### Rollback
+
+**If migration fails or issues arise:**
+
+```bash
+# Stop application
+systemctl stop auth-api
+
+# Restore from backup (fastest)
+psql -U postgres -d auth_db < backup_20260119.sql
+
+# OR use rollback script
+psql -U postgres -d auth_db -f migrations/20260105_add_multi_tenancy_rollback.sql
+
+# Downgrade to v1.1.0
+git checkout v1.1.0
+make build
+systemctl start auth-api
+```
+
+**⚠️ WARNING:** Rollback will:
+- Remove all tenants and applications created after migration
+- Revert to single-tenant mode
+- Restore global email uniqueness constraint
+- Existing JWTs still invalid (users must re-login)
+
+#### Testing Checklist
+
+Before deploying to production:
+
+- [ ] Backup created and verified
+- [ ] Migration tested in staging environment
+- [ ] All API endpoints tested with `X-App-ID` header
+- [ ] User registration works
+- [ ] User login works (generates new JWTs with `app_id`)
+- [ ] Social login works (OAuth credentials migrated)
+- [ ] 2FA works
+- [ ] Profile endpoints work
+- [ ] Activity logs created with `app_id`
+- [ ] Admin API endpoints accessible
+- [ ] Rollback tested successfully
+- [ ] API documentation updated
+- [ ] Users notified about re-authentication requirement
+
+#### Benefits
+
+**Why this breaking change?**
+
+- 🏢 **Multi-Tenancy** - Serve multiple organizations/clients from one deployment
+- 🔒 **Data Isolation** - Complete tenant/app data separation at database level
+- 🔐 **Per-App OAuth** - Different OAuth credentials per application
+- 📊 **Better Analytics** - Track usage per tenant/application
+- 💰 **SaaS-Ready** - Build multi-tenant SaaS products
+- ⚡ **Resource Efficiency** - One deployment serves many apps
+- 🔧 **Flexible Configuration** - OAuth and settings per application
+
+#### Documentation
+
+- **Migration Guide**: `migrations/20260105_add_multi_tenancy.md`
+- **Migration SQL**: `migrations/20260105_add_multi_tenancy.sql`
+- **Rollback SQL**: `migrations/20260105_add_multi_tenancy_rollback.sql`
+- **OAuth Migration Tool**: `cmd/migrate_oauth/main.go`
+- **API Documentation**: Swagger at `/swagger/index.html`
+- **Changelog**: `CHANGELOG.md` (v2.0.0 section)
+
+#### Support
+
+**Need help with migration?**
+- 📖 Read [UPGRADE_GUIDE.md](UPGRADE_GUIDE.md) for detailed instructions
+- 📖 Read [MIGRATIONS.md](docs/migrations/MIGRATIONS.md)
+- 🐛 Check GitHub issues: https://github.com/gjovanovicst/auth_api/issues
+- 💬 Open new issue with "migration-help" label
+- 📧 Contact maintainers
+
+---
+
+## [v1.1.0] - 2024-12-04
 
 ### Added: Smart Activity Logging System
 
@@ -339,6 +691,12 @@ v2.0.0: Feature X removed (breaking change)
 |-------------|-----------------|----------------|----------------|------------------|
 | v1.0.0 | v1.0.0 | 1.21+ | 12+ | - |
 | v1.1.0 | v1.1.0 | 1.21+ | 12+ | None |
+| v2.0.0 | v2.0.0 | 1.23+ | 12+ | **YES** - Multi-tenancy (API + DB) |
+
+**Upgrade Paths:**
+- v1.0.0 → v2.0.0: Apply both v1.1.0 and v2.0.0 migrations in order
+- v1.1.0 → v2.0.0: Apply v2.0.0 migration only
+- v2.0.0 → v1.1.0: Rollback available (data loss possible)
 
 ---
 
@@ -365,6 +723,7 @@ When proposing breaking changes:
 
 ---
 
-*Last Updated: 2024-01-03*
-*Next Review: 2024-04-03*
+*Last Updated: 2026-01-19*
+*Next Review: 2026-04-19*
+
 

@@ -780,9 +780,39 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
-      - ApiKeyAuth: []
-      - AppID: []
+      - AdminApiKey: []
       summary: Create a new application
+      tags:
+      - Admin
+  /admin/apps/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Retrieve details of a specific application including OAuth configurations
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AppResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get application details
       tags:
       - Admin
   /admin/apps/{id}/oauth-config:
@@ -819,8 +849,7 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
-      - ApiKeyAuth: []
-      - AppID: []
+      - AdminApiKey: []
       summary: Set OAuth configuration
       tags:
       - Admin
@@ -853,8 +882,7 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
-      - ApiKeyAuth: []
-      - AppID: []
+      - AdminApiKey: []
       summary: List all tenants
       tags:
       - Admin
@@ -885,8 +913,7 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
-      - ApiKeyAuth: []
-      - AppID: []
+      - AdminApiKey: []
       summary: Create a new tenant
       tags:
       - Admin
@@ -1512,6 +1539,11 @@ paths:
       tags:
       - Auth
 securityDefinitions:
+  AdminApiKey:
+    description: Admin API Key for protected admin routes
+    in: header
+    name: X-Admin-API-Key
+    type: apiKey
   ApiKeyAuth:
     description: Type "Bearer" + your JWT token
     in: header

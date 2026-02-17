@@ -9,23 +9,23 @@ import (
 )
 
 const (
-	AppIDKey      = "app_id"
-	DefaultAppID  = "00000000-0000-0000-0000-000000000001"
-	HeaderAppID   = "X-App-ID"
+	AppIDKey     = "app_id"
+	DefaultAppID = "00000000-0000-0000-0000-000000000001"
+	HeaderAppID  = "X-App-ID"
 )
 
 func AppIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
-		// Skip validation for Swagger documentation
-		if len(path) >= 8 && path[:8] == "/swagger" {
+		// Skip validation for Swagger documentation and Admin routes
+		if (len(path) >= 8 && path[:8] == "/swagger") || (len(path) >= 6 && path[:6] == "/admin") {
 			c.Next()
 			return
 		}
 
 		appIDStr := c.GetHeader(HeaderAppID)
-		
+
 		// If header is missing, check query parameter
 		if appIDStr == "" {
 			appIDStr = c.Query("app_id")

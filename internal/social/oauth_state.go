@@ -48,6 +48,7 @@ func IsAllowedRedirectURI(redirectURI string) bool {
 		allowedDomains = []string{
 			"localhost:3000",
 			"localhost:5173",
+			"localhost:5174",
 			"localhost:8080",
 			"127.0.0.1:3000",
 			"127.0.0.1:5173",

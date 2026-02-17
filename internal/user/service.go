@@ -27,8 +27,8 @@ func NewService(r *Repository, es *email.Service) *Service {
 type LoginResult struct {
 	RequiresTwoFA bool
 	UserID        uuid.UUID
-	AccessToken   string // #nosec G101 -- This is a result field, not a hardcoded credential
-	RefreshToken  string // #nosec G101 -- This is a result field, not a hardcoded credential
+	AccessToken   string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
+	RefreshToken  string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
 	TwoFAResponse *dto.TwoFARequiredResponse
 }
 

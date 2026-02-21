@@ -11,7 +11,7 @@ A comprehensive authentication and authorization system with multi-tenancy suppo
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 [![Swagger](https://img.shields.io/badge/API-Swagger-85EA2D?style=flat&logo=swagger)](http://localhost:8080/swagger/index.html)
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Multi-Tenancy](#-multi-tenancy-v20) • [Documentation](#-documentation) • [API Endpoints](#-api-endpoints) • [Contributing](#-contributing)
+[Features](#-features) • [Quick Start](#-quick-start) • [Admin GUI](#-admin-gui-v30) • [Multi-Tenancy](#-multi-tenancy-v20) • [Documentation](#-documentation) • [API Endpoints](#-api-endpoints) • [Contributing](#-contributing)
 
 </div>
 
@@ -25,6 +25,24 @@ A comprehensive authentication and authorization system with multi-tenancy suppo
 - ✅ **Per-App OAuth Configuration** - Database-backed OAuth credentials
 - ✅ **Admin API** - Manage tenants, applications, and OAuth providers
 - ✅ **Complete Data Isolation** - Tenant/app separation at database level
+
+### 🖥️ Admin GUI (v3.0+)
+- ✅ **Built-In Admin Panel** - Web-based GUI served at `/gui/*` from the same binary
+- ✅ **Dashboard** - Overview with tenant, app, user, and log counts
+- ✅ **Tenant & App Management** - Full CRUD with HTMX-powered single-page interactions
+- ✅ **OAuth Config Management** - Per-app provider setup with inline toggle and secret masking
+- ✅ **User Management** - Search, filter, view details, and toggle user active status
+- ✅ **Activity Log Viewer** - Multi-filter log viewer with inline detail panel
+- ✅ **API Key Management** - Admin and per-app API keys with SHA-256 hashed storage
+- ✅ **System Settings** - Accordion-based settings page with per-setting inline save/reset
+- ✅ **Embedded Assets** - Bootstrap 5, HTMX, and Bootstrap Icons embedded via `go:embed`
+
+### 🛡️ Security Hardening (v3.0+)
+- ✅ **Rate Limiting** - Configurable per-route rate limiting with Redis + in-memory fallback
+- ✅ **Security Headers** - CSP, HSTS, X-Frame-Options, and more on every response
+- ✅ **JWT Token Type Enforcement** - Prevents refresh tokens from being used as access tokens
+- ✅ **Timing-Safe CSRF** - Constant-time comparison for CSRF token validation
+- ✅ **Password Max Length** - bcrypt DoS prevention with 128-char limit on all password fields
 
 ### 🔑 Authentication & Authorization
 - ✅ **Secure Registration & Login** with JWT access/refresh tokens
@@ -119,8 +137,56 @@ curl -X POST http://localhost:8080/auth/register \
 - 📖 [Configure Environment Variables](#-environment-configuration)
 - 🔧 [Set up Social OAuth Providers](#social-authentication-setup)
 - 🏢 [Multi-Tenancy Guide](#-multi-tenancy-v20) - Create tenants and apps
+- 🖥️ [Admin GUI Setup](#-admin-gui-v30) - Set up the admin dashboard
 - 📊 [Configure Activity Logging](docs/features/QUICK_SETUP_LOGGING.md)
 - 🗄️ [Learn About Database Migrations](docs/migrations/README.md)
+
+---
+
+## 🖥️ Admin GUI (v3.0+)
+
+The Admin GUI is a built-in web panel for managing your Auth API. It is served from the same binary at `/gui/*` and requires no separate frontend deployment.
+
+### Initial Setup
+
+Create the admin account using the interactive CLI wizard:
+
+```bash
+go run cmd/setup/main.go
+```
+
+You will be prompted for a username and password (masked input). The account is stored with bcrypt-hashed password in the database.
+
+### Accessing the GUI
+
+Once the server is running, navigate to:
+
+```
+http://localhost:8080/gui/login
+```
+
+Log in with the credentials you created during setup.
+
+### Features
+
+| Page | Description |
+|------|-------------|
+| **Dashboard** | Overview of tenants, apps, users, and recent activity |
+| **Tenants** | Create, edit, delete tenant organizations |
+| **Applications** | Manage apps per tenant with flat list and tenant filter |
+| **OAuth Configs** | Configure OAuth providers per-app with inline toggle |
+| **Users** | Search users, view details, toggle active/inactive |
+| **Activity Logs** | View and filter activity logs with inline detail |
+| **API Keys** | Manage admin and per-app API keys |
+| **Settings** | View and override system settings |
+
+### Technology Stack
+
+- **Go Templates** with layout/partial composition
+- **HTMX** for single-page interactions without full page reloads
+- **Bootstrap 5** for responsive UI
+- **Bootstrap Icons** for iconography
+- All assets embedded via `go:embed` — no external CDN dependencies
 
 ---
 

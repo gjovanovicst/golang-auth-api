@@ -18,6 +18,8 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/social"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
+	"github.com/gjovanovicst/auth_api/web"
+	"github.com/gjovanovicst/auth_api/web/static"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
@@ -99,24 +101,42 @@ func main() {
 	adminRepo := admin.NewRepository(database.DB)
 	adminHandler := admin.NewHandler(adminRepo)
 
+	// Initialize Admin GUI Services and Handler
+	accountRepo := admin.NewAccountRepository(database.DB)
+	accountService := admin.NewAccountService(accountRepo)
+	dashboardService := admin.NewDashboardService(database.DB)
+	settingsRepo := admin.NewSettingsRepository(database.DB)
+	settingsService := admin.NewSettingsService(settingsRepo)
+	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService)
+
 	// Setup Gin Router
 	r := gin.Default()
+
+	// Initialize template renderer for GUI
+	renderer, err := web.NewRenderer()
+	if err != nil {
+		log.Fatalf("Failed to initialize template renderer: %v", err)
+	}
+	r.HTMLRender = renderer
+
+	// Add security headers middleware (before CORS so headers are always set)
+	r.Use(middleware.SecurityHeadersMiddleware())
 
 	// Add CORS middleware
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.AppIDMiddleware())
 
-	// Public routes
+	// Public routes (with rate limiting)
 	public := r.Group("/")
 	{
-		public.POST("/register", userHandler.Register)
-		public.POST("/login", userHandler.Login)
-		public.POST("/refresh-token", userHandler.RefreshToken)
-		public.POST("/forgot-password", userHandler.ForgotPassword)
-		public.POST("/reset-password", userHandler.ResetPassword)
+		public.POST("/register", middleware.APIRegisterRateLimit(), userHandler.Register)
+		public.POST("/login", middleware.APILoginRateLimit(), userHandler.Login)
+		public.POST("/refresh-token", middleware.APIRefreshTokenRateLimit(), userHandler.RefreshToken)
+		public.POST("/forgot-password", middleware.APIForgotPasswordRateLimit(), userHandler.ForgotPassword)
+		public.POST("/reset-password", middleware.APIResetPasswordRateLimit(), userHandler.ResetPassword)
 		public.GET("/verify-email", userHandler.VerifyEmail)
 		// 2FA login verification (public because it needs temp token)
-		public.POST("/2fa/login-verify", twofaHandler.VerifyLogin)
+		public.POST("/2fa/login-verify", middleware.API2FAVerifyRateLimit(), twofaHandler.VerifyLogin)
 	}
 
 	// Social authentication routes
@@ -167,7 +187,7 @@ func main() {
 	adminRoutes := r.Group("/admin")
 	// Remove the general AuthMiddleware and replace with AdminAuthMiddleware
 	// Admin routes shouldn't require user tokens, but a specific admin key
-	adminRoutes.Use(middleware.AdminAuthMiddleware())
+	adminRoutes.Use(middleware.AdminAuthMiddleware(adminRepo))
 	{
 		adminRoutes.GET("/activity-logs", logHandler.GetAllActivityLogs)
 
@@ -177,6 +197,91 @@ func main() {
 		adminRoutes.POST("/apps", adminHandler.CreateApp)
 		adminRoutes.GET("/apps/:id", adminHandler.GetAppDetails)
 		adminRoutes.POST("/apps/:id/oauth-config", adminHandler.UpsertOAuthConfig)
+	}
+
+	// GUI routes (Admin web interface)
+	gui := r.Group("/gui")
+	{
+		// Static assets (no auth required)
+		gui.StaticFS("/static", static.HTTPFileSystem())
+
+		// Login page and form submission (no auth required)
+		gui.GET("/login", guiHandler.LoginPage)
+		gui.POST("/login", middleware.LoginRateLimitMiddleware(), guiHandler.LoginSubmit)
+
+		// Authenticated GUI routes
+		guiAuth := gui.Group("/")
+		guiAuth.Use(middleware.GUIAuthMiddleware(accountService))
+		guiAuth.Use(middleware.CSRFMiddleware(accountService))
+		{
+			guiAuth.GET("/", guiHandler.Dashboard)
+			guiAuth.GET("/dashboard/stats", guiHandler.DashboardStats)
+			guiAuth.GET("/dashboard/activity", guiHandler.DashboardActivity)
+			guiAuth.GET("/logout", guiHandler.Logout)
+
+			// Tenant management
+			guiAuth.GET("/tenants", guiHandler.TenantPage)
+			guiAuth.GET("/tenants/list", guiHandler.TenantList)
+			guiAuth.GET("/tenants/new", guiHandler.TenantCreateForm)
+			guiAuth.POST("/tenants", guiHandler.TenantCreate)
+			guiAuth.GET("/tenants/form-cancel", guiHandler.TenantFormCancel)
+			guiAuth.GET("/tenants/:id/edit", guiHandler.TenantEditForm)
+			guiAuth.PUT("/tenants/:id", guiHandler.TenantUpdate)
+			guiAuth.GET("/tenants/:id/delete", guiHandler.TenantDeleteConfirm)
+			guiAuth.DELETE("/tenants/:id", guiHandler.TenantDelete)
+
+			// Application management
+			guiAuth.GET("/applications", guiHandler.AppPage)
+			guiAuth.GET("/applications/list", guiHandler.AppList)
+			guiAuth.GET("/applications/new", guiHandler.AppCreateForm)
+			guiAuth.POST("/applications", guiHandler.AppCreate)
+			guiAuth.GET("/applications/form-cancel", guiHandler.AppFormCancel)
+			guiAuth.GET("/applications/:id/edit", guiHandler.AppEditForm)
+			guiAuth.PUT("/applications/:id", guiHandler.AppUpdate)
+			guiAuth.GET("/applications/:id/delete", guiHandler.AppDeleteConfirm)
+			guiAuth.DELETE("/applications/:id", guiHandler.AppDelete)
+
+			// OAuth config management
+			guiAuth.GET("/oauth", guiHandler.OAuthPage)
+			guiAuth.GET("/oauth/list", guiHandler.OAuthList)
+			guiAuth.GET("/oauth/new", guiHandler.OAuthCreateForm)
+			guiAuth.POST("/oauth", guiHandler.OAuthCreate)
+			guiAuth.GET("/oauth/form-cancel", guiHandler.OAuthFormCancel)
+			guiAuth.GET("/oauth/:id/edit", guiHandler.OAuthEditForm)
+			guiAuth.PUT("/oauth/:id", guiHandler.OAuthUpdate)
+			guiAuth.GET("/oauth/:id/delete", guiHandler.OAuthDeleteConfirm)
+			guiAuth.DELETE("/oauth/:id", guiHandler.OAuthDelete)
+			guiAuth.PUT("/oauth/:id/toggle", guiHandler.OAuthToggleEnabled)
+
+			// User management
+			guiAuth.GET("/users", guiHandler.UserPage)
+			guiAuth.GET("/users/list", guiHandler.UserList)
+			guiAuth.GET("/users/:id", guiHandler.UserDetail)
+			guiAuth.PUT("/users/:id/toggle", guiHandler.UserToggleActive)
+
+			// Activity logs viewer
+			guiAuth.GET("/logs", guiHandler.LogsPage)
+			guiAuth.GET("/logs/list", guiHandler.LogList)
+			guiAuth.GET("/logs/:id", guiHandler.LogDetail)
+
+			// API key management
+			guiAuth.GET("/api-keys", guiHandler.ApiKeysPage)
+			guiAuth.GET("/api-keys/list", guiHandler.ApiKeyList)
+			guiAuth.GET("/api-keys/new", guiHandler.ApiKeyCreateForm)
+			guiAuth.POST("/api-keys", guiHandler.ApiKeyCreate)
+			guiAuth.GET("/api-keys/form-cancel", guiHandler.ApiKeyFormCancel)
+			guiAuth.GET("/api-keys/:id/revoke", guiHandler.ApiKeyRevokeConfirm)
+			guiAuth.PUT("/api-keys/:id/revoke", guiHandler.ApiKeyRevoke)
+			guiAuth.GET("/api-keys/:id/delete", guiHandler.ApiKeyDeleteConfirm)
+			guiAuth.DELETE("/api-keys/:id", guiHandler.ApiKeyDelete)
+
+			// Settings management
+			guiAuth.GET("/settings", guiHandler.SettingsPage)
+			guiAuth.GET("/settings/info", guiHandler.SettingsInfo)
+			guiAuth.GET("/settings/section/:category", guiHandler.SettingsSection)
+			guiAuth.PUT("/settings/:key", guiHandler.SettingUpdate)
+			guiAuth.DELETE("/settings/:key", guiHandler.SettingReset)
+		}
 	}
 
 	// Add Swagger UI endpoint

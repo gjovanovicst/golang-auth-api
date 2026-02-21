@@ -198,6 +198,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -1199,6 +1205,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -1253,6 +1265,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -1633,6 +1651,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -1685,6 +1709,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -1733,6 +1763,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -1899,7 +1935,9 @@ const docTemplate = `{
                     "example": true
                 },
                 "password": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string",
+                    "maxLength": 128,
                     "example": "password123"
                 }
             }
@@ -1934,7 +1972,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
-                    "type": "string"
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -1942,9 +1982,11 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "access_token": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string"
                 },
                 "refresh_token": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string"
                 }
             }
@@ -1957,9 +1999,11 @@ const docTemplate = `{
             ],
             "properties": {
                 "access_token": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string"
                 },
                 "refresh_token": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string"
                 }
             }
@@ -2031,6 +2075,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "refresh_token": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string"
                 }
             }
@@ -2046,7 +2091,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string",
+                    "maxLength": 128,
                     "minLength": 8
                 }
             }
@@ -2060,9 +2107,11 @@ const docTemplate = `{
             "properties": {
                 "new_password": {
                     "type": "string",
+                    "maxLength": 128,
                     "minLength": 8
                 },
                 "token": {
+                    "description": "#nosec G101 -- This is a DTO field, not a hardcoded credential",
                     "type": "string"
                 }
             }
@@ -2215,7 +2264,9 @@ const docTemplate = `{
                     "example": "newemail@example.com"
                 },
                 "password": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string",
+                    "maxLength": 128,
                     "example": "currentpassword123"
                 }
             }
@@ -2229,10 +2280,12 @@ const docTemplate = `{
             "properties": {
                 "current_password": {
                     "type": "string",
+                    "maxLength": 128,
                     "example": "oldpassword123"
                 },
                 "new_password": {
                     "type": "string",
+                    "maxLength": 128,
                     "minLength": 8,
                     "example": "newpassword123"
                 }
@@ -2284,6 +2337,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "client_secret": {
+                    "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string"
                 },
                 "provider": {
@@ -2352,6 +2406,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "secret": {
+                    "description": "#nosec G101,G117 -- This is a response field for TOTP secret, not a hardcoded credential",
                     "type": "string"
                 }
             }

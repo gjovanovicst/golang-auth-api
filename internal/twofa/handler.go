@@ -127,7 +127,7 @@ func (h *Handler) Enable2FA(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID.(string))
 	if parseErr == nil {
-		log.Log2FAEnable(userUUID, ipAddress, userAgent)
+		log.Log2FAEnable(appID, userUUID, ipAddress, userAgent)
 	}
 
 	c.JSON(http.StatusOK, dto.TwoFAEnableResponse{
@@ -176,7 +176,10 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID.(string))
 	if parseErr == nil {
-		log.Log2FADisable(userUUID, ipAddress, userAgent)
+		appIDVal, appIDExists := c.Get("app_id")
+		if appIDExists {
+			log.Log2FADisable(appIDVal.(uuid.UUID), userUUID, ipAddress, userAgent)
+		}
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "2FA disabled successfully"})
@@ -191,6 +194,7 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 // @Success 200 {object} dto.LoginResponse
 // @Failure 400 {object} dto.ErrorResponse
 // @Failure 401 {object} dto.ErrorResponse
+// @Failure 429 {object} dto.ErrorResponse
 // @Failure 500 {object} dto.ErrorResponse
 // @Router /2fa/login-verify [post]
 func (h *Handler) VerifyLogin(c *gin.Context) {
@@ -230,7 +234,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		ipAddress, userAgent := util.GetClientInfo(c)
 		userUUID, parseErr := uuid.Parse(userID)
 		if parseErr == nil {
-			log.LogRecoveryCodeUsed(userUUID, ipAddress, userAgent)
+			log.LogRecoveryCodeUsed(appID, userUUID, ipAddress, userAgent)
 		}
 	} else {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Either TOTP code or recovery code is required"})
@@ -253,7 +257,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID)
 	if parseErr == nil {
-		log.Log2FALogin(userUUID, ipAddress, userAgent, method)
+		log.Log2FALogin(appID, userUUID, ipAddress, userAgent, method)
 	}
 
 	// Clear temporary session
@@ -306,7 +310,10 @@ func (h *Handler) GenerateRecoveryCodes(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID.(string))
 	if parseErr == nil {
-		log.LogRecoveryCodeGenerate(userUUID, ipAddress, userAgent)
+		appIDVal, appIDExists := c.Get("app_id")
+		if appIDExists {
+			log.LogRecoveryCodeGenerate(appIDVal.(uuid.UUID), userUUID, ipAddress, userAgent)
+		}
 	}
 
 	c.JSON(http.StatusOK, dto.TwoFARecoveryCodesResponse{

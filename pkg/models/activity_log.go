@@ -11,7 +11,7 @@ import (
 type ActivityLog struct {
 	ID        uuid.UUID       `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	AppID     uuid.UUID       `gorm:"type:uuid;not null;default:'00000000-0000-0000-0000-000000000001';index" json:"app_id"`
-	UserID    uuid.UUID       `gorm:"index:idx_user_timestamp;index:idx_cleanup" json:"user_id"` // Composite indexes for performance
+	UserID    uuid.UUID       `gorm:"type:uuid;index:idx_user_timestamp;index:idx_cleanup" json:"user_id"` // Composite indexes for performance
 	EventType string          `gorm:"index;not null" json:"event_type"`
 	Timestamp time.Time       `gorm:"index:idx_user_timestamp;index:idx_cleanup;not null" json:"timestamp"`
 	IPAddress string          `json:"ip_address"`

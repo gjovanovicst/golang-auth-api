@@ -17,16 +17,13 @@ func NewService() *Service {
 }
 
 func (s *Service) SendVerificationEmail(toEmail, token string) error {
-	fmt.Printf("DEBUG: SendVerificationEmail called with email: %s, token: %s\n", toEmail, token)
-	
 	from := viper.GetString("EMAIL_FROM")
 	subject := "Verify Your Email Address"
 	body := fmt.Sprintf("Please verify your email address by clicking on the link: http://localhost:8080/verify-email?token=%s", token)
 
 	// Check if we're in development mode (no real SMTP configured)
 	emailHost := viper.GetString("EMAIL_HOST")
-	fmt.Printf("DEBUG: Email host configured as: %s\n", emailHost)
-	
+
 	if emailHost == "" || emailHost == "smtp.example.com" {
 		// Development mode - log email instead of sending
 		log.Printf("=== EMAIL VERIFICATION (DEVELOPMENT MODE) ===")

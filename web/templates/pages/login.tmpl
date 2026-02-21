@@ -1,0 +1,79 @@
+{{define "login"}}
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Auth API Admin</title>
+    <link rel="stylesheet" href="/gui/static/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/gui/static/css/bootstrap-icons.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .login-card {
+            width: 100%;
+            max-width: 420px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="text-center mb-4">
+            <i class="bi bi-shield-lock text-primary" style="font-size: 3rem;"></i>
+            <h3 class="mt-2 fw-bold">Auth API</h3>
+            <p class="text-muted">Admin Panel</p>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                {{if .Error}}
+                <div class="alert alert-danger py-2" role="alert">
+                    <i class="bi bi-exclamation-triangle me-1"></i>{{.Error}}
+                </div>
+                {{end}}
+
+                <form method="POST" action="/gui/login">
+                    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                    {{if .Redirect}}
+                    <input type="hidden" name="redirect" value="{{.Redirect}}">
+                    {{end}}
+
+                    <div class="mb-3">
+                        <label for="username" class="form-label">
+                            <i class="bi bi-person me-1"></i>Username
+                        </label>
+                        <input type="text" class="form-control" id="username" name="username"
+                               value="{{.Username}}" placeholder="Enter username"
+                               autocomplete="username" autofocus required>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="password" class="form-label">
+                            <i class="bi bi-lock me-1"></i>Password
+                        </label>
+                        <input type="password" class="form-control" id="password" name="password"
+                               placeholder="Enter password"
+                               autocomplete="current-password" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-box-arrow-in-right me-1"></i>Sign In
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <p class="text-center text-muted mt-3 small">
+            Auth API Admin Panel &bull; Secure Access Only
+        </p>
+    </div>
+
+    <script src="/gui/static/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+{{end}}

@@ -264,10 +264,11 @@ func (cs *CleanupService) GetExpiredLogCount() (int64, error) {
 // UpdateRetentionForEventType updates the expiration date for all logs of a specific event type
 // This is useful when retention policies change
 func (cs *CleanupService) UpdateRetentionForEventType(eventType string, newRetentionDays int) (int64, error) {
-	// Calculate new expiration based on the log's timestamp
+	// Calculate new expiration based on the log's timestamp.
+	// Note: INTERVAL '1 day' * ? allows proper parameterization (cannot parameterize inside INTERVAL literals).
 	result := cs.db.Exec(`
 		UPDATE activity_logs 
-		SET expires_at = timestamp + INTERVAL '? days'
+		SET expires_at = timestamp + INTERVAL '1 day' * ?
 		WHERE event_type = ? AND expires_at IS NOT NULL
 	`, newRetentionDays, eventType)
 

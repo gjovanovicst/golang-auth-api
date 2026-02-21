@@ -1,0 +1,7 @@
+{{define "settings_section"}}
+<div class="px-3 py-2">
+    {{range .Settings}}
+    {{template "settings_row" .}}
+    {{end}}
+</div>
+{{end}}

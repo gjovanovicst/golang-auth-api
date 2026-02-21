@@ -29,6 +29,13 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Reject refresh tokens used as access tokens.
+		// Empty TokenType is allowed for backward compatibility with pre-existing tokens.
+		if claims.TokenType != "" && claims.TokenType != jwt.TokenTypeAccess {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token type"})
+			return
+		}
+
 		// Check Redis blacklists only if Redis is available
 		if redis.Rdb != nil {
 			// Check if the specific access token is blacklisted

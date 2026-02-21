@@ -1,0 +1,147 @@
+{{define "settings"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Settings{{end}}
+
+{{define "head"}}
+<style>
+    .setting-row {
+        border-bottom: 1px solid var(--bs-border-color);
+        padding: 0.75rem 0;
+    }
+    .setting-row:last-child {
+        border-bottom: none;
+    }
+    .source-badge {
+        font-size: 0.7rem;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+    }
+    .setting-value-input {
+        max-width: 400px;
+    }
+    .restart-badge {
+        font-size: 0.65rem;
+    }
+    .system-info-card .info-item {
+        padding: 0.4rem 0;
+        border-bottom: 1px solid var(--bs-border-color-translucent);
+    }
+    .system-info-card .info-item:last-child {
+        border-bottom: none;
+    }
+    .accordion-button:not(.collapsed) {
+        background-color: rgba(var(--bs-primary-rgb), 0.05);
+    }
+    .sensitive-toggle {
+        cursor: pointer;
+    }
+</style>
+{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-gear me-2"></i>System Settings
+    </h4>
+</div>
+
+<!-- System Info Card (lazy-loaded via HTMX) -->
+<div id="system-info-container"
+     hx-get="/gui/settings/info"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body text-center py-3">
+            <div class="spinner-border spinner-border-sm text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <span class="ms-2 text-muted small">Loading system info...</span>
+        </div>
+    </div>
+</div>
+
+<!-- Settings Accordion -->
+<div class="accordion" id="settingsAccordion">
+    {{range $i, $cat := .Data}}
+    <div class="accordion-item border-0 shadow-sm mb-2 rounded">
+        <h2 class="accordion-header" id="heading-{{$cat.Slug}}">
+            <button class="accordion-button collapsed rounded" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#collapse-{{$cat.Slug}}"
+                    aria-expanded="false" aria-controls="collapse-{{$cat.Slug}}">
+                <i class="{{$cat.Icon}} me-2"></i>
+                <span class="fw-semibold">{{$cat.Label}}</span>
+                <span class="badge bg-secondary-subtle text-secondary ms-2">{{len $cat.Settings}}</span>
+            </button>
+        </h2>
+        <div id="collapse-{{$cat.Slug}}" class="accordion-collapse collapse"
+             aria-labelledby="heading-{{$cat.Slug}}" data-bs-parent="#settingsAccordion">
+            <div class="accordion-body p-0"
+                 id="section-{{$cat.Slug}}"
+                 hx-get="/gui/settings/section/{{$cat.Slug}}"
+                 hx-trigger="shown.bs.collapse from:closest .accordion-item"
+                 hx-swap="innerHTML">
+                <!-- Loaded on accordion expand -->
+                <div class="text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <span class="ms-2 text-muted small">Loading settings...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    {{end}}
+</div>
+
+<!-- Alert container for save/reset feedback (positioned fixed) -->
+<div id="settings-alert" class="position-fixed bottom-0 end-0 p-3" style="z-index: 1055;"></div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Toggle password visibility for sensitive fields
+    function toggleSensitive(key) {
+        var input = document.getElementById('setting-input-' + key);
+        var icon = document.getElementById('sensitive-icon-' + key);
+        if (input.type === 'password') {
+            input.type = 'text';
+            icon.className = 'bi bi-eye-slash';
+        } else {
+            input.type = 'password';
+            icon.className = 'bi bi-eye';
+        }
+    }
+
+    // Show a toast-like alert at the bottom
+    function showSettingsAlert(message, type) {
+        var container = document.getElementById('settings-alert');
+        var alertHtml = '<div class="alert alert-' + type + ' alert-dismissible fade show shadow" role="alert">' +
+            '<small>' + message + '</small>' +
+            '<button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>' +
+            '</div>';
+        container.innerHTML = alertHtml;
+        // Auto-dismiss after 3s
+        setTimeout(function() {
+            var alert = container.querySelector('.alert');
+            if (alert) {
+                var bsAlert = bootstrap.Alert.getOrCreateInstance(alert);
+                bsAlert.close();
+            }
+        }, 3000);
+    }
+
+    // Handle HTMX events for settings feedback
+    document.body.addEventListener('settingSaved', function(e) {
+        showSettingsAlert('Setting saved successfully.', 'success');
+    });
+    document.body.addEventListener('settingReset', function(e) {
+        showSettingsAlert('Setting reset to default.', 'info');
+    });
+    document.body.addEventListener('settingError', function(e) {
+        var msg = e.detail && e.detail.message ? e.detail.message : 'An error occurred.';
+        showSettingsAlert(msg, 'danger');
+    });
+</script>
+{{end}}

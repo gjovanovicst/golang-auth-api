@@ -1,0 +1,39 @@
+{{define "tenant_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .ID}}
+            <i class="bi bi-pencil me-2"></i>Edit Tenant
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Create Tenant
+            {{end}}
+        </h6>
+        <form {{if .ID}}
+                hx-put="/gui/tenants/{{.ID}}"
+              {{else}}
+                hx-post="/gui/tenants"
+              {{end}}
+              hx-target="#tenant-form-container"
+              hx-swap="innerHTML">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-8">
+                    <label for="tenantName" class="form-label small text-muted">Tenant Name</label>
+                    <input type="text" class="form-control" id="tenantName" name="name"
+                           value="{{.Name}}" placeholder="Enter tenant name" required autofocus>
+                </div>
+                <div class="col-md-4 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>{{if .ID}}Update{{else}}Create{{end}}
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary"
+                            hx-get="/gui/tenants/form-cancel"
+                            hx-target="#tenant-form-container"
+                            hx-swap="innerHTML">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

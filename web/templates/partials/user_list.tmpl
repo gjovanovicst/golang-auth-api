@@ -1,0 +1,122 @@
+{{define "user_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Users}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Email</th>
+                        <th>Name</th>
+                        <th>Application</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-center">Security</th>
+                        <th>Created</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Users}}
+                    <tr>
+                        <td class="ps-3">
+                            <span class="fw-semibold">{{.Email}}</span>
+                        </td>
+                        <td>
+                            {{if .Name}}{{.Name}}{{else}}<span class="text-muted fst-italic">-</span>{{end}}
+                        </td>
+                        <td>
+                            <span class="fw-semibold">{{.AppName}}</span>
+                            {{if .TenantName}}
+                            <br>
+                            <small class="text-muted">{{.TenantName}}</small>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            <div id="user-toggle-{{.ID}}"
+                                 hx-put="/gui/users/{{.ID}}/toggle"
+                                 hx-target="this"
+                                 hx-swap="outerHTML"
+                                 hx-confirm="{{if .IsActive}}Deactivate this user? Their sessions will be revoked immediately.{{else}}Reactivate this user?{{end}}"
+                                 style="cursor: pointer;"
+                                 title="Click to {{if .IsActive}}deactivate{{else}}activate{{end}}">
+                                {{if .IsActive}}
+                                <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle-fill me-1"></i>Active</span>
+                                {{else}}
+                                <span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle-fill me-1"></i>Inactive</span>
+                                {{end}}
+                            </div>
+                        </td>
+                        <td class="text-center">
+                            <span class="d-inline-flex gap-1 align-items-center">
+                                {{if .EmailVerified}}
+                                <span class="badge bg-info bg-opacity-10 text-info" title="Email verified"><i class="bi bi-envelope-check"></i></span>
+                                {{else}}
+                                <span class="badge bg-warning bg-opacity-10 text-warning" title="Email not verified"><i class="bi bi-envelope-exclamation"></i></span>
+                                {{end}}
+                                {{if .TwoFAEnabled}}
+                                <span class="badge bg-success bg-opacity-10 text-success" title="2FA enabled"><i class="bi bi-shield-lock"></i></span>
+                                {{end}}
+                                {{if .HasPassword}}
+                                <span class="badge bg-secondary bg-opacity-10 text-secondary" title="Has password"><i class="bi bi-key"></i></span>
+                                {{end}}
+                                {{if gt .SocialAccountCount 0}}
+                                <span class="badge bg-primary bg-opacity-10 text-primary" title="{{.SocialAccountCount}} social account(s)"><i class="bi bi-share"></i> {{.SocialAccountCount}}</span>
+                                {{end}}
+                            </span>
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-primary btn-sm"
+                                    hx-get="/gui/users/{{.ID}}"
+                                    hx-target="#user-detail-container"
+                                    hx-swap="innerHTML"
+                                    title="View details">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {{if gt .TotalPages 1}}
+        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+            <small class="text-muted">
+                Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
+            </small>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item {{if le .Page 1}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/users/list?page={{sub .Page 1}}{{if .AppID}}&app_id={{.AppID}}{{end}}{{if .Search}}&search={{.Search}}{{end}}"
+                           hx-target="#user-table"
+                           hx-swap="innerHTML">Previous</a>
+                    </li>
+                    <li class="page-item {{if ge .Page .TotalPages}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/users/list?page={{add .Page 1}}{{if .AppID}}&app_id={{.AppID}}{{end}}{{if .Search}}&search={{.Search}}{{end}}"
+                           hx-target="#user-table"
+                           hx-swap="innerHTML">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        {{end}}
+
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-people fs-1"></i>
+            {{if or .AppID .Search}}
+            <p class="mt-2 mb-0">No users found matching your filters.</p>
+            {{else}}
+            <p class="mt-2 mb-0">No users found. Users will appear here when they register through the API.</p>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

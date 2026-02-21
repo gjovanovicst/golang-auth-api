@@ -1,0 +1,132 @@
+{{define "api_key_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Keys}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        <th>Type</th>
+                        <th>Key</th>
+                        <th>Application</th>
+                        <th>Status</th>
+                        <th>Last Used</th>
+                        <th>Expires</th>
+                        <th>Created</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Keys}}
+                    <tr{{if .IsRevoked}} class="table-secondary text-muted"{{end}}>
+                        <td class="ps-3">
+                            <span class="fw-semibold">{{.Name}}</span>
+                        </td>
+                        <td>
+                            {{if eq .KeyType "admin"}}
+                            <span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-shield-lock me-1"></i>Admin</span>
+                            {{else}}
+                            <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-app-indicator me-1"></i>App</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <code class="text-muted">{{.KeyPrefix}}...{{.KeySuffix}}</code>
+                        </td>
+                        <td>
+                            {{if .AppName}}
+                            <span>{{.AppName}}</span>
+                            <br>
+                            <small class="text-muted">{{.TenantName}}</small>
+                            {{else}}
+                            <span class="text-muted">-</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .IsRevoked}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary"><i class="bi bi-x-circle-fill me-1"></i>Revoked</span>
+                            {{else if and .ExpiresAt (isExpired .ExpiresAt)}}
+                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-clock-fill me-1"></i>Expired</span>
+                            {{else}}
+                            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle-fill me-1"></i>Active</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .LastUsedAt}}
+                            <small class="text-muted" title="{{.LastUsedAt.Format "Jan 02, 2006 15:04:05 MST"}}">{{timeAgo (deref .LastUsedAt)}}</small>
+                            {{else}}
+                            <small class="text-muted">Never</small>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .ExpiresAt}}
+                            <small class="text-muted" title="{{.ExpiresAt.Format "Jan 02, 2006 15:04:05 MST"}}">{{.ExpiresAt.Format "Jan 02, 2006"}}</small>
+                            {{else}}
+                            <small class="text-muted">Never</small>
+                            {{end}}
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            {{if not .IsRevoked}}
+                            <button class="btn btn-outline-warning btn-sm me-1"
+                                    hx-get="/gui/api-keys/{{.ID}}/revoke"
+                                    hx-target="#revoke-apikey-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#revokeApiKeyModal"
+                                    title="Revoke">
+                                <i class="bi bi-shield-x"></i>
+                            </button>
+                            {{end}}
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/api-keys/{{.ID}}/delete"
+                                    hx-target="#delete-apikey-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteApiKeyModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {{if gt .TotalPages 1}}
+        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+            <small class="text-muted">
+                Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
+            </small>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item {{if le .Page 1}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/api-keys/list?page={{sub .Page 1}}{{if .KeyType}}&key_type={{.KeyType}}{{end}}"
+                           hx-target="#apikey-table"
+                           hx-swap="innerHTML">Previous</a>
+                    </li>
+                    <li class="page-item {{if ge .Page .TotalPages}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/api-keys/list?page={{add .Page 1}}{{if .KeyType}}&key_type={{.KeyType}}{{end}}"
+                           hx-target="#apikey-table"
+                           hx-swap="innerHTML">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        {{end}}
+
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-key-fill fs-1"></i>
+            <p class="mt-2 mb-0">No API keys found. Create your first key to get started.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

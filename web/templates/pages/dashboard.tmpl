@@ -1,0 +1,105 @@
+{{define "dashboard"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Dashboard{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-speedometer2 me-2"></i>Dashboard
+    </h4>
+    <span class="text-muted small">Welcome, {{.AdminUsername}}</span>
+</div>
+
+<!-- Stats cards (loaded via HTMX) -->
+<div id="dashboard-stats"
+     hx-get="/gui/dashboard/stats"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-xl-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="bg-primary bg-opacity-10 rounded-3 p-3 me-3">
+                            <i class="bi bi-people text-primary fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="text-muted mb-0 small">Total Users</h6>
+                            <h4 class="mb-0 fw-bold placeholder-glow"><span class="placeholder col-4"></span></h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="bg-success bg-opacity-10 rounded-3 p-3 me-3">
+                            <i class="bi bi-building text-success fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="text-muted mb-0 small">Tenants</h6>
+                            <h4 class="mb-0 fw-bold placeholder-glow"><span class="placeholder col-4"></span></h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="bg-info bg-opacity-10 rounded-3 p-3 me-3">
+                            <i class="bi bi-app-indicator text-info fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="text-muted mb-0 small">Applications</h6>
+                            <h4 class="mb-0 fw-bold placeholder-glow"><span class="placeholder col-4"></span></h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <div class="d-flex align-items-center">
+                        <div class="bg-warning bg-opacity-10 rounded-3 p-3 me-3">
+                            <i class="bi bi-journal-text text-warning fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="text-muted mb-0 small">Events (24h)</h6>
+                            <h4 class="mb-0 fw-bold placeholder-glow"><span class="placeholder col-4"></span></h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent activity table (loaded via HTMX) -->
+<div id="dashboard-activity"
+     hx-get="/gui/dashboard/activity"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white border-bottom">
+            <h6 class="mb-0 fw-bold">
+                <i class="bi bi-clock-history me-2"></i>Recent Activity
+            </h6>
+        </div>
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading activity logs...</p>
+        </div>
+    </div>
+</div>
+{{end}}

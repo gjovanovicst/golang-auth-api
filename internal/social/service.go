@@ -72,6 +72,11 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 		// Also update user profile with latest data
 		user, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
 		if err == nil {
+			// Check if account is active
+			if !user.IsActive {
+				return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+			}
+
 			updated := false
 			if user.Name != googleUser.Name && googleUser.Name != "" {
 				user.Name = googleUser.Name
@@ -120,6 +125,11 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 	// If social account not found, check if user with this email exists
 	user, err := s.UserRepo.GetUserByEmail(appID.String(), googleUser.Email)
 	if err == nil { // User with this email exists, link social account
+		// Check if account is active
+		if !user.IsActive {
+			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+		}
+
 		// Update user profile with Google data if not already set
 		if user.Name == "" && googleUser.Name != "" {
 			user.Name = googleUser.Name
@@ -278,6 +288,11 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 		// Also update user profile with latest data
 		user, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
 		if err == nil {
+			// Check if account is active
+			if !user.IsActive {
+				return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+			}
+
 			updated := false
 			if user.Name != facebookUser.Name && facebookUser.Name != "" {
 				user.Name = facebookUser.Name
@@ -326,6 +341,11 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 	// If social account not found, check if user with this email exists
 	user, err := s.UserRepo.GetUserByEmail(appID.String(), facebookUser.Email)
 	if err == nil { // User with this email exists, link social account
+		// Check if account is active
+		if !user.IsActive {
+			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+		}
+
 		// Update user profile with Facebook data if not already set
 		if user.Name == "" && facebookUser.Name != "" {
 			user.Name = facebookUser.Name
@@ -526,6 +546,11 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		// Also update user profile with latest data
 		user, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
 		if err == nil {
+			// Check if account is active
+			if !user.IsActive {
+				return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+			}
+
 			updated := false
 			if user.Name != githubUser.Name && githubUser.Name != "" {
 				user.Name = githubUser.Name
@@ -562,6 +587,11 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 	// If social account not found, check if user with this email exists
 	user, err := s.UserRepo.GetUserByEmail(appID.String(), githubUser.Email)
 	if err == nil { // User with this email exists, link social account
+		// Check if account is active
+		if !user.IsActive {
+			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+		}
+
 		// Update user profile with GitHub data if not already set
 		if user.Name == "" && githubUser.Name != "" {
 			user.Name = githubUser.Name

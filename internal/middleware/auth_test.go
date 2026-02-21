@@ -18,7 +18,8 @@ func TestMain(m *testing.M) {
 	viper.AutomaticEnv()
 
 	// Setup test configuration with defaults (will be overridden by env vars if present)
-	viper.SetDefault("JWT_SECRET", "testsecret")
+	// Secret must be >= 32 bytes
+	viper.SetDefault("JWT_SECRET", "test-jwt-secret-that-is-at-least-32-bytes-long!")
 	viper.SetDefault("ACCESS_TOKEN_EXPIRATION_MINUTES", 15)
 	viper.SetDefault("REFRESH_TOKEN_EXPIRATION_HOURS", 720)
 	viper.SetDefault("REDIS_ADDR", "localhost:6379")

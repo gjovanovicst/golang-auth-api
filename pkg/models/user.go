@@ -14,6 +14,7 @@ type User struct {
 	Email              string          `gorm:"uniqueIndex:idx_email_app_id;not null" json:"email"`
 	PasswordHash       string          `gorm:"" json:"-"` // Stored hashed, not exposed via JSON - not required for social logins
 	EmailVerified      bool            `gorm:"default:false" json:"email_verified"`
+	IsActive           bool            `gorm:"default:true" json:"is_active"`
 	Name               string          `gorm:"" json:"name"`            // Full name from social login or user input
 	FirstName          string          `gorm:"" json:"first_name"`      // First name from social login
 	LastName           string          `gorm:"" json:"last_name"`       // Last name from social login

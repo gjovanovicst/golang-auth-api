@@ -18,4 +18,3 @@ type SchemaMigration struct {
 func (SchemaMigration) TableName() string {
 	return "schema_migrations"
 }
-

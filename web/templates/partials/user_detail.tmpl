@@ -1,0 +1,173 @@
+{{define "user_detail"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <h6 class="fw-bold mb-0">
+                <i class="bi bi-person-circle me-2"></i>User Details
+            </h6>
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    onclick="document.getElementById('user-detail-container').innerHTML = '';"
+                    title="Close">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+
+        <!-- User info -->
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Email</label>
+                    <div class="fw-semibold">{{.Email}}</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Full Name</label>
+                    <div>{{if .Name}}{{.Name}}{{else}}<span class="text-muted fst-italic">Not set</span>{{end}}</div>
+                </div>
+                <div class="row">
+                    <div class="col-6">
+                        <div class="mb-3">
+                            <label class="form-label small text-muted mb-1">First Name</label>
+                            <div>{{if .FirstName}}{{.FirstName}}{{else}}<span class="text-muted fst-italic">-</span>{{end}}</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="mb-3">
+                            <label class="form-label small text-muted mb-1">Last Name</label>
+                            <div>{{if .LastName}}{{.LastName}}{{else}}<span class="text-muted fst-italic">-</span>{{end}}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Locale</label>
+                    <div>{{if .Locale}}{{.Locale}}{{else}}<span class="text-muted fst-italic">Not set</span>{{end}}</div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Application</label>
+                    <div>
+                        <span class="fw-semibold">{{.AppName}}</span>
+                        {{if .TenantName}}
+                        <br><small class="text-muted">{{.TenantName}}</small>
+                        {{end}}
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Status</label>
+                <div>
+                    <div id="user-detail-toggle-{{.ID}}"
+                         hx-put="/gui/users/{{.ID}}/toggle"
+                         hx-target="this"
+                         hx-swap="outerHTML"
+                         hx-confirm="{{if .IsActive}}Deactivate this user? Their sessions will be revoked immediately.{{else}}Reactivate this user?{{end}}"
+                         style="cursor: pointer; display: inline-block;">
+                        {{if .IsActive}}
+                        <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle-fill me-1"></i>Active</span>
+                        {{else}}
+                        <span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle-fill me-1"></i>Inactive</span>
+                        {{end}}
+                    </div>
+                    <small class="text-muted ms-1">(click to toggle)</small>
+                </div>
+                </div>
+                {{if .ProfilePicture}}
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Profile Picture</label>
+                    <div>
+                        <img src="{{.ProfilePicture}}" alt="Profile" class="rounded-circle" width="48" height="48"
+                             onerror="this.style.display='none'">
+                    </div>
+                </div>
+                {{end}}
+                <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Timestamps</label>
+                    <div>
+                        <small class="text-muted">Created: {{formatDateTimeFull .CreatedAt}}</small><br>
+                        <small class="text-muted">Updated: {{formatDateTimeFull .UpdatedAt}}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Security section -->
+        <h6 class="fw-bold mb-2 mt-3 pt-3 border-top">
+            <i class="bi bi-shield-check me-2"></i>Security
+        </h6>
+        <div class="row g-3 mb-3">
+            <div class="col-md-4">
+                <div class="d-flex align-items-center gap-2">
+                    {{if .EmailVerified}}
+                    <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-envelope-check me-1"></i>Email Verified</span>
+                    {{else}}
+                    <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-envelope-exclamation me-1"></i>Email Not Verified</span>
+                    {{end}}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="d-flex align-items-center gap-2">
+                    {{if .TwoFAEnabled}}
+                    <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-shield-lock me-1"></i>2FA Enabled</span>
+                    {{else}}
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary"><i class="bi bi-shield me-1"></i>2FA Disabled</span>
+                    {{end}}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="d-flex align-items-center gap-2">
+                    {{if .HasPassword}}
+                    <span class="badge bg-secondary bg-opacity-10 text-secondary"><i class="bi bi-key me-1"></i>Has Password</span>
+                    {{else}}
+                    <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-share me-1"></i>Social Login Only</span>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+
+        <!-- Social accounts -->
+        {{if .SocialAccounts}}
+        <h6 class="fw-bold mb-2 mt-3 pt-3 border-top">
+            <i class="bi bi-share me-2"></i>Linked Social Accounts
+        </h6>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Provider</th>
+                        <th>Email</th>
+                        <th>Name</th>
+                        <th>Linked</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .SocialAccounts}}
+                    <tr>
+                        <td>
+                            {{if eq .Provider "google"}}
+                            <span class="badge bg-primary bg-opacity-10 text-primary"><i class="bi bi-google me-1"></i>Google</span>
+                            {{else if eq .Provider "facebook"}}
+                            <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-facebook me-1"></i>Facebook</span>
+                            {{else if eq .Provider "github"}}
+                            <span class="badge bg-dark bg-opacity-10 text-dark"><i class="bi bi-github me-1"></i>GitHub</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">{{.Provider}}</span>
+                            {{end}}
+                        </td>
+                        <td><small>{{.Email}}</small></td>
+                        <td><small>{{if .Name}}{{.Name}}{{else}}<span class="text-muted fst-italic">-</span>{{end}}</small></td>
+                        <td><small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small></td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="mt-3 pt-3 border-top">
+            <h6 class="fw-bold mb-2">
+                <i class="bi bi-share me-2"></i>Linked Social Accounts
+            </h6>
+            <p class="text-muted small mb-0">No social accounts linked.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

@@ -1,6 +1,6 @@
 # Auth API Makefile
 
-.PHONY: build run dev test clean air
+.PHONY: build run dev test clean air setup-admin
 
 # Build the application
 build:
@@ -47,6 +47,10 @@ install-air:
 setup: install-air
 	go mod tidy
 	go mod download
+
+# Setup admin account for Admin GUI
+setup-admin:
+	go run ./cmd/setup
 
 # Check code formatting
 fmt:
@@ -184,6 +188,7 @@ help:
 	@echo "  clean                - Clean build artifacts"
 	@echo "  install-air          - Install Air for hot reloading"
 	@echo "  setup                - Setup development environment"
+	@echo "  setup-admin          - Create admin account for Admin GUI"
 	@echo "  fmt                  - Format code"
 	@echo "  lint                 - Run linter"
 	@echo "  install-security-tools - Install gosec and nancy security scanners"

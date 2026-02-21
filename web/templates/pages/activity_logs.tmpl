@@ -1,0 +1,138 @@
+{{define "activity_logs"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Activity Logs{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-journal-text me-2"></i>Activity Logs
+    </h4>
+</div>
+
+<!-- Filters row -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body py-2">
+        <div class="row g-2 align-items-end">
+            <!-- Search by user email -->
+            <div class="col-md-3">
+                <label for="logSearch" class="form-label mb-1 small text-muted">User Email</label>
+                <input type="text" class="form-control form-control-sm" id="logSearch"
+                       placeholder="Search by email...">
+            </div>
+            <!-- Event type filter -->
+            <div class="col-md-2">
+                <label for="eventTypeFilter" class="form-label mb-1 small text-muted">Event Type</label>
+                <select class="form-select form-select-sm" id="eventTypeFilter">
+                    <option value="">All Events</option>
+                    {{range .EventTypes}}
+                    <option value="{{.}}">{{.}}</option>
+                    {{end}}
+                </select>
+            </div>
+            <!-- Severity filter -->
+            <div class="col-md-2">
+                <label for="severityFilter" class="form-label mb-1 small text-muted">Severity</label>
+                <select class="form-select form-select-sm" id="severityFilter">
+                    <option value="">All Severities</option>
+                    {{range .Severities}}
+                    <option value="{{.}}">{{.}}</option>
+                    {{end}}
+                </select>
+            </div>
+            <!-- Application filter -->
+            <div class="col-md-2">
+                <label for="appFilter" class="form-label mb-1 small text-muted">Application</label>
+                <select class="form-select form-select-sm" id="appFilter">
+                    <option value="">All Apps</option>
+                    {{range .Apps}}
+                    <option value="{{.ID}}">{{.Name}} ({{.TenantName}})</option>
+                    {{end}}
+                </select>
+            </div>
+            <!-- Date range -->
+            <div class="col-md-2">
+                <label for="startDate" class="form-label mb-1 small text-muted">From</label>
+                <input type="date" class="form-control form-control-sm" id="startDate">
+            </div>
+            <div class="col-md-1">
+                <label for="endDate" class="form-label mb-1 small text-muted">To</label>
+                <input type="date" class="form-control form-control-sm" id="endDate">
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Log detail panel (populated by HTMX when viewing a log) -->
+<div id="log-detail-container" class="mb-3"></div>
+
+<!-- Log table (loaded via HTMX) -->
+<div id="log-table"
+     hx-get="/gui/logs/list?page=1"
+     hx-trigger="load, logListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading activity logs...</p>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Build the list URL with current filter/search state
+    function getLogListURL(page) {
+        var url = '/gui/logs/list?page=' + (page || 1);
+        var search = document.getElementById('logSearch').value.trim();
+        var eventType = document.getElementById('eventTypeFilter').value;
+        var severity = document.getElementById('severityFilter').value;
+        var appID = document.getElementById('appFilter').value;
+        var startDate = document.getElementById('startDate').value;
+        var endDate = document.getElementById('endDate').value;
+        if (search) url += '&search=' + encodeURIComponent(search);
+        if (eventType) url += '&event_type=' + encodeURIComponent(eventType);
+        if (severity) url += '&severity=' + encodeURIComponent(severity);
+        if (appID) url += '&app_id=' + appID;
+        if (startDate) url += '&start_date=' + startDate;
+        if (endDate) url += '&end_date=' + endDate;
+        return url;
+    }
+
+    // Reload list when any dropdown filter changes
+    document.getElementById('eventTypeFilter').addEventListener('change', function() {
+        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
+    });
+    document.getElementById('severityFilter').addEventListener('change', function() {
+        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
+    });
+    document.getElementById('appFilter').addEventListener('change', function() {
+        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
+    });
+    document.getElementById('startDate').addEventListener('change', function() {
+        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
+    });
+    document.getElementById('endDate').addEventListener('change', function() {
+        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
+    });
+
+    // Debounced search on keyup
+    var searchTimeout = null;
+    document.getElementById('logSearch').addEventListener('keyup', function() {
+        if (searchTimeout) clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(function() {
+            htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
+        }, 300);
+    });
+
+    // Close detail panel event
+    document.body.addEventListener('logDetailClosed', function() {
+        document.getElementById('log-detail-container').innerHTML = '';
+    });
+</script>
+{{end}}

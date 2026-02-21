@@ -1,0 +1,96 @@
+{{define "settings_row"}}
+<div class="setting-row" id="setting-row-{{.Definition.Key}}">
+    <div class="d-flex align-items-start justify-content-between">
+        <div class="flex-grow-1 me-3">
+            <div class="d-flex align-items-center mb-1">
+                <span class="fw-medium small">{{.Definition.Label}}</span>
+                {{if .Definition.RequiresRestart}}
+                <span class="badge bg-warning-subtle text-warning ms-2 restart-badge"
+                      title="Changes require application restart">
+                    <i class="bi bi-arrow-repeat"></i> Restart
+                </span>
+                {{end}}
+                {{if eq (printf "%s" .Source) "env"}}
+                <span class="badge bg-info-subtle text-info ms-2 source-badge" title="Set via environment variable">
+                    <i class="bi bi-terminal"></i> ENV
+                </span>
+                {{else if eq (printf "%s" .Source) "db"}}
+                <span class="badge bg-primary-subtle text-primary ms-2 source-badge" title="Custom value stored in database">
+                    <i class="bi bi-database"></i> DB
+                </span>
+                {{else}}
+                <span class="badge bg-secondary-subtle text-secondary ms-2 source-badge" title="Using default value">
+                    <i class="bi bi-circle"></i> Default
+                </span>
+                {{end}}
+            </div>
+            <p class="text-muted small mb-2">{{.Definition.Description}}</p>
+
+            {{if eq (printf "%s" .Source) "env"}}
+                <!-- Env-sourced: read-only display -->
+                <div class="d-flex align-items-center">
+                    {{if .Definition.Sensitive}}
+                    <code class="small text-muted">********</code>
+                    <span class="ms-2 text-muted small">(set via {{.Definition.EnvVar}})</span>
+                    {{else}}
+                    <code class="small">{{.Value}}</code>
+                    <span class="ms-2 text-muted small">(set via {{.Definition.EnvVar}})</span>
+                    {{end}}
+                </div>
+            {{else}}
+                <!-- Editable: inline input + save/reset -->
+                <form hx-put="/gui/settings/{{.Definition.Key}}"
+                      hx-target="#setting-row-{{.Definition.Key}}"
+                      hx-swap="outerHTML"
+                      class="d-flex align-items-center gap-2">
+                    {{if eq (printf "%s" .Definition.Type) "bool"}}
+                        <select class="form-select form-select-sm setting-value-input" name="value">
+                            <option value="true" {{if eq .RawValue "true"}}selected{{end}}>true</option>
+                            <option value="false" {{if eq .RawValue "false"}}selected{{end}}>false</option>
+                        </select>
+                    {{else if .Definition.Sensitive}}
+                        <div class="input-group input-group-sm setting-value-input">
+                            <input type="password"
+                                   class="form-control form-control-sm"
+                                   name="value"
+                                   id="setting-input-{{.Definition.Key}}"
+                                   value="{{.RawValue}}"
+                                   placeholder="{{if eq (printf "%s" .Source) "default"}}Not set{{else}}Enter new value{{end}}">
+                            <button type="button" class="btn btn-outline-secondary"
+                                    onclick="toggleSensitive('{{.Definition.Key}}')"
+                                    title="Toggle visibility">
+                                <i class="bi bi-eye" id="sensitive-icon-{{.Definition.Key}}"></i>
+                            </button>
+                        </div>
+                    {{else}}
+                        <input type="text"
+                               class="form-control form-control-sm setting-value-input"
+                               name="value"
+                               id="setting-input-{{.Definition.Key}}"
+                               value="{{.RawValue}}"
+                               placeholder="{{.Definition.DefaultValue}}">
+                    {{end}}
+                    <button type="submit" class="btn btn-primary btn-sm" title="Save">
+                        <i class="bi bi-check-lg"></i>
+                    </button>
+                    {{if eq (printf "%s" .Source) "db"}}
+                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                            hx-delete="/gui/settings/{{.Definition.Key}}"
+                            hx-target="#setting-row-{{.Definition.Key}}"
+                            hx-swap="outerHTML"
+                            hx-confirm="Reset this setting to its default value?"
+                            title="Reset to default">
+                        <i class="bi bi-arrow-counterclockwise"></i>
+                    </button>
+                    {{end}}
+                </form>
+                {{if eq (printf "%s" .Source) "db"}}
+                <div class="mt-1">
+                    <small class="text-muted">Default: <code>{{.Definition.DefaultValue}}</code></small>
+                </div>
+                {{end}}
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}

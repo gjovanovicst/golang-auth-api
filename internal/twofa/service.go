@@ -5,6 +5,7 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/gjovanovicst/auth_api/internal/redis"
@@ -74,19 +75,15 @@ func (s *Service) VerifySetup(appID uuid.UUID, userID, totpCode string) *errors.
 	// Get the temporary secret from Redis
 	secret, err := redis.GetTempTwoFASecret(appID.String(), userID)
 	if err != nil {
-		fmt.Printf("Failed to get temp 2FA secret for user %s: %v\n", userID, err)
+		log.Printf("Failed to get temp 2FA secret for user %s: %v", userID, err)
 		return errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired setup session")
 	}
 
-	fmt.Printf("DEBUG: Validating TOTP code %s for user %s with secret length %d\n", totpCode, userID, len(secret))
-
 	// Verify the TOTP code
 	if !totp.Validate(totpCode, secret) {
-		fmt.Printf("TOTP validation failed for user %s with code %s and secret %s\n", userID, totpCode, secret)
 		return errors.NewAppError(errors.ErrUnauthorized, "Invalid TOTP code")
 	}
 
-	fmt.Printf("TOTP validation successful for user %s\n", userID)
 	return nil
 }
 
@@ -110,7 +107,7 @@ func (s *Service) Enable2FA(appID uuid.UUID, userID string) ([]string, *errors.A
 	// Remove temporary secret from Redis
 	if err := redis.DeleteTempTwoFASecret(appID.String(), userID); err != nil {
 		// Log the error but don't fail the entire operation since 2FA was already enabled
-		fmt.Printf("Warning: Failed to delete temporary 2FA secret for user %s: %v\n", userID, err)
+		log.Printf("Warning: Failed to delete temporary 2FA secret for user %s: %v", userID, err)
 	}
 
 	return recoveryCodes, nil

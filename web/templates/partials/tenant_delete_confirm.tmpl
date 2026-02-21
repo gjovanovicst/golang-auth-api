@@ -1,0 +1,19 @@
+{{define "tenant_delete_confirm"}}
+<div class="modal-body">
+    <p>Are you sure you want to delete the tenant <strong>{{.Name}}</strong>?</p>
+    <p class="text-danger small mb-0">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        This will also delete all applications and configurations associated with this tenant. This action cannot be undone.
+    </p>
+</div>
+<div class="modal-footer border-0">
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+    <button type="button" class="btn btn-danger btn-sm"
+            hx-delete="/gui/tenants/{{.ID}}"
+            hx-target="#tenant-table"
+            hx-swap="innerHTML"
+            hx-headers='{"HX-Trigger-After-Swap": "tenantDeleted"}'>
+        <i class="bi bi-trash me-1"></i>Delete Tenant
+    </button>
+</div>
+{{end}}

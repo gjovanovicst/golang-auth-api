@@ -1,0 +1,60 @@
+{{define "api_key_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            <i class="bi bi-plus-lg me-2"></i>Create API Key
+        </h6>
+        <form hx-post="/gui/api-keys"
+              hx-target="#apikey-created-container"
+              hx-swap="innerHTML">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label for="keyName" class="form-label small text-muted">Name</label>
+                    <input type="text" class="form-control" id="keyName" name="name"
+                           placeholder="e.g., Production Admin Key" required>
+                </div>
+                <div class="col-md-4">
+                    <label for="keyType" class="form-label small text-muted">Key Type</label>
+                    <select class="form-select" id="keyType" name="key_type" required
+                            onchange="document.getElementById('appSelectGroup').style.display = this.value === 'app' ? 'block' : 'none'; document.getElementById('keyAppId').required = this.value === 'app';">
+                        <option value="">Select type...</option>
+                        <option value="admin">Admin Key (full admin API access)</option>
+                        <option value="app">App Key (per-application access)</option>
+                    </select>
+                </div>
+                <div class="col-md-4" id="appSelectGroup" style="display: none;">
+                    <label for="keyAppId" class="form-label small text-muted">Application</label>
+                    <select class="form-select" id="keyAppId" name="app_id">
+                        <option value="">Select an application...</option>
+                        {{range .Apps}}
+                        <option value="{{.ID}}">{{.Name}} ({{.TenantName}})</option>
+                        {{end}}
+                    </select>
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-md-4">
+                    <label for="keyDescription" class="form-label small text-muted">Description <span class="text-muted">(optional)</span></label>
+                    <input type="text" class="form-control" id="keyDescription" name="description"
+                           placeholder="Purpose of this key">
+                </div>
+                <div class="col-md-4">
+                    <label for="keyExpiresAt" class="form-label small text-muted">Expires At <span class="text-muted">(optional)</span></label>
+                    <input type="datetime-local" class="form-control" id="keyExpiresAt" name="expires_at">
+                </div>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-key me-1"></i>Generate Key
+                </button>
+                <button type="button" class="btn btn-outline-secondary"
+                        hx-get="/gui/api-keys/form-cancel"
+                        hx-target="#apikey-form-container"
+                        hx-swap="innerHTML">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

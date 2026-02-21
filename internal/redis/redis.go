@@ -182,3 +182,97 @@ func IsUserTokensBlacklisted(appID, userID string) (bool, error) {
 	}
 	return true, nil // All user tokens are blacklisted
 }
+
+// Admin Session Functions
+
+// SetAdminSession stores an admin session in Redis
+func SetAdminSession(sessionID, adminID string, expiration time.Duration) error {
+	key := fmt.Sprintf("admin:session:%s", sessionID)
+	return Rdb.Set(ctx, key, adminID, expiration).Err()
+}
+
+// GetAdminSession retrieves an admin session from Redis, returning the admin ID
+func GetAdminSession(sessionID string) (string, error) {
+	key := fmt.Sprintf("admin:session:%s", sessionID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteAdminSession removes an admin session from Redis
+func DeleteAdminSession(sessionID string) error {
+	key := fmt.Sprintf("admin:session:%s", sessionID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// Admin CSRF Functions
+
+// SetCSRFToken stores a CSRF token for an admin session
+func SetCSRFToken(sessionID, token string, expiration time.Duration) error {
+	key := fmt.Sprintf("admin:csrf:%s", sessionID)
+	return Rdb.Set(ctx, key, token, expiration).Err()
+}
+
+// GetCSRFToken retrieves the CSRF token for an admin session
+func GetCSRFToken(sessionID string) (string, error) {
+	key := fmt.Sprintf("admin:csrf:%s", sessionID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// Admin Login Rate Limiting Functions
+
+// IncrLoginAttempts increments the login attempt counter for an IP and sets a 60-second TTL.
+// Returns the new count after increment.
+func IncrLoginAttempts(ip string) (int64, error) {
+	key := fmt.Sprintf("admin:login_attempts:%s", ip)
+	count, err := Rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	// Set TTL only on first attempt (when count == 1)
+	if count == 1 {
+		Rdb.Expire(ctx, key, 60*time.Second)
+	}
+	return count, nil
+}
+
+// GetLoginAttempts returns the current login attempt count for an IP
+func GetLoginAttempts(ip string) (int64, error) {
+	key := fmt.Sprintf("admin:login_attempts:%s", ip)
+	count, err := Rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return count, err
+}
+
+// SetLoginLockout sets a lockout flag for an IP with the given expiration
+func SetLoginLockout(ip string, expiration time.Duration) error {
+	key := fmt.Sprintf("admin:login_lockout:%s", ip)
+	return Rdb.Set(ctx, key, "locked", expiration).Err()
+}
+
+// IsLoginLocked checks if an IP is currently locked out
+func IsLoginLocked(ip string) (bool, error) {
+	key := fmt.Sprintf("admin:login_lockout:%s", ip)
+	_, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ClearLoginAttempts removes the attempt counter and lockout for an IP (called on successful login)
+func ClearLoginAttempts(ip string) error {
+	attemptsKey := fmt.Sprintf("admin:login_attempts:%s", ip)
+	lockoutKey := fmt.Sprintf("admin:login_lockout:%s", ip)
+	return Rdb.Del(ctx, attemptsKey, lockoutKey).Err()
+}
+
+// ClearRateLimitKeys removes the generic rate-limit attempt counter and lockout
+// for a given prefix + identifier. Used by the generic RateLimitMiddleware.
+func ClearRateLimitKeys(keyPrefix, identifier string) error {
+	attemptsKey := fmt.Sprintf("rl:%s:attempts:%s", keyPrefix, identifier)
+	lockoutKey := fmt.Sprintf("rl:%s:lockout:%s", keyPrefix, identifier)
+	return Rdb.Del(ctx, attemptsKey, lockoutKey).Err()
+}

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -10,16 +11,14 @@ import (
 
 // CORSMiddleware creates and configures CORS middleware
 func CORSMiddleware() gin.HandlerFunc {
+	// OAuth provider origins are always allowed (they initiate callbacks)
+	oauthOrigins := []string{
+		"https://accounts.google.com",
+		"https://www.facebook.com",
+		"https://github.com",
+	}
+
 	config := cors.Config{
-		AllowOrigins: []string{
-			"http://localhost:3000",       // React dev server
-			"http://localhost:5173",       // Vite dev server
-			"http://localhost:5174",       // Vite dev server
-			"http://localhost:8080",       // API server itself
-			"https://accounts.google.com", // Google OAuth
-			"https://www.facebook.com",    // Facebook OAuth
-			"https://github.com",          // GitHub OAuth
-		},
 		AllowMethods: []string{
 			"GET",
 			"POST",
@@ -50,18 +49,23 @@ func CORSMiddleware() gin.HandlerFunc {
 		MaxAge:           12 * time.Hour,
 	}
 
-	// In production, restrict origins to specific domains
 	if viper.GetString("GIN_MODE") == "release" {
-		// Get frontend URLs from environment
+		// Production: only allow explicitly configured frontend + OAuth origins
 		frontendURL := viper.GetString("FRONTEND_URL")
 		if frontendURL != "" {
-			config.AllowOrigins = []string{
-				frontendURL,
-				"https://accounts.google.com",
-				"https://www.facebook.com",
-				"https://github.com",
-			}
+			config.AllowOrigins = append([]string{frontendURL}, oauthOrigins...)
+		} else {
+			log.Println("WARNING: GIN_MODE=release but FRONTEND_URL is not set — CORS will only allow OAuth provider origins. Set FRONTEND_URL to your frontend domain.")
+			config.AllowOrigins = oauthOrigins
 		}
+	} else {
+		// Development: allow localhost dev servers + OAuth origins
+		config.AllowOrigins = append([]string{
+			"http://localhost:3000", // React dev server
+			"http://localhost:5173", // Vite dev server
+			"http://localhost:5174", // Vite dev server
+			"http://localhost:8080", // API server itself
+		}, oauthOrigins...)
 	}
 
 	return cors.New(config)

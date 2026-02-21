@@ -3,13 +3,13 @@ package dto
 // RegisterRequest represents the request payload for user registration
 type RegisterRequest struct {
 	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=8"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	Password string `json:"password" validate:"required,min=8,max=128"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
 }
 
 // LoginRequest represents the request payload for user login
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	Password string `json:"password" validate:"required,max=128"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
 }
 
 // RefreshTokenRequest represents the request payload for token refresh
@@ -31,7 +31,7 @@ type ForgotPasswordRequest struct {
 // ResetPasswordRequest represents the request payload for password reset
 type ResetPasswordRequest struct {
 	Token       string `json:"token" validate:"required"` // #nosec G101 -- This is a DTO field, not a hardcoded credential
-	NewPassword string `json:"new_password" validate:"required,min=8"`
+	NewPassword string `json:"new_password" validate:"required,min=8,max=128"`
 }
 
 // LoginResponse represents the response payload for successful login
@@ -129,17 +129,17 @@ type UpdateProfileRequest struct {
 // UpdateEmailRequest represents the request payload for email update
 type UpdateEmailRequest struct {
 	Email    string `json:"email" validate:"required,email" example:"newemail@example.com"`
-	Password string `json:"password" validate:"required" example:"currentpassword123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	Password string `json:"password" validate:"required,max=128" example:"currentpassword123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
 }
 
 // UpdatePasswordRequest represents the request payload for password update
 type UpdatePasswordRequest struct {
-	CurrentPassword string `json:"current_password" validate:"required" example:"oldpassword123"`
-	NewPassword     string `json:"new_password" validate:"required,min=8" example:"newpassword123"`
+	CurrentPassword string `json:"current_password" validate:"required,max=128" example:"oldpassword123"`
+	NewPassword     string `json:"new_password" validate:"required,min=8,max=128" example:"newpassword123"`
 }
 
 // DeleteAccountRequest represents the request payload for account deletion
 type DeleteAccountRequest struct {
-	Password        string `json:"password" validate:"required" example:"password123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	Password        string `json:"password" validate:"required,max=128" example:"password123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
 	ConfirmDeletion bool   `json:"confirm_deletion" validate:"required,eq=true" example:"true"`
 }

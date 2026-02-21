@@ -1,0 +1,117 @@
+{{define "activity_log_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Logs}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Time</th>
+                        <th>Event</th>
+                        <th>Severity</th>
+                        <th>User</th>
+                        <th>Application</th>
+                        <th>IP Address</th>
+                        <th class="text-center">Anomaly</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Logs}}
+                    <tr>
+                        <td class="ps-3 text-nowrap">
+                            <small class="text-muted" title="{{formatDateTimeFull .Timestamp}}">{{timeAgo .Timestamp}}</small>
+                        </td>
+                        <td>
+                            <span class="badge bg-primary bg-opacity-10 text-primary">{{.EventType}}</span>
+                        </td>
+                        <td>
+                            {{if eq .Severity "CRITICAL"}}
+                                <span class="badge bg-danger">CRITICAL</span>
+                            {{else if eq .Severity "IMPORTANT"}}
+                                <span class="badge bg-warning text-dark">IMPORTANT</span>
+                            {{else if eq .Severity "ERROR"}}
+                                <span class="badge bg-danger">ERROR</span>
+                            {{else if eq .Severity "WARNING"}}
+                                <span class="badge bg-warning text-dark">WARNING</span>
+                            {{else}}
+                                <span class="badge bg-success bg-opacity-75">INFO</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .UserEmail}}
+                            <small>{{.UserEmail}}</small>
+                            {{else}}
+                            <small class="text-muted fst-italic">-</small>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .AppName}}
+                            <small>{{.AppName}}</small>
+                            {{else}}
+                            <small class="text-muted fst-italic">-</small>
+                            {{end}}
+                        </td>
+                        <td>
+                            <small class="text-muted font-monospace">{{if .IPAddress}}{{.IPAddress}}{{else}}-{{end}}</small>
+                        </td>
+                        <td class="text-center">
+                            {{if .IsAnomaly}}
+                            <span class="badge bg-danger bg-opacity-10 text-danger" title="Anomaly detected"><i class="bi bi-exclamation-triangle-fill"></i></span>
+                            {{else}}
+                            <small class="text-muted">-</small>
+                            {{end}}
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-primary btn-sm"
+                                    hx-get="/gui/logs/{{.ID}}"
+                                    hx-target="#log-detail-container"
+                                    hx-swap="innerHTML"
+                                    title="View details">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {{if gt .TotalPages 1}}
+        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+            <small class="text-muted">
+                Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
+            </small>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item {{if le .Page 1}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/logs/list?page={{sub .Page 1}}{{if .EventType}}&event_type={{.EventType}}{{end}}{{if .Severity}}&severity={{.Severity}}{{end}}{{if .AppID}}&app_id={{.AppID}}{{end}}{{if .Search}}&search={{.Search}}{{end}}{{if .StartDate}}&start_date={{.StartDate}}{{end}}{{if .EndDate}}&end_date={{.EndDate}}{{end}}"
+                           hx-target="#log-table"
+                           hx-swap="innerHTML">Previous</a>
+                    </li>
+                    <li class="page-item {{if ge .Page .TotalPages}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/logs/list?page={{add .Page 1}}{{if .EventType}}&event_type={{.EventType}}{{end}}{{if .Severity}}&severity={{.Severity}}{{end}}{{if .AppID}}&app_id={{.AppID}}{{end}}{{if .Search}}&search={{.Search}}{{end}}{{if .StartDate}}&start_date={{.StartDate}}{{end}}{{if .EndDate}}&end_date={{.EndDate}}{{end}}"
+                           hx-target="#log-table"
+                           hx-swap="innerHTML">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        {{end}}
+
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-journal-text fs-1"></i>
+            {{if or .EventType .Severity .AppID .Search .StartDate .EndDate}}
+            <p class="mt-2 mb-0">No activity logs found matching your filters.</p>
+            {{else}}
+            <p class="mt-2 mb-0">No activity logs found. Logs will appear here as users interact with the API.</p>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

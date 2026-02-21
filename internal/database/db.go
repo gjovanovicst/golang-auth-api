@@ -57,6 +57,9 @@ func MigrateDatabase() {
 		&models.SocialAccount{},
 		&models.ActivityLog{},
 		&models.SchemaMigration{}, // Migration tracking table
+		&models.AdminAccount{},    // Admin GUI accounts
+		&models.ApiKey{},          // API keys (admin + per-app)
+		&models.SystemSetting{},   // System settings (DB-backed config)
 	)
 
 	if err != nil {

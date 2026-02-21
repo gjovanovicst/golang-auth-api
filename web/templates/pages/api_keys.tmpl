@@ -1,0 +1,112 @@
+{{define "api_keys"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}API Keys{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-key-fill me-2"></i>API Keys
+    </h4>
+    <div class="d-flex align-items-center gap-3">
+        <!-- Key type filter dropdown -->
+        <div class="d-flex align-items-center gap-2">
+            <label for="keyTypeFilter" class="form-label mb-0 small text-muted text-nowrap">Filter by Type:</label>
+            <select class="form-select form-select-sm" id="keyTypeFilter" name="key_type" style="min-width: 160px;">
+                <option value="">All Types</option>
+                <option value="admin">Admin Keys</option>
+                <option value="app">App Keys</option>
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm"
+                hx-get="/gui/api-keys/new"
+                hx-target="#apikey-form-container"
+                hx-swap="innerHTML">
+            <i class="bi bi-plus-lg me-1"></i>Create API Key
+        </button>
+    </div>
+</div>
+
+<!-- Form container (populated by HTMX when creating) -->
+<div id="apikey-form-container" class="mb-3"></div>
+
+<!-- API key created notification container (shows the key once) -->
+<div id="apikey-created-container" class="mb-3"></div>
+
+<!-- API key table (loaded via HTMX) -->
+<div id="apikey-table"
+     hx-get="/gui/api-keys/list?page=1"
+     hx-trigger="load, apiKeyListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading API keys...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Revoke confirmation modal -->
+<div class="modal fade" id="revokeApiKeyModal" tabindex="-1" aria-labelledby="revokeApiKeyModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="revokeApiKeyModalLabel">
+                    <i class="bi bi-shield-exclamation text-warning me-2"></i>Revoke API Key
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="revoke-apikey-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteApiKeyModal" tabindex="-1" aria-labelledby="deleteApiKeyModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteApiKeyModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete API Key
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-apikey-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close revoke modal after successful revocation
+    document.body.addEventListener('apiKeyRevoked', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('revokeApiKeyModal'));
+        if (modal) modal.hide();
+    });
+
+    // Close delete modal after successful deletion
+    document.body.addEventListener('apiKeyDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteApiKeyModal'));
+        if (modal) modal.hide();
+    });
+
+    // When key type filter changes, reload the list with filter
+    document.getElementById('keyTypeFilter').addEventListener('change', function() {
+        var keyType = this.value;
+        var url = '/gui/api-keys/list?page=1';
+        if (keyType) {
+            url += '&key_type=' + keyType;
+        }
+        htmx.ajax('GET', url, {target: '#apikey-table', swap: 'innerHTML'});
+    });
+</script>
+{{end}}

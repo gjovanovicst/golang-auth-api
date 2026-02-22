@@ -46,6 +46,14 @@ type TwoFARequiredResponse struct {
 	TempToken string `json:"temp_token"`
 }
 
+// TwoFASetupRequiredResponse represents response when 2FA setup is mandatory for the application
+// The user receives tokens so they can authenticate to the /2fa/generate endpoint
+type TwoFASetupRequiredResponse struct {
+	Message      string `json:"message"`
+	AccessToken  string `json:"access_token"`  // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	RefreshToken string `json:"refresh_token"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+}
+
 // TwoFAVerifyRequest represents the request payload for TOTP verification
 type TwoFAVerifyRequest struct {
 	Code string `json:"code" validate:"required"`

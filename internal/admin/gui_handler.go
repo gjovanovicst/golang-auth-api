@@ -424,15 +424,19 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID          string
-		Name        string
-		Description string
-		TenantID    string
-		Tenants     []models.Tenant
-		IsEdit      bool
+		ID              string
+		Name            string
+		Description     string
+		TenantID        string
+		TwoFAIssuerName string
+		TwoFAEnabled    bool
+		TwoFARequired   bool
+		Tenants         []models.Tenant
+		IsEdit          bool
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
-		Tenants: tenants,
+		TwoFAEnabled: true, // Default: 2FA enabled for new apps
+		Tenants:      tenants,
 	})
 }
 
@@ -442,6 +446,9 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	name := strings.TrimSpace(c.PostForm("name"))
 	description := strings.TrimSpace(c.PostForm("description"))
 	tenantID := c.PostForm("tenant_id")
+	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
+	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
+	twoFARequired := c.PostForm("two_fa_required") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -462,9 +469,12 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	}
 
 	app := &models.Application{
-		TenantID:    parsedTenantID,
-		Name:        name,
-		Description: description,
+		TenantID:        parsedTenantID,
+		Name:            name,
+		Description:     description,
+		TwoFAIssuerName: twoFAIssuerName,
+		TwoFAEnabled:    twoFAEnabled,
+		TwoFARequired:   twoFARequired,
 	}
 	if err := h.Repo.CreateApp(app); err != nil {
 		c.String(http.StatusInternalServerError,
@@ -496,20 +506,26 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID          string
-		Name        string
-		Description string
-		TenantID    string
-		Tenants     []models.Tenant
-		IsEdit      bool
+		ID              string
+		Name            string
+		Description     string
+		TenantID        string
+		TwoFAIssuerName string
+		TwoFAEnabled    bool
+		TwoFARequired   bool
+		Tenants         []models.Tenant
+		IsEdit          bool
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
-		ID:          app.ID.String(),
-		Name:        app.Name,
-		Description: app.Description,
-		TenantID:    app.TenantID.String(),
-		Tenants:     tenants,
-		IsEdit:      true,
+		ID:              app.ID.String(),
+		Name:            app.Name,
+		Description:     app.Description,
+		TenantID:        app.TenantID.String(),
+		TwoFAIssuerName: app.TwoFAIssuerName,
+		TwoFAEnabled:    app.TwoFAEnabled,
+		TwoFARequired:   app.TwoFARequired,
+		Tenants:         tenants,
+		IsEdit:          true,
 	})
 }
 
@@ -519,6 +535,9 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	id := c.Param("id")
 	name := strings.TrimSpace(c.PostForm("name"))
 	description := strings.TrimSpace(c.PostForm("description"))
+	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
+	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
+	twoFARequired := c.PostForm("two_fa_required") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -526,7 +545,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 		return
 	}
 
-	if err := h.Repo.UpdateApp(id, name, description); err != nil {
+	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return

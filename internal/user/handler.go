@@ -71,7 +71,7 @@ func (h *Handler) Register(c *gin.Context) {
 // @Produce json
 // @Param   login  body      dto.LoginRequest  true  "User Login Data"
 // @Success 200 {object}  dto.LoginResponse
-// @Success 202 {object}  dto.TwoFARequiredResponse
+// @Success 202 {object}  dto.TwoFARequiredResponse "2FA verification or setup required"
 // @Failure 400 {object}  dto.ErrorResponse
 // @Failure 401 {object}  dto.ErrorResponse
 // @Failure 429 {object}  dto.ErrorResponse
@@ -114,6 +114,16 @@ func (h *Handler) Login(c *gin.Context) {
 		}
 		log.LogLogin(appID, loginResult.UserID, ipAddress, userAgent, details)
 		c.JSON(http.StatusAccepted, loginResult.TwoFAResponse)
+		return
+	}
+
+	// Check if 2FA setup is mandatory for this app
+	if loginResult.RequiresTwoFASetup {
+		details := map[string]interface{}{
+			"requires_2fa_setup": true,
+		}
+		log.LogLogin(appID, loginResult.UserID, ipAddress, userAgent, details)
+		c.JSON(http.StatusAccepted, loginResult.TwoFASetupResponse)
 		return
 	}
 

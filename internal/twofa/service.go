@@ -11,19 +11,23 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/user"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
+	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/skip2/go-qrcode"
 	"github.com/spf13/viper"
+	"gorm.io/gorm"
 )
 
 type Service struct {
 	UserRepo *user.Repository
+	DB       *gorm.DB
 }
 
-func NewService(userRepo *user.Repository) *Service {
+func NewService(userRepo *user.Repository, db *gorm.DB) *Service {
 	return &Service{
 		UserRepo: userRepo,
+		DB:       db,
 	}
 }
 
@@ -35,6 +39,16 @@ type TwoFASetupResponse struct {
 
 // Generate2FASecret generates a new TOTP secret for a user
 func (s *Service) Generate2FASecret(appID uuid.UUID, userID string) (*TwoFASetupResponse, *errors.AppError) {
+	// Fetch app settings for 2FA gate check and issuer resolution
+	var app models.Application
+	appFound := false
+	if err := s.DB.Select("name, two_fa_issuer_name, two_fa_enabled").First(&app, "id = ?", appID).Error; err == nil {
+		appFound = true
+		if !app.TwoFAEnabled {
+			return nil, errors.NewAppError(errors.ErrForbidden, "2FA is not available for this application")
+		}
+	}
+
 	user, err := s.UserRepo.GetUserByID(userID)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrNotFound, "User not found")
@@ -48,10 +62,20 @@ func (s *Service) Generate2FASecret(appID uuid.UUID, userID string) (*TwoFASetup
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to store temporary secret")
 	}
 
-	// Create provisioning URI
-	issuer := viper.GetString("APP_NAME")
+	// Resolve issuer name: TwoFAIssuerName > app name > global APP_NAME > default
+	var issuer string
+	if appFound {
+		if app.TwoFAIssuerName != "" {
+			issuer = app.TwoFAIssuerName
+		} else if app.Name != "" {
+			issuer = app.Name
+		}
+	}
 	if issuer == "" {
-		issuer = "Auth API"
+		issuer = viper.GetString("APP_NAME")
+		if issuer == "" {
+			issuer = "Auth API"
+		}
 	}
 
 	provisioningURI := fmt.Sprintf("otpauth://totp/%s:%s?secret=%s&issuer=%s",
@@ -70,8 +94,22 @@ func (s *Service) Generate2FASecret(appID uuid.UUID, userID string) (*TwoFASetup
 	}, nil
 }
 
+// checkTwoFAEnabled verifies that 2FA is enabled for the given application.
+// Returns nil if 2FA is allowed, or an error if the feature is disabled.
+func (s *Service) checkTwoFAEnabled(appID uuid.UUID) *errors.AppError {
+	var app models.Application
+	if err := s.DB.Select("two_fa_enabled").First(&app, "id = ?", appID).Error; err == nil && !app.TwoFAEnabled {
+		return errors.NewAppError(errors.ErrForbidden, "2FA is not available for this application")
+	}
+	return nil
+}
+
 // VerifySetup verifies the initial 2FA setup with a TOTP code
 func (s *Service) VerifySetup(appID uuid.UUID, userID, totpCode string) *errors.AppError {
+	if appErr := s.checkTwoFAEnabled(appID); appErr != nil {
+		return appErr
+	}
+
 	// Get the temporary secret from Redis
 	secret, err := redis.GetTempTwoFASecret(appID.String(), userID)
 	if err != nil {
@@ -89,6 +127,10 @@ func (s *Service) VerifySetup(appID uuid.UUID, userID, totpCode string) *errors.
 
 // Enable2FA enables 2FA for a user after successful verification
 func (s *Service) Enable2FA(appID uuid.UUID, userID string) ([]string, *errors.AppError) {
+	if appErr := s.checkTwoFAEnabled(appID); appErr != nil {
+		return nil, appErr
+	}
+
 	// Get the temporary secret from Redis
 	secret, err := redis.GetTempTwoFASecret(appID.String(), userID)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // bcryptCost is the cost factor for password hashing. Set to 12 for stronger
@@ -22,19 +23,22 @@ const bcryptCost = 12
 type Service struct {
 	Repo         *Repository
 	EmailService *email.Service
+	DB           *gorm.DB
 }
 
-func NewService(r *Repository, es *email.Service) *Service {
-	return &Service{Repo: r, EmailService: es}
+func NewService(r *Repository, es *email.Service, db *gorm.DB) *Service {
+	return &Service{Repo: r, EmailService: es, DB: db}
 }
 
 // LoginResult represents the result of a login attempt
 type LoginResult struct {
-	RequiresTwoFA bool
-	UserID        uuid.UUID
-	AccessToken   string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
-	RefreshToken  string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
-	TwoFAResponse *dto.TwoFARequiredResponse
+	RequiresTwoFA      bool
+	RequiresTwoFASetup bool
+	UserID             uuid.UUID
+	AccessToken        string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
+	RefreshToken       string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
+	TwoFAResponse      *dto.TwoFARequiredResponse
+	TwoFASetupResponse *dto.TwoFASetupRequiredResponse
 }
 
 func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UUID, *errors.AppError) {
@@ -110,6 +114,38 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 			TwoFAResponse: &dto.TwoFARequiredResponse{
 				Message:   "2FA verification required",
 				TempToken: tempToken,
+			},
+		}, nil
+	}
+
+	// Check if this application requires 2FA setup for all users
+	var app models.Application
+	if err := s.DB.Select("two_fa_required").First(&app, "id = ?", appID).Error; err == nil && app.TwoFARequired {
+		// User doesn't have 2FA set up, but the app requires it.
+		// Issue tokens so the user can authenticate to /2fa/generate, but flag the response.
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
+		if err != nil {
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
+		}
+
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
+		if err != nil {
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
+		}
+
+		if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+		}
+
+		return &LoginResult{
+			RequiresTwoFASetup: true,
+			UserID:             user.ID,
+			AccessToken:        accessToken,
+			RefreshToken:       refreshToken,
+			TwoFASetupResponse: &dto.TwoFASetupRequiredResponse{
+				Message:      "2FA setup is required for this application",
+				AccessToken:  accessToken,
+				RefreshToken: refreshToken,
 			},
 		}, nil
 	}

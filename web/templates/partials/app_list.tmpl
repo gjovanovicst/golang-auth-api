@@ -8,6 +8,7 @@
                     <tr>
                         <th class="ps-3">Name</th>
                         <th>Tenant</th>
+                        <th>2FA</th>
                         <th>OAuth Configs</th>
                         <th>Created</th>
                         <th>Updated</th>
@@ -28,6 +29,16 @@
                         </td>
                         <td>
                             <span class="badge bg-secondary bg-opacity-10 text-secondary">{{.TenantName}}</span>
+                        </td>
+                        <td>
+                            {{if .TwoFAEnabled}}
+                            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-shield-check me-1"></i>2FA</span>
+                            {{if .TwoFARequired}}
+                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Required</span>
+                            {{end}}
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary"><i class="bi bi-shield-x me-1"></i>2FA Off</span>
+                            {{end}}
                         </td>
                         <td>
                             <span class="badge bg-info bg-opacity-10 text-info">{{.OAuthConfigCount}} config{{if ne .OAuthConfigCount 1}}s{{end}}</span>

@@ -119,6 +119,8 @@ type AppListItem struct {
 	Description      string
 	TenantName       string
 	OAuthConfigCount int64
+	TwoFAEnabled     bool
+	TwoFARequired    bool
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -142,6 +144,7 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 	query := r.DB.Model(&models.Application{}).
 		Select(`applications.id, applications.tenant_id, applications.name, applications.description,
 			applications.created_at, applications.updated_at,
+			applications.two_fa_enabled, applications.two_fa_required,
 			tenants.name as tenant_name,
 			COUNT(oauth_provider_configs.id) as o_auth_config_count`).
 		Joins("LEFT JOIN tenants ON tenants.id = applications.tenant_id").
@@ -162,12 +165,15 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 	return items, total, nil
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string) error {
+func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool) error {
 	return r.DB.Model(&models.Application{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"name":        name,
-			"description": description,
+			"name":               name,
+			"description":        description,
+			"two_fa_issuer_name": twoFAIssuerName,
+			"two_fa_enabled":     twoFAEnabled,
+			"two_fa_required":    twoFARequired,
 		}).Error
 }
 

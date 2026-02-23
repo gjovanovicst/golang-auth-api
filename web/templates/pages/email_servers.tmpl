@@ -108,7 +108,6 @@
     // Set up test email modal
     function openTestEmailModal(configID, appID) {
         // Reset modal state
-        document.getElementById('testEmailAppID').value = appID;
         document.getElementById('testEmailTo').value = '';
         document.getElementById('test-email-modal-result').innerHTML = '';
         document.getElementById('testEmailForm').setAttribute('hx-post', '/gui/email-servers/' + configID + '/test');

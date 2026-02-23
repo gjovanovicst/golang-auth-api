@@ -74,6 +74,185 @@ definitions:
     - confirm_deletion
     - password
     type: object
+  dto.EmailPreviewRequest:
+    properties:
+      body_html:
+        type: string
+      body_text:
+        type: string
+      subject:
+        type: string
+      template_engine:
+        enum:
+        - go_template
+        - placeholder
+        - raw_html
+        type: string
+      variables:
+        additionalProperties:
+          type: string
+        type: object
+    required:
+    - subject
+    - template_engine
+    type: object
+  dto.EmailPreviewResponse:
+    properties:
+      body_html:
+        type: string
+      body_text:
+        type: string
+      subject:
+        type: string
+    type: object
+  dto.EmailServerConfigRequest:
+    properties:
+      from_address:
+        type: string
+      from_name:
+        type: string
+      is_active:
+        type: boolean
+      smtp_host:
+        type: string
+      smtp_password:
+        description: '#nosec G101 -- This is a DTO field'
+        type: string
+      smtp_port:
+        maximum: 65535
+        minimum: 1
+        type: integer
+      smtp_username:
+        type: string
+      use_tls:
+        type: boolean
+    required:
+    - from_address
+    - smtp_host
+    - smtp_port
+    type: object
+  dto.EmailServerConfigResponse:
+    properties:
+      app_id:
+        type: string
+      created_at:
+        type: string
+      from_address:
+        type: string
+      from_name:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      smtp_host:
+        type: string
+      smtp_port:
+        type: integer
+      smtp_username:
+        type: string
+      updated_at:
+        type: string
+      use_tls:
+        type: boolean
+    type: object
+  dto.EmailTemplateRequest:
+    properties:
+      body_html:
+        type: string
+      body_text:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        maxLength: 100
+        minLength: 2
+        type: string
+      subject:
+        maxLength: 255
+        minLength: 2
+        type: string
+      template_engine:
+        enum:
+        - go_template
+        - placeholder
+        - raw_html
+        type: string
+    required:
+    - name
+    - subject
+    - template_engine
+    type: object
+  dto.EmailTemplateResponse:
+    properties:
+      app_id:
+        type: string
+      body_html:
+        type: string
+      body_text:
+        type: string
+      created_at:
+        type: string
+      email_type_code:
+        type: string
+      email_type_id:
+        type: string
+      email_type_name:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        type: string
+      subject:
+        type: string
+      template_engine:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.EmailTestRequest:
+    properties:
+      to_email:
+        type: string
+    required:
+    - to_email
+    type: object
+  dto.EmailTypeResponse:
+    properties:
+      code:
+        type: string
+      created_at:
+        type: string
+      default_subject:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      is_system:
+        type: boolean
+      name:
+        type: string
+      updated_at:
+        type: string
+      variables:
+        items:
+          $ref: '#/definitions/dto.EmailTypeVariableResponse'
+        type: array
+    type: object
+  dto.EmailTypeVariableResponse:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      required:
+        type: boolean
+    type: object
   dto.ErrorResponse:
     properties:
       error:
@@ -257,6 +436,17 @@ definitions:
     required:
     - temp_token
     type: object
+  dto.TwoFAMethodsResponse:
+    properties:
+      available_methods:
+        items:
+          type: string
+        type: array
+      email_2fa_enabled:
+        type: boolean
+      totp_enabled:
+        type: boolean
+    type: object
   dto.TwoFARecoveryCodesResponse:
     properties:
       message:
@@ -269,6 +459,10 @@ definitions:
   dto.TwoFARequiredResponse:
     properties:
       message:
+        type: string
+      method:
+        description: '"totp" or "email" - indicates which 2FA method the user has
+          configured'
         type: string
       temp_token:
         type: string
@@ -379,6 +573,9 @@ definitions:
         type: array
       two_fa_enabled:
         type: boolean
+      two_fa_method:
+        description: '"totp" or "email"'
+        type: string
       updated_at:
         type: string
     type: object
@@ -414,7 +611,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: Disable 2FA for the user (requires password and/or TOTP code)
+      description: Disable 2FA for the user (requires TOTP code or email 2FA code)
       parameters:
       - description: Disable 2FA Data
         in: body
@@ -444,6 +641,71 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Disable 2FA
+      tags:
+      - 2FA
+  /2fa/email/enable:
+    post:
+      description: Enable email-based 2FA for the user (sends codes to registered
+        email)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TwoFAEnableResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Enable email-based 2FA
+      tags:
+      - 2FA
+  /2fa/email/resend:
+    post:
+      consumes:
+      - application/json
+      description: Resend a new 2FA verification code to the user's email during login
+      parameters:
+      - description: Temporary login token
+        in: body
+        name: resend
+        required: true
+        schema:
+          properties:
+            temp_token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Resend email 2FA code
       tags:
       - 2FA
   /2fa/enable:
@@ -496,7 +758,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Verify the TOTP code during the 2FA login process
+      description: Verify the 2FA code during the login process (supports TOTP, email
+        code, or recovery code)
       parameters:
       - description: 2FA Login Data
         in: body
@@ -528,6 +791,23 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       summary: Verify 2FA during login
+      tags:
+      - 2FA
+  /2fa/methods:
+    get:
+      description: Get the 2FA methods available for the current application
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TwoFAMethodsResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get available 2FA methods
       tags:
       - 2FA
   /2fa/recovery-codes:
@@ -808,6 +1088,143 @@ paths:
       summary: Create a new application
       tags:
       - Admin
+  /admin/apps/{app_id}/email-config:
+    delete:
+      description: Remove the per-application SMTP server configuration (falls back
+        to global)
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete SMTP config for application
+      tags:
+      - Admin - Email
+    get:
+      description: Retrieve the per-application SMTP server configuration
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EmailServerConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get SMTP config for application
+      tags:
+      - Admin - Email
+    put:
+      consumes:
+      - application/json
+      description: Create or update the per-application SMTP server configuration
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: SMTP Config
+        in: body
+        name: config
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailServerConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Save SMTP config for application
+      tags:
+      - Admin - Email
+  /admin/apps/{app_id}/email-test:
+    post:
+      consumes:
+      - application/json
+      description: Send a test email to verify SMTP configuration
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Test Email Data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailTestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Send test email
+      tags:
+      - Admin - Email
   /admin/apps/{id}:
     get:
       consumes:
@@ -877,6 +1294,208 @@ paths:
       summary: Set OAuth configuration
       tags:
       - Admin
+  /admin/email-templates:
+    get:
+      description: Retrieve email templates for a specific app or global defaults
+      parameters:
+      - description: Application ID (omit for global defaults)
+        in: query
+        name: app_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.EmailTemplateResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List email templates
+      tags:
+      - Admin - Email
+    post:
+      consumes:
+      - application/json
+      description: Create or update an email template for a specific app or as global
+        default
+      parameters:
+      - description: Application ID (omit for global default)
+        in: query
+        name: app_id
+        type: string
+      - description: Email Type ID
+        in: query
+        name: email_type_id
+        required: true
+        type: string
+      - description: Template Data
+        in: body
+        name: template
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailTemplateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Save email template
+      tags:
+      - Admin - Email
+  /admin/email-templates/{id}:
+    delete:
+      description: Remove an email template by ID
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete email template
+      tags:
+      - Admin - Email
+    get:
+      description: Retrieve a specific email template by ID
+      parameters:
+      - description: Template ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EmailTemplateResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get email template
+      tags:
+      - Admin - Email
+  /admin/email-templates/preview:
+    post:
+      consumes:
+      - application/json
+      description: Render a template with sample variables for preview
+      parameters:
+      - description: Preview Data
+        in: body
+        name: preview
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailPreviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EmailPreviewResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Preview email template
+      tags:
+      - Admin - Email
+  /admin/email-types:
+    get:
+      description: Retrieve all registered email types
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.EmailTypeResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List all email types
+      tags:
+      - Admin - Email
+  /admin/email-types/{code}:
+    get:
+      description: Retrieve a specific email type by its code
+      parameters:
+      - description: Email Type Code
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EmailTypeResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get email type by code
+      tags:
+      - Admin - Email
   /admin/tenants:
     get:
       consumes:
@@ -1206,7 +1825,7 @@ paths:
           schema:
             $ref: '#/definitions/dto.LoginResponse'
         "202":
-          description: Accepted
+          description: 2FA verification or setup required
           schema:
             $ref: '#/definitions/dto.TwoFARequiredResponse'
         "400":

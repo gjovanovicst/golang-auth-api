@@ -89,17 +89,18 @@ func main() {
 	userRepo := user.NewRepository(database.DB)
 	socialRepo := social.NewRepository(database.DB)
 	logRepo := logService.NewRepository(database.DB)
-	emailService := email.NewService()
+	emailRepo := email.NewRepository(database.DB)
+	emailService := email.NewService(emailRepo)
 	userService := user.NewService(userRepo, emailService, database.DB)
 	socialService := social.NewService(userRepo, socialRepo)
-	twofaService := twofa.NewService(userRepo, database.DB)
+	twofaService := twofa.NewService(userRepo, database.DB, emailService)
 	logQueryService := logService.NewQueryService(logRepo)
 	userHandler := user.NewHandler(userService)
 	socialHandler := social.NewHandler(socialService)
 	twofaHandler := twofa.NewHandler(twofaService)
 	logHandler := logService.NewHandler(logQueryService)
 	adminRepo := admin.NewRepository(database.DB)
-	adminHandler := admin.NewHandler(adminRepo)
+	adminHandler := admin.NewHandler(adminRepo, emailService)
 
 	// Initialize Admin GUI Services and Handler
 	accountRepo := admin.NewAccountRepository(database.DB)
@@ -107,7 +108,7 @@ func main() {
 	dashboardService := admin.NewDashboardService(database.DB)
 	settingsRepo := admin.NewSettingsRepository(database.DB)
 	settingsService := admin.NewSettingsService(settingsRepo)
-	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService)
+	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService)
 
 	// Setup Gin Router
 	r := gin.Default()
@@ -137,6 +138,10 @@ func main() {
 		public.GET("/verify-email", userHandler.VerifyEmail)
 		// 2FA login verification (public because it needs temp token)
 		public.POST("/2fa/login-verify", middleware.API2FAVerifyRateLimit(), twofaHandler.VerifyLogin)
+		// 2FA email code resend (public because it needs temp token during login)
+		public.POST("/2fa/email/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendEmail2FACode)
+		// 2FA available methods (public so login UI can show method options)
+		public.GET("/2fa/methods", twofaHandler.GetAvailableMethods)
 	}
 
 	// Social authentication routes
@@ -176,6 +181,8 @@ func main() {
 		protected.POST("/2fa/enable", twofaHandler.Enable2FA)
 		protected.POST("/2fa/disable", twofaHandler.Disable2FA)
 		protected.POST("/2fa/recovery-codes", twofaHandler.GenerateRecoveryCodes)
+		// Email 2FA routes
+		protected.POST("/2fa/email/enable", twofaHandler.EnableEmail2FA)
 
 		// Activity log routes
 		protected.GET("/activity-logs", logHandler.GetUserActivityLogs)
@@ -197,6 +204,34 @@ func main() {
 		adminRoutes.POST("/apps", adminHandler.CreateApp)
 		adminRoutes.GET("/apps/:id", adminHandler.GetAppDetails)
 		adminRoutes.POST("/apps/:id/oauth-config", adminHandler.UpsertOAuthConfig)
+
+		// Email management API
+		adminRoutes.GET("/email-types", adminHandler.ListEmailTypes)
+		adminRoutes.GET("/email-types/:code", adminHandler.GetEmailType)
+		adminRoutes.GET("/email-templates", adminHandler.ListEmailTemplates)
+		adminRoutes.GET("/email-templates/:id", adminHandler.GetEmailTemplate)
+		adminRoutes.POST("/email-templates", adminHandler.SaveEmailTemplate)
+		adminRoutes.DELETE("/email-templates/:id", adminHandler.DeleteEmailTemplate)
+		adminRoutes.POST("/email-templates/preview", adminHandler.PreviewEmailTemplate)
+		adminRoutes.GET("/apps/:id/email-config", adminHandler.GetEmailServerConfig)
+		adminRoutes.PUT("/apps/:id/email-config", adminHandler.SaveEmailServerConfig)
+		adminRoutes.DELETE("/apps/:id/email-config", adminHandler.DeleteEmailServerConfig)
+		adminRoutes.POST("/apps/:id/email-test", adminHandler.SendTestEmail)
+		adminRoutes.GET("/apps/:id/email-servers", adminHandler.ListEmailServerConfigsByApp)
+
+		// Email server config CRUD (config-level, multi-config)
+		adminRoutes.GET("/email-servers", adminHandler.ListAllEmailServerConfigs)
+		adminRoutes.GET("/email-servers/:id", adminHandler.GetEmailServerConfigByID)
+		adminRoutes.POST("/email-servers", adminHandler.CreateEmailServerConfig)
+		adminRoutes.PUT("/email-servers/:id", adminHandler.UpdateEmailServerConfigByID)
+		adminRoutes.DELETE("/email-servers/:id", adminHandler.DeleteEmailServerConfigByID)
+		adminRoutes.POST("/email-servers/:id/test", adminHandler.SendTestEmailByConfigID)
+
+		// Email type CRUD & send email
+		adminRoutes.POST("/email-types", adminHandler.CreateEmailType)
+		adminRoutes.PUT("/email-types/:id", adminHandler.UpdateEmailType)
+		adminRoutes.DELETE("/email-types/:id", adminHandler.DeleteEmailType)
+		adminRoutes.POST("/apps/:id/send-email", adminHandler.SendCustomEmail)
 	}
 
 	// GUI routes (Admin web interface)
@@ -281,6 +316,43 @@ func main() {
 			guiAuth.GET("/settings/section/:category", guiHandler.SettingsSection)
 			guiAuth.PUT("/settings/:key", guiHandler.SettingUpdate)
 			guiAuth.DELETE("/settings/:key", guiHandler.SettingReset)
+
+			// Email server management
+			guiAuth.GET("/email-servers", guiHandler.EmailServersPage)
+			guiAuth.GET("/email-servers/list", guiHandler.EmailServerList)
+			guiAuth.GET("/email-servers/new", guiHandler.EmailServerCreateForm)
+			guiAuth.POST("/email-servers", guiHandler.EmailServerCreate)
+			guiAuth.GET("/email-servers/form-cancel", guiHandler.EmailServerFormCancel)
+			guiAuth.GET("/email-servers/:id/edit", guiHandler.EmailServerEditForm)
+			guiAuth.PUT("/email-servers/:id", guiHandler.EmailServerUpdate)
+			guiAuth.GET("/email-servers/:id/delete", guiHandler.EmailServerDeleteConfirm)
+			guiAuth.DELETE("/email-servers/:id", guiHandler.EmailServerDelete)
+			guiAuth.POST("/email-servers/:id/test", guiHandler.EmailServerSendTest)
+
+			// Email template management
+			guiAuth.GET("/email-templates", guiHandler.EmailTemplatesPage)
+			guiAuth.GET("/email-templates/list", guiHandler.EmailTemplateList)
+			guiAuth.GET("/email-templates/new", guiHandler.EmailTemplateCreateForm)
+			guiAuth.POST("/email-templates", guiHandler.EmailTemplateCreate)
+			guiAuth.GET("/email-templates/form-cancel", guiHandler.EmailTemplateFormCancel)
+			guiAuth.GET("/email-templates/:id/edit", guiHandler.EmailTemplateEditForm)
+			guiAuth.PUT("/email-templates/:id", guiHandler.EmailTemplateUpdate)
+			guiAuth.GET("/email-templates/:id/delete", guiHandler.EmailTemplateDeleteConfirm)
+			guiAuth.DELETE("/email-templates/:id", guiHandler.EmailTemplateDelete)
+			guiAuth.GET("/email-templates/:id/preview", guiHandler.EmailTemplatePreview)
+			guiAuth.GET("/email-templates/:id/reset", guiHandler.EmailTemplateResetConfirm)
+			guiAuth.POST("/email-templates/:id/reset", guiHandler.EmailTemplateReset)
+
+			// Email types management
+			guiAuth.GET("/email-types", guiHandler.EmailTypesPage)
+			guiAuth.GET("/email-types/list", guiHandler.EmailTypeList)
+			guiAuth.GET("/email-types/new", guiHandler.EmailTypeCreateForm)
+			guiAuth.POST("/email-types", guiHandler.EmailTypeCreate)
+			guiAuth.GET("/email-types/form-cancel", guiHandler.EmailTypeFormCancel)
+			guiAuth.GET("/email-types/:id/edit", guiHandler.EmailTypeEditForm)
+			guiAuth.PUT("/email-types/:id", guiHandler.EmailTypeUpdate)
+			guiAuth.GET("/email-types/:id/delete", guiHandler.EmailTypeDeleteConfirm)
+			guiAuth.DELETE("/email-types/:id", guiHandler.EmailTypeDelete)
 		}
 	}
 

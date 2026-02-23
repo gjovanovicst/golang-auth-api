@@ -1,0 +1,18 @@
+{{define "email_template_reset_confirm"}}
+<div class="modal-body">
+    <p>Are you sure you want to reset <strong>{{.Name}}</strong> for email type <strong>{{.EmailTypeName}}</strong> to the built-in default?</p>
+    <p class="text-muted small mb-0">
+        <i class="bi bi-info-circle me-1"></i>
+        This will overwrite the current subject, HTML body, text body, name, and template engine with the original built-in values. The template will remain in the database and can be customized again.
+    </p>
+</div>
+<div class="modal-footer border-0">
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+    <button type="button" class="btn btn-warning btn-sm"
+            hx-post="/gui/email-templates/{{.ID}}/reset"
+            hx-target="#email-template-form-container"
+            hx-swap="innerHTML">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Default
+    </button>
+</div>
+{{end}}

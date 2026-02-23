@@ -112,6 +112,25 @@
             </li>
         </ul>
 
+        <div class="sidebar-heading">Email</div>
+        <ul class="nav flex-column">
+            <li class="nav-item">
+                <a class="nav-link{{if eq .ActivePage "email-servers"}} active{{end}}" href="/gui/email-servers">
+                    <i class="bi bi-hdd-network"></i> Email Servers
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link{{if eq .ActivePage "email-templates"}} active{{end}}" href="/gui/email-templates">
+                    <i class="bi bi-envelope-paper"></i> Email Templates
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link{{if eq .ActivePage "email-types"}} active{{end}}" href="/gui/email-types">
+                    <i class="bi bi-tags"></i> Email Types
+                </a>
+            </li>
+        </ul>
+
         <div class="sidebar-heading">System</div>
         <ul class="nav flex-column">
             <li class="nav-item">

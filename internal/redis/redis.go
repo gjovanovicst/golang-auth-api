@@ -269,6 +269,26 @@ func ClearLoginAttempts(ip string) error {
 	return Rdb.Del(ctx, attemptsKey, lockoutKey).Err()
 }
 
+// Email 2FA Code Functions
+
+// Set2FAEmailCode stores a 2FA email verification code with a 5-minute expiration.
+func Set2FAEmailCode(appID, userID, code string) error {
+	key := fmt.Sprintf("app:%s:2fa_email:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, 5*time.Minute).Err()
+}
+
+// Get2FAEmailCode retrieves a stored 2FA email verification code.
+func Get2FAEmailCode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:2fa_email:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// Delete2FAEmailCode removes a 2FA email verification code after successful verification.
+func Delete2FAEmailCode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:2fa_email:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
 // ClearRateLimitKeys removes the generic rate-limit attempt counter and lockout
 // for a given prefix + identifier. Used by the generic RateLimitMiddleware.
 func ClearRateLimitKeys(keyPrefix, identifier string) error {

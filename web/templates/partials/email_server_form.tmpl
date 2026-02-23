@@ -1,0 +1,109 @@
+{{define "email_server_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .IsEdit}}
+            <i class="bi bi-pencil me-2"></i>Edit SMTP Config
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Add SMTP Config
+            {{end}}
+        </h6>
+        <form {{if .IsEdit}}
+                hx-put="/gui/email-servers/{{.ID}}"
+              {{else}}
+                hx-post="/gui/email-servers"
+              {{end}}
+              hx-target="#email-server-form-container"
+              hx-swap="innerHTML">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="esApp" class="form-label small text-muted">Application</label>
+                    <select class="form-select" id="esApp" name="app_id" {{if .IsEdit}}disabled{{end}} required>
+                        {{if not .IsEdit}}
+                        <option value="">Select an application...</option>
+                        {{end}}
+                        {{range .Apps}}
+                        <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.AppID}}selected{{end}}>{{.Name}} ({{.TenantName}})</option>
+                        {{end}}
+                    </select>
+                    {{if .IsEdit}}
+                    <input type="hidden" name="app_id" value="{{.AppID}}">
+                    {{end}}
+                </div>
+                <div class="col-md-3">
+                    <label for="esName" class="form-label small text-muted">Config Name</label>
+                    <input type="text" class="form-control" id="esName" name="name"
+                           value="{{.Name}}" placeholder="e.g. Transactional, Marketing">
+                </div>
+                <div class="col-md-3">
+                    <label for="esHost" class="form-label small text-muted">SMTP Host</label>
+                    <input type="text" class="form-control" id="esHost" name="smtp_host"
+                           value="{{.SMTPHost}}" placeholder="smtp.example.com" required>
+                </div>
+                <div class="col-md-1">
+                    <label for="esPort" class="form-label small text-muted">Port</label>
+                    <input type="number" class="form-control" id="esPort" name="smtp_port"
+                           value="{{.SMTPPort}}" placeholder="587" min="1" max="65535">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted d-block">&nbsp;</label>
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" id="esTLS" name="use_tls" value="true"
+                               {{if .UseTLS}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="esTLS">Use TLS</label>
+                    </div>
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-md-3">
+                    <label for="esUsername" class="form-label small text-muted">SMTP Username</label>
+                    <input type="text" class="form-control" id="esUsername" name="smtp_username"
+                           value="{{.SMTPUsername}}" placeholder="user@example.com">
+                </div>
+                <div class="col-md-3">
+                    <label for="esPassword" class="form-label small text-muted">SMTP Password</label>
+                    <input type="password" class="form-control" id="esPassword" name="smtp_password"
+                           placeholder="{{if .IsEdit}}Leave blank to keep current{{else}}Enter password{{end}}">
+                </div>
+                <div class="col-md-3">
+                    <label for="esFrom" class="form-label small text-muted">From Address</label>
+                    <input type="email" class="form-control" id="esFrom" name="from_address"
+                           value="{{.FromAddress}}" placeholder="noreply@example.com" required>
+                </div>
+                <div class="col-md-3">
+                    <label for="esFromName" class="form-label small text-muted">From Name</label>
+                    <input type="text" class="form-control" id="esFromName" name="from_name"
+                           value="{{.FromName}}" placeholder="My App">
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-md-2">
+                    <div class="form-check form-switch mt-3">
+                        <input class="form-check-input" type="checkbox" id="esDefault" name="is_default" value="true"
+                               {{if .IsDefault}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="esDefault">Default</label>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="form-check form-switch mt-3">
+                        <input class="form-check-input" type="checkbox" id="esActive" name="is_active" value="true"
+                               {{if .IsActive}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="esActive">Active</label>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update{{else}}Create{{end}}
+                </button>
+                <button type="button" class="btn btn-outline-secondary"
+                        hx-get="/gui/email-servers/form-cancel"
+                        hx-target="#email-server-form-container"
+                        hx-swap="innerHTML">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

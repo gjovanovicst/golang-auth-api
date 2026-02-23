@@ -1,0 +1,121 @@
+{{define "email_template_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Templates}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Email Type</th>
+                        <th>Template Name</th>
+                        <th>Subject</th>
+                        <th>Engine</th>
+                        <th>Scope</th>
+                        <th>Sender</th>
+                        <th class="text-center">Active</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Templates}}
+                    <tr>
+                        <td class="ps-3">
+                            <span class="badge bg-info bg-opacity-10 text-info">{{.EmailTypeName}}</span>
+                            <br>
+                            <small class="text-muted font-monospace">{{.EmailTypeCode}}</small>
+                        </td>
+                        <td>
+                            <span class="fw-semibold">{{.Name}}</span>
+                        </td>
+                        <td>
+                            <small class="text-truncate d-inline-block" style="max-width: 250px;" title="{{.Subject}}">{{.Subject}}</small>
+                        </td>
+                        <td>
+                            {{if eq .TemplateEngine "go_template"}}
+                            <span class="badge bg-primary bg-opacity-10 text-primary">Go Template</span>
+                            {{else if eq .TemplateEngine "placeholder"}}
+                            <span class="badge bg-success bg-opacity-10 text-success">Placeholder</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">Raw HTML</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .IsGlobal}}
+                            <span class="badge bg-dark bg-opacity-10 text-dark"><i class="bi bi-globe me-1"></i>Global</span>
+                            {{else}}
+                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-app me-1"></i>{{.AppName}}</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if or .FromEmail .ServerConfigName}}
+                            <div>
+                                {{if .FromEmail}}
+                                <small class="d-block"><i class="bi bi-envelope me-1 text-info"></i>{{.FromEmail}}</small>
+                                {{end}}
+                                {{if .FromName}}
+                                <small class="d-block text-muted">{{.FromName}}</small>
+                                {{end}}
+                                {{if .ServerConfigName}}
+                                <small class="d-block"><i class="bi bi-hdd-network me-1 text-primary"></i>{{.ServerConfigName}}</small>
+                                {{end}}
+                            </div>
+                            {{else}}
+                            <span class="text-muted small">Default</span>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            {{if .IsActive}}
+                            <span class="badge bg-success bg-opacity-10 text-success">Active</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">Inactive</span>
+                            {{end}}
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/email-templates/{{.ID}}/edit"
+                                    hx-target="#email-template-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            {{if .HasDefault}}
+                            <button class="btn btn-outline-warning btn-sm me-1"
+                                    hx-get="/gui/email-templates/{{.ID}}/reset"
+                                    hx-target="#reset-email-template-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#resetEmailTemplateModal"
+                                    title="Reset to Default">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                            </button>
+                            {{end}}
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/email-templates/{{.ID}}/delete"
+                                    hx-target="#delete-email-template-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteEmailTemplateModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-file-earmark-code fs-1"></i>
+            {{if eq .Scope "global"}}
+            <p class="mt-2 mb-0">No global default templates configured.</p>
+            <p class="small">The system will use built-in hardcoded templates as fallback.</p>
+            {{else}}
+            <p class="mt-2 mb-0">No templates found for this application.</p>
+            <p class="small">This application will use global defaults or built-in templates.</p>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

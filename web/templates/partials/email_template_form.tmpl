@@ -1,0 +1,145 @@
+{{define "email_template_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .IsEdit}}
+            <i class="bi bi-pencil me-2"></i>Edit Email Template
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Create Email Template
+            {{end}}
+        </h6>
+        <form {{if .IsEdit}}
+                hx-put="/gui/email-templates/{{.ID}}"
+              {{else}}
+                hx-post="/gui/email-templates"
+              {{end}}
+              hx-target="#email-template-form-container"
+              hx-swap="innerHTML">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label for="etScope" class="form-label small text-muted">Scope</label>
+                    <select class="form-select" id="etScope" name="app_id" {{if .IsEdit}}disabled{{end}}>
+                        <option value="" {{if not .AppID}}selected{{end}}>Global Default</option>
+                        {{range .Apps}}
+                        <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.AppID}}selected{{end}}>{{.Name}} ({{.TenantName}})</option>
+                        {{end}}
+                    </select>
+                    {{if .IsEdit}}
+                    <input type="hidden" name="app_id" value="{{.AppID}}">
+                    {{end}}
+                </div>
+                <div class="col-md-4">
+                    <label for="etType" class="form-label small text-muted">Email Type</label>
+                    <select class="form-select" id="etType" name="email_type_id" {{if .IsEdit}}disabled{{end}} required>
+                        {{if not .IsEdit}}
+                        <option value="">Select email type...</option>
+                        {{end}}
+                        {{range .EmailTypes}}
+                        <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.EmailTypeID}}selected{{end}}>{{.Name}}</option>
+                        {{end}}
+                    </select>
+                    {{if .IsEdit}}
+                    <input type="hidden" name="email_type_id" value="{{.EmailTypeID}}">
+                    {{end}}
+                </div>
+                <div class="col-md-4">
+                    <label for="etEngine" class="form-label small text-muted">Template Engine</label>
+                    <select class="form-select" id="etEngine" name="template_engine" required>
+                        <option value="go_template" {{if eq .TemplateEngine "go_template"}}selected{{end}}>Go Template ({{`{{.VarName}}`}})</option>
+                        <option value="placeholder" {{if eq .TemplateEngine "placeholder"}}selected{{end}}>Placeholder ({var_name})</option>
+                        <option value="raw_html" {{if eq .TemplateEngine "raw_html"}}selected{{end}}>Raw HTML ({{`{{.VarName}}`}})</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-md-6">
+                    <label for="etName" class="form-label small text-muted">Template Name</label>
+                    <input type="text" class="form-control" id="etName" name="name"
+                           value="{{.Name}}" placeholder="e.g. Email Verification Template" required>
+                </div>
+                <div class="col-md-6">
+                    <label for="etSubject" class="form-label small text-muted">Subject Line</label>
+                    <input type="text" class="form-control" id="etSubject" name="subject"
+                           value="{{.Subject}}" placeholder="e.g. Verify your email for {{`{{.app_name}}`}}" required>
+                </div>
+            </div>
+            {{/* Sender Override Section */}}
+            <div class="row g-3 mt-0">
+                <div class="col-12">
+                    <div class="card bg-light border-0 mt-2">
+                        <div class="card-body py-2 px-3">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-envelope-at me-2 text-muted"></i>
+                                <span class="small fw-semibold text-muted">Sender Override</span>
+                                <span class="badge bg-secondary bg-opacity-10 text-secondary ms-2">Optional</span>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-md-4">
+                                    <label for="etFromEmail" class="form-label small text-muted">From Email</label>
+                                    <input type="email" class="form-control form-control-sm" id="etFromEmail" name="from_email"
+                                           value="{{.FromEmail}}" placeholder="Leave blank to use SMTP config default">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="etFromNameOverride" class="form-label small text-muted">From Name</label>
+                                    <input type="text" class="form-control form-control-sm" id="etFromNameOverride" name="from_name_override"
+                                           value="{{.FromName}}" placeholder="Leave blank to use SMTP config default">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="etServerConfig" class="form-label small text-muted">SMTP Config</label>
+                                    <select class="form-select form-select-sm" id="etServerConfig" name="server_config_id">
+                                        <option value="">Use app default</option>
+                                        {{range .ServerConfigs}}
+                                        <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.ServerConfigID}}selected{{end}}>{{.Name}} ({{.FromAddress}})</option>
+                                        {{end}}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-12">
+                    <label for="etBodyHTML" class="form-label small text-muted">HTML Body</label>
+                    <textarea class="form-control font-monospace" id="etBodyHTML" name="body_html"
+                              rows="12" placeholder="Enter HTML template content...">{{.BodyHTML}}</textarea>
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-12">
+                    <label for="etBodyText" class="form-label small text-muted">Plain Text Body (optional)</label>
+                    <textarea class="form-control font-monospace" id="etBodyText" name="body_text"
+                              rows="4" placeholder="Enter plain text fallback...">{{.BodyText}}</textarea>
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-md-2">
+                    <div class="form-check form-switch mt-2">
+                        <input class="form-check-input" type="checkbox" id="etActive" name="is_active" value="true"
+                               {{if .IsActive}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="etActive">Active</label>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update{{else}}Create{{end}}
+                </button>
+                <button type="button" class="btn btn-outline-info"
+                        hx-post="/gui/email-templates/preview"
+                        hx-include="closest form"
+                        hx-target="#email-template-preview-container"
+                        hx-swap="innerHTML">
+                    <i class="bi bi-eye me-1"></i>Preview
+                </button>
+                <button type="button" class="btn btn-outline-secondary"
+                        hx-get="/gui/email-templates/form-cancel"
+                        hx-target="#email-template-form-container"
+                        hx-swap="innerHTML">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

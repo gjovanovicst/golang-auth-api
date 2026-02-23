@@ -43,12 +43,19 @@ func (r *Repository) UpdateUserEmailVerified(userID string, verified bool) error
 
 // 2FA related methods
 
-// Enable2FA enables 2FA for a user and stores the secret and recovery codes
+// Enable2FA enables 2FA for a user and stores the secret and recovery codes.
+// Defaults to TOTP method for backward compatibility.
 func (r *Repository) Enable2FA(userID, secret, recoveryCodes string) error {
+	return r.Enable2FAWithMethod(userID, secret, recoveryCodes, "totp")
+}
+
+// Enable2FAWithMethod enables 2FA for a user with a specific method ("totp" or "email").
+func (r *Repository) Enable2FAWithMethod(userID, secret, recoveryCodes, method string) error {
 	return r.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
 		"two_fa_enabled":        true,
 		"two_fa_secret":         secret,
 		"two_fa_recovery_codes": recoveryCodes,
+		"two_fa_method":         method,
 	}).Error
 }
 
@@ -58,6 +65,7 @@ func (r *Repository) Disable2FA(userID string) error {
 		"two_fa_enabled":        false,
 		"two_fa_secret":         "",
 		"two_fa_recovery_codes": nil,
+		"two_fa_method":         "",
 	}).Error
 }
 

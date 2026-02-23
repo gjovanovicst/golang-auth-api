@@ -1,11 +1,13 @@
 package user
 
 import (
+	"crypto/rand"
 	"fmt"
 	"log"
+	"math/big"
 	"time"
 
-	"github.com/gjovanovicst/auth_api/internal/email"
+	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
@@ -22,11 +24,11 @@ const bcryptCost = 12
 
 type Service struct {
 	Repo         *Repository
-	EmailService *email.Service
+	EmailService *emailpkg.Service
 	DB           *gorm.DB
 }
 
-func NewService(r *Repository, es *email.Service, db *gorm.DB) *Service {
+func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
 	return &Service{Repo: r, EmailService: es, DB: db}
 }
 
@@ -72,7 +74,7 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store verification token")
 	}
 
-	if err := s.EmailService.SendVerificationEmail(user.Email, verificationToken); err != nil {
+	if err := s.EmailService.SendVerificationEmail(appID, user.Email, verificationToken); err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
 	}
 
@@ -108,12 +110,31 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 			return nil, errors.NewAppError(errors.ErrInternal, "Failed to create temporary session")
 		}
 
+		// Determine the user's 2FA method (default to TOTP for backward compatibility)
+		twoFAMethod := user.TwoFAMethod
+		if twoFAMethod == "" {
+			twoFAMethod = emailpkg.TwoFAMethodTOTP
+		}
+
+		// If the user uses email 2FA, generate and send the code now
+		if twoFAMethod == emailpkg.TwoFAMethodEmail && s.EmailService != nil {
+			code := generateSecure6DigitCode()
+			if storeErr := redis.Set2FAEmailCode(appID.String(), user.ID.String(), code); storeErr != nil {
+				return nil, errors.NewAppError(errors.ErrInternal, "Failed to prepare 2FA verification")
+			}
+			if sendErr := s.EmailService.Send2FACodeEmail(appID, user.Email, code); sendErr != nil {
+				log.Printf("Warning: Failed to send 2FA email code to %s: %v", user.Email, sendErr)
+				return nil, errors.NewAppError(errors.ErrInternal, "Failed to send 2FA code email")
+			}
+		}
+
 		return &LoginResult{
 			RequiresTwoFA: true,
 			UserID:        user.ID,
 			TwoFAResponse: &dto.TwoFARequiredResponse{
 				Message:   "2FA verification required",
 				TempToken: tempToken,
+				Method:    twoFAMethod,
 			},
 		}, nil
 	}
@@ -254,7 +275,7 @@ func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.Ap
 	}
 
 	resetLink := fmt.Sprintf("http://your-frontend-app/reset-password?token=%s", resetToken)
-	if err := s.EmailService.SendPasswordResetEmail(user.Email, resetLink); err != nil {
+	if err := s.EmailService.SendPasswordResetEmail(appID, user.Email, resetLink); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send password reset email")
 	}
 
@@ -406,7 +427,7 @@ func (s *Service) UpdateUserEmail(appID uuid.UUID, userID string, req dto.Update
 		return errors.NewAppError(errors.ErrInternal, "Failed to generate verification token")
 	}
 
-	if err := s.EmailService.SendVerificationEmail(req.Email, verificationToken); err != nil {
+	if err := s.EmailService.SendVerificationEmail(appID, req.Email, verificationToken); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
 	}
 
@@ -481,4 +502,14 @@ func (s *Service) DeleteUserAccount(appID uuid.UUID, userID string, req dto.Dele
 	}
 
 	return nil
+}
+
+// generateSecure6DigitCode generates a cryptographically secure 6-digit numeric code for email 2FA.
+func generateSecure6DigitCode() string {
+	max := big.NewInt(1000000)
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate secure random number for 2FA code: %v", err))
+	}
+	return fmt.Sprintf("%06d", n.Int64())
 }

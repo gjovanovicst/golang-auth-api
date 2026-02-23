@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/util"
@@ -137,7 +138,7 @@ func (h *Handler) Enable2FA(c *gin.Context) {
 }
 
 // @Summary Disable 2FA
-// @Description Disable 2FA for the user (requires password and/or TOTP code)
+// @Description Disable 2FA for the user (requires TOTP code or email 2FA code)
 // @Tags 2FA
 // @Security ApiKeyAuth
 // @Accept json
@@ -161,10 +162,32 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 		return
 	}
 
-	// Verify TOTP code before disabling
-	if err := h.Service.VerifyTOTP(userID.(string), req.Code); err != nil {
-		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
 		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	// Determine the user's current 2FA method and verify accordingly
+	method, methodErr := h.Service.GetUserTwoFAMethod(userID.(string))
+	if methodErr != nil {
+		c.JSON(methodErr.Code, dto.ErrorResponse{Error: methodErr.Message})
+		return
+	}
+
+	if method == emailpkg.TwoFAMethodEmail {
+		// For email 2FA, verify the email code
+		if verifyErr := h.Service.VerifyEmail2FACode(appID, userID.(string), req.Code); verifyErr != nil {
+			c.JSON(verifyErr.Code, dto.ErrorResponse{Error: verifyErr.Message})
+			return
+		}
+	} else {
+		// For TOTP, verify the TOTP code
+		if verifyErr := h.Service.VerifyTOTP(userID.(string), req.Code); verifyErr != nil {
+			c.JSON(verifyErr.Code, dto.ErrorResponse{Error: verifyErr.Message})
+			return
+		}
 	}
 
 	if err := h.Service.Disable2FA(userID.(string)); err != nil {
@@ -176,17 +199,14 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID.(string))
 	if parseErr == nil {
-		appIDVal, appIDExists := c.Get("app_id")
-		if appIDExists {
-			log.Log2FADisable(appIDVal.(uuid.UUID), userUUID, ipAddress, userAgent)
-		}
+		log.Log2FADisable(appID, userUUID, ipAddress, userAgent)
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "2FA disabled successfully"})
 }
 
 // @Summary Verify 2FA during login
-// @Description Verify the TOTP code during the 2FA login process
+// @Description Verify the 2FA code during the login process (supports TOTP, email code, or recovery code)
 // @Tags 2FA
 // @Accept json
 // @Produce json
@@ -222,11 +242,8 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	var method string
 	var verificationErr *errors.AppError
 
-	// Verify TOTP code or recovery code
-	if req.Code != "" {
-		method = "totp"
-		verificationErr = h.Service.VerifyTOTP(userID, req.Code)
-	} else if req.RecoveryCode != "" {
+	if req.RecoveryCode != "" {
+		// Recovery code verification — works for both TOTP and email 2FA
 		method = "recovery_code"
 		verificationErr = h.Service.VerifyRecoveryCode(userID, req.RecoveryCode)
 
@@ -236,8 +253,25 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		if parseErr == nil {
 			log.LogRecoveryCodeUsed(appID, userUUID, ipAddress, userAgent)
 		}
+	} else if req.Code != "" {
+		// Determine the user's 2FA method to decide how to verify the code
+		userMethod, methodErr := h.Service.GetUserTwoFAMethod(userID)
+		if methodErr != nil {
+			c.JSON(methodErr.Code, dto.ErrorResponse{Error: methodErr.Message})
+			return
+		}
+
+		if userMethod == emailpkg.TwoFAMethodEmail {
+			// Email 2FA code verification
+			method = "email"
+			verificationErr = h.Service.VerifyEmail2FACode(appID, userID, req.Code)
+		} else {
+			// TOTP code verification (default)
+			method = "totp"
+			verificationErr = h.Service.VerifyTOTP(userID, req.Code)
+		}
 	} else {
-		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Either TOTP code or recovery code is required"})
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Either code or recovery code is required"})
 		return
 	}
 
@@ -319,6 +353,130 @@ func (h *Handler) GenerateRecoveryCodes(c *gin.Context) {
 	c.JSON(http.StatusOK, dto.TwoFARecoveryCodesResponse{
 		Message:       "New recovery codes generated successfully",
 		RecoveryCodes: recoveryCodes,
+	})
+}
+
+// ============================================================================
+// Email 2FA Endpoints
+// ============================================================================
+
+// @Summary Enable email-based 2FA
+// @Description Enable email-based 2FA for the user (sends codes to registered email)
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.TwoFAEnableResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/email/enable [post]
+func (h *Handler) EnableEmail2FA(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	recoveryCodes, err := h.Service.EnableEmail2FA(appID, userID.(string))
+	if err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Log 2FA enable activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.Log2FAEnable(appID, userUUID, ipAddress, userAgent)
+	}
+
+	c.JSON(http.StatusOK, dto.TwoFAEnableResponse{
+		Message:       "Email 2FA enabled successfully",
+		RecoveryCodes: recoveryCodes,
+	})
+}
+
+// @Summary Resend email 2FA code
+// @Description Resend a new 2FA verification code to the user's email during login
+// @Tags 2FA
+// @Accept json
+// @Produce json
+// @Param   resend  body  object{temp_token=string}  true  "Temporary login token"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/email/resend [post]
+func (h *Handler) ResendEmail2FACode(c *gin.Context) {
+	var req struct {
+		TempToken string `json:"temp_token" validate:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	// Get userID from temporary session
+	userID, err := getUserIDFromTempSession(appID.String(), req.TempToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "Invalid or expired temporary token"})
+		return
+	}
+
+	if appErr := h.Service.ResendEmail2FACode(appID, uuid.MustParse(userID).String()); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "2FA code resent successfully"})
+}
+
+// @Summary Get available 2FA methods
+// @Description Get the 2FA methods available for the current application
+// @Tags 2FA
+// @Produce json
+// @Success 200 {object} dto.TwoFAMethodsResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/methods [get]
+func (h *Handler) GetAvailableMethods(c *gin.Context) {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	methods := h.Service.GetAvailableMethods(appID)
+
+	hasTOTP := false
+	hasEmail := false
+	for _, m := range methods {
+		if m == emailpkg.TwoFAMethodTOTP {
+			hasTOTP = true
+		}
+		if m == emailpkg.TwoFAMethodEmail {
+			hasEmail = true
+		}
+	}
+
+	c.JSON(http.StatusOK, dto.TwoFAMethodsResponse{
+		AvailableMethods: methods,
+		TOTPEnabled:      hasTOTP,
+		Email2FAEnabled:  hasEmail,
 	})
 }
 

@@ -44,6 +44,7 @@ type LoginResponse struct {
 type TwoFARequiredResponse struct {
 	Message   string `json:"message"`
 	TempToken string `json:"temp_token"`
+	Method    string `json:"method"` // "totp" or "email" - indicates which 2FA method the user has configured
 }
 
 // TwoFASetupRequiredResponse represents response when 2FA setup is mandatory for the application
@@ -110,6 +111,7 @@ type UserResponse struct {
 	ProfilePicture string                  `json:"profile_picture,omitempty"`
 	Locale         string                  `json:"locale,omitempty"`
 	TwoFAEnabled   bool                    `json:"two_fa_enabled"`
+	TwoFAMethod    string                  `json:"two_fa_method,omitempty"` // "totp" or "email"
 	CreatedAt      string                  `json:"created_at"`
 	UpdatedAt      string                  `json:"updated_at"`
 	SocialAccounts []SocialAccountResponse `json:"social_accounts,omitempty"`

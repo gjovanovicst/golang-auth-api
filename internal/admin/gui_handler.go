@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/gjovanovicst/auth_api/web"
@@ -23,15 +25,17 @@ type GUIHandler struct {
 	DashboardService *DashboardService
 	Repo             *Repository
 	SettingsService  *SettingsService
+	EmailService     *email.Service
 }
 
 // NewGUIHandler creates a new GUIHandler
-func NewGUIHandler(accountService *AccountService, dashboardService *DashboardService, repo *Repository, settingsService *SettingsService) *GUIHandler {
+func NewGUIHandler(accountService *AccountService, dashboardService *DashboardService, repo *Repository, settingsService *SettingsService, emailService *email.Service) *GUIHandler {
 	return &GUIHandler{
 		AccountService:   accountService,
 		DashboardService: dashboardService,
 		Repo:             repo,
 		SettingsService:  settingsService,
+		EmailService:     emailService,
 	}
 }
 
@@ -1633,4 +1637,1237 @@ func (h *GUIHandler) SettingReset(c *gin.Context) {
 
 	c.Header("HX-Trigger", "settingReset")
 	c.String(http.StatusOK, `<div class="alert alert-info small py-2 mb-0">Setting reset to default.</div>`)
+}
+
+// ============================================================
+// Email Server Config (SMTP) GUI Handlers
+// ============================================================
+
+// EmailServersPage renders the email server config management page.
+// GET /gui/email-servers
+func (h *GUIHandler) EmailServersPage(c *gin.Context) {
+	apps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		apps = nil
+	}
+
+	data := web.TemplateData{
+		ActivePage:    "email-servers",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+		Data:          apps,
+	}
+	c.HTML(http.StatusOK, "email_servers", data)
+}
+
+// EmailServerList returns the email server config list partial (HTMX fragment).
+// GET /gui/email-servers/list
+func (h *GUIHandler) EmailServerList(c *gin.Context) {
+	allConfigs, err := h.EmailService.GetAllServerConfigs()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load data.</div>`)
+		return
+	}
+
+	// Build a map of app ID -> app info for display
+	apps, _ := h.Repo.ListAllAppsWithTenantName()
+	appMap := make(map[string]AppWithTenant)
+	for _, app := range apps {
+		appMap[app.ID.String()] = app
+	}
+
+	type serverItem struct {
+		ID          string
+		AppID       string
+		AppName     string
+		TenantName  string
+		Name        string
+		SMTPHost    string
+		SMTPPort    int
+		FromAddress string
+		FromName    string
+		UseTLS      bool
+		IsDefault   bool
+		IsActive    bool
+	}
+
+	var items []serverItem
+	for _, config := range allConfigs {
+		appName := ""
+		tenantName := ""
+		if app, ok := appMap[config.AppID.String()]; ok {
+			appName = app.Name
+			tenantName = app.TenantName
+		}
+		items = append(items, serverItem{
+			ID:          config.ID.String(),
+			AppID:       config.AppID.String(),
+			AppName:     appName,
+			TenantName:  tenantName,
+			Name:        config.Name,
+			SMTPHost:    config.SMTPHost,
+			SMTPPort:    config.SMTPPort,
+			FromAddress: config.FromAddress,
+			FromName:    config.FromName,
+			UseTLS:      config.UseTLS,
+			IsDefault:   config.IsDefault,
+			IsActive:    config.IsActive,
+		})
+	}
+
+	c.HTML(http.StatusOK, "email_server_list", gin.H{
+		"Configs": items,
+	})
+}
+
+// EmailServerCreateForm returns the empty create form for email server config.
+// GET /gui/email-servers/new
+func (h *GUIHandler) EmailServerCreateForm(c *gin.Context) {
+	apps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to load applications.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if len(apps) == 0 {
+		c.String(http.StatusOK,
+			`<div class="alert alert-info alert-dismissible fade show" role="alert"><i class="bi bi-info-circle me-2"></i>No applications found. Create an application first.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "email_server_form", gin.H{
+		"IsEdit":    false,
+		"Apps":      apps,
+		"Name":      "Default",
+		"SMTPPort":  587,
+		"UseTLS":    true,
+		"IsDefault": true,
+		"IsActive":  true,
+	})
+}
+
+// EmailServerCreate handles creating a new email server config.
+// POST /gui/email-servers
+func (h *GUIHandler) EmailServerCreate(c *gin.Context) {
+	appIDStr := c.PostForm("app_id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	smtpHost := strings.TrimSpace(c.PostForm("smtp_host"))
+	smtpPortStr := c.PostForm("smtp_port")
+	smtpUsername := strings.TrimSpace(c.PostForm("smtp_username"))
+	smtpPassword := c.PostForm("smtp_password")
+	fromAddress := strings.TrimSpace(c.PostForm("from_address"))
+	fromName := strings.TrimSpace(c.PostForm("from_name"))
+	useTLS := c.PostForm("use_tls") == "true"
+	isDefault := c.PostForm("is_default") == "true"
+	isActive := c.PostForm("is_active") == "true"
+
+	if appIDStr == "" || smtpHost == "" || fromAddress == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Application, SMTP Host, and From Address are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid application ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	smtpPort, _ := strconv.Atoi(smtpPortStr)
+	if smtpPort <= 0 {
+		smtpPort = 587
+	}
+
+	if name == "" {
+		name = "Default"
+	}
+
+	config := &models.EmailServerConfig{
+		AppID:        appID,
+		Name:         name,
+		SMTPHost:     smtpHost,
+		SMTPPort:     smtpPort,
+		SMTPUsername: smtpUsername,
+		SMTPPassword: smtpPassword,
+		FromAddress:  fromAddress,
+		FromName:     fromName,
+		UseTLS:       useTLS,
+		IsDefault:    isDefault,
+		IsActive:     isActive,
+	}
+
+	if err := h.EmailService.SaveServerConfig(config); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to save SMTP config. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "emailServerListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">SMTP configuration created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// EmailServerEditForm returns the pre-filled edit form for an email server config.
+// GET /gui/email-servers/:id/edit
+func (h *GUIHandler) EmailServerEditForm(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	found, err := h.EmailService.GetServerConfigByID(id)
+	if err != nil || found == nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">SMTP config not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	apps, _ := h.Repo.ListAllAppsWithTenantName()
+
+	c.HTML(http.StatusOK, "email_server_form", gin.H{
+		"IsEdit":       true,
+		"ID":           found.ID.String(),
+		"AppID":        found.AppID.String(),
+		"Name":         found.Name,
+		"SMTPHost":     found.SMTPHost,
+		"SMTPPort":     found.SMTPPort,
+		"SMTPUsername": found.SMTPUsername,
+		"FromAddress":  found.FromAddress,
+		"FromName":     found.FromName,
+		"UseTLS":       found.UseTLS,
+		"IsDefault":    found.IsDefault,
+		"IsActive":     found.IsActive,
+		"Apps":         apps,
+	})
+}
+
+// EmailServerUpdate handles updating an email server config.
+// PUT /gui/email-servers/:id
+func (h *GUIHandler) EmailServerUpdate(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid config ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	// Get existing config to preserve password if not provided
+	existing, err := h.EmailService.GetServerConfigByID(id)
+	if err != nil || existing == nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">SMTP config not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	appIDStr := c.PostForm("app_id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	smtpHost := strings.TrimSpace(c.PostForm("smtp_host"))
+	smtpPortStr := c.PostForm("smtp_port")
+	smtpUsername := strings.TrimSpace(c.PostForm("smtp_username"))
+	smtpPassword := c.PostForm("smtp_password")
+	fromAddress := strings.TrimSpace(c.PostForm("from_address"))
+	fromName := strings.TrimSpace(c.PostForm("from_name"))
+	useTLS := c.PostForm("use_tls") == "true"
+	isDefault := c.PostForm("is_default") == "true"
+	isActive := c.PostForm("is_active") == "true"
+
+	if appIDStr == "" || smtpHost == "" || fromAddress == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">SMTP Host and From Address are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid application ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	smtpPort, _ := strconv.Atoi(smtpPortStr)
+	if smtpPort <= 0 {
+		smtpPort = 587
+	}
+
+	if name == "" {
+		name = "Default"
+	}
+
+	// Keep existing password if not provided
+	if smtpPassword == "" {
+		smtpPassword = existing.SMTPPassword
+	}
+
+	config := &models.EmailServerConfig{
+		AppID:        appID,
+		Name:         name,
+		SMTPHost:     smtpHost,
+		SMTPPort:     smtpPort,
+		SMTPUsername: smtpUsername,
+		SMTPPassword: smtpPassword,
+		FromAddress:  fromAddress,
+		FromName:     fromName,
+		UseTLS:       useTLS,
+		IsDefault:    isDefault,
+		IsActive:     isActive,
+	}
+	config.ID = id
+
+	if err := h.EmailService.SaveServerConfig(config); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update SMTP config.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "emailServerListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">SMTP configuration updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// EmailServerDeleteConfirm returns the delete confirmation modal body.
+// GET /gui/email-servers/:id/delete
+func (h *GUIHandler) EmailServerDeleteConfirm(c *gin.Context) {
+	idStr := c.Param("id")
+	appName := c.Query("app_name")
+	configName := c.Query("config_name")
+
+	c.HTML(http.StatusOK, "email_server_delete_confirm", gin.H{
+		"ID":         idStr,
+		"AppName":    appName,
+		"ConfigName": configName,
+	})
+}
+
+// EmailServerDelete handles deleting an email server config.
+// DELETE /gui/email-servers/:id
+func (h *GUIHandler) EmailServerDelete(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Invalid config ID.</div>`)
+		return
+	}
+
+	if err := h.EmailService.DeleteServerConfigByID(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to delete SMTP config.</div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "emailServerDeleted")
+	// Return refreshed list
+	h.EmailServerList(c)
+}
+
+// EmailServerFormCancel clears the form container.
+// GET /gui/email-servers/form-cancel
+func (h *GUIHandler) EmailServerFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// EmailServerSendTest sends a test email for a given SMTP config.
+// POST /gui/email-servers/:id/test
+func (h *GUIHandler) EmailServerSendTest(c *gin.Context) {
+	idStr := c.Param("id")
+	toEmail := strings.TrimSpace(c.PostForm("to_email"))
+
+	if toEmail == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show mb-0" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>Please enter a recipient email address.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	configID, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show mb-0" role="alert"><i class="bi bi-exclamation-triangle me-2"></i>Invalid config ID. Please close this dialog and try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if err := h.EmailService.SendTestEmailWithConfigID(configID, toEmail); err != nil {
+		friendlyMsg := formatSMTPError(err.Error())
+		c.String(http.StatusOK,
+			fmt.Sprintf(`<div class="alert alert-danger alert-dismissible fade show mb-0" role="alert"><i class="bi bi-exclamation-triangle me-2"></i><strong>Send failed:</strong> %s<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`, friendlyMsg))
+		return
+	}
+
+	c.String(http.StatusOK,
+		fmt.Sprintf(`<div class="alert alert-success alert-dismissible fade show mb-0" role="alert"><i class="bi bi-check-circle me-2"></i>Test email sent to <strong>%s</strong> successfully!</div>`, toEmail))
+}
+
+// resolveServerConfigDisplay resolves a server config ID to its display string and name.
+func resolveServerConfigDisplay(h *GUIHandler, serverConfigID *uuid.UUID) (string, string) {
+	if serverConfigID == nil {
+		return "", ""
+	}
+	config, err := h.EmailService.GetServerConfigByID(*serverConfigID)
+	if err != nil || config == nil {
+		return serverConfigID.String(), "(unknown)"
+	}
+	return config.ID.String(), config.Name
+}
+
+// formatSMTPError translates raw SMTP error messages into user-friendly descriptions.
+func formatSMTPError(rawErr string) string {
+	lower := strings.ToLower(rawErr)
+
+	switch {
+	// Not configured
+	case strings.Contains(lower, "not configured"):
+		return rawErr
+
+	// Authentication errors
+	case strings.Contains(lower, "application-specific password required"):
+		return "Gmail requires an App Password. Go to <a href=\"https://myaccount.google.com/apppasswords\" target=\"_blank\">Google App Passwords</a> to generate one, then use it as the SMTP password."
+	case strings.Contains(lower, "535") || strings.Contains(lower, "authentication failed") || strings.Contains(lower, "invalid credentials") || strings.Contains(lower, "username and password not accepted"):
+		return "Authentication failed. Please check your SMTP username and password."
+
+	// Connection errors
+	case strings.Contains(lower, "no such host") || strings.Contains(lower, "lookup"):
+		return "SMTP host not found. Please check the hostname is correct."
+	case strings.Contains(lower, "connection refused"):
+		return "Connection refused. Please check the SMTP host and port are correct."
+	case strings.Contains(lower, "connection timed out") || strings.Contains(lower, "i/o timeout"):
+		return "Connection timed out. The SMTP server may be unreachable or the port may be blocked by a firewall."
+
+	// TLS errors
+	case strings.Contains(lower, "tls") || strings.Contains(lower, "certificate") || strings.Contains(lower, "x509"):
+		return "TLS/SSL error. Try toggling the 'Use TLS' setting, or check if the port matches (587 for STARTTLS, 465 for SSL)."
+
+	// Port / protocol mismatch
+	case strings.Contains(lower, "eof") || strings.Contains(lower, "short response"):
+		return "Unexpected response from server. This usually means a port/TLS mismatch &mdash; try port 587 with TLS enabled, or port 465 with TLS enabled (SSL)."
+
+	// Sender / recipient errors
+	case strings.Contains(lower, "550") || strings.Contains(lower, "sender rejected") || strings.Contains(lower, "relay"):
+		return "The server rejected the sender address. Please check the 'From Address' is authorized for this SMTP account."
+
+	default:
+		// Truncate very long errors and clean up for display
+		msg := rawErr
+		if len(msg) > 200 {
+			msg = msg[:200] + "..."
+		}
+		return msg
+	}
+}
+
+// ============================================================
+// Email Templates GUI Handlers
+// ============================================================
+
+// EmailTemplatesPage renders the email templates management page.
+// GET /gui/email-templates
+func (h *GUIHandler) EmailTemplatesPage(c *gin.Context) {
+	apps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		apps = nil
+	}
+
+	emailTypes, err := h.EmailService.GetAllEmailTypes()
+	if err != nil {
+		emailTypes = nil
+	}
+
+	data := web.TemplateData{
+		ActivePage:    "email-templates",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+		Data: gin.H{
+			"Apps":       apps,
+			"EmailTypes": emailTypes,
+		},
+	}
+	c.HTML(http.StatusOK, "email_templates", data)
+}
+
+// EmailTemplateList returns the email template list partial (HTMX fragment).
+// GET /gui/email-templates/list
+func (h *GUIHandler) EmailTemplateList(c *gin.Context) {
+	appIDStr := c.Query("app_id")
+	scope := c.Query("scope") // "global" or "app" or ""
+
+	type templateItem struct {
+		ID               string
+		AppID            string
+		AppName          string
+		EmailTypeCode    string
+		EmailTypeName    string
+		Name             string
+		Subject          string
+		TemplateEngine   string
+		FromEmail        string
+		FromName         string
+		ServerConfigID   string
+		ServerConfigName string
+		IsActive         bool
+		IsGlobal         bool
+		HasDefault       bool
+	}
+
+	var items []templateItem
+
+	if scope == "global" || (scope == "" && appIDStr == "") {
+		// Show global default templates
+		templates, err := h.EmailService.GetGlobalDefaultTemplates()
+		if err == nil {
+			for _, t := range templates {
+				scID, scName := resolveServerConfigDisplay(h, t.ServerConfigID)
+				items = append(items, templateItem{
+					ID:               t.ID.String(),
+					EmailTypeCode:    t.EmailType.Code,
+					EmailTypeName:    t.EmailType.Name,
+					Name:             t.Name,
+					Subject:          t.Subject,
+					TemplateEngine:   t.TemplateEngine,
+					FromEmail:        t.FromEmail,
+					FromName:         t.FromName,
+					ServerConfigID:   scID,
+					ServerConfigName: scName,
+					IsActive:         t.IsActive,
+					IsGlobal:         true,
+					HasDefault:       email.GetDefaultTemplate(t.EmailType.Code) != nil,
+				})
+			}
+		}
+	}
+
+	if appIDStr != "" {
+		appID, err := uuid.Parse(appIDStr)
+		if err == nil {
+			templates, err := h.EmailService.GetTemplatesByApp(appID)
+			if err == nil {
+				// Find app name
+				appName := ""
+				apps, _ := h.Repo.ListAllAppsWithTenantName()
+				for _, a := range apps {
+					if a.ID == appID {
+						appName = a.Name
+						break
+					}
+				}
+				for _, t := range templates {
+					scID, scName := resolveServerConfigDisplay(h, t.ServerConfigID)
+					items = append(items, templateItem{
+						ID:               t.ID.String(),
+						AppID:            appID.String(),
+						AppName:          appName,
+						EmailTypeCode:    t.EmailType.Code,
+						EmailTypeName:    t.EmailType.Name,
+						Name:             t.Name,
+						Subject:          t.Subject,
+						TemplateEngine:   t.TemplateEngine,
+						FromEmail:        t.FromEmail,
+						FromName:         t.FromName,
+						ServerConfigID:   scID,
+						ServerConfigName: scName,
+						IsActive:         t.IsActive,
+						IsGlobal:         false,
+						HasDefault:       email.GetDefaultTemplate(t.EmailType.Code) != nil,
+					})
+				}
+			}
+		}
+	}
+
+	c.HTML(http.StatusOK, "email_template_list", gin.H{
+		"Templates": items,
+		"AppID":     appIDStr,
+		"Scope":     scope,
+	})
+}
+
+// EmailTemplateCreateForm returns the empty create form.
+// GET /gui/email-templates/new
+func (h *GUIHandler) EmailTemplateCreateForm(c *gin.Context) {
+	apps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		apps = nil
+	}
+
+	emailTypes, err := h.EmailService.GetAllEmailTypes()
+	if err != nil {
+		emailTypes = nil
+	}
+
+	serverConfigs, err := h.EmailService.GetAllServerConfigs()
+	if err != nil {
+		serverConfigs = nil
+	}
+
+	c.HTML(http.StatusOK, "email_template_form", gin.H{
+		"IsEdit":         false,
+		"Apps":           apps,
+		"EmailTypes":     emailTypes,
+		"ServerConfigs":  serverConfigs,
+		"TemplateEngine": "go_template",
+		"IsActive":       true,
+	})
+}
+
+// EmailTemplateCreate handles creating a new email template.
+// POST /gui/email-templates
+func (h *GUIHandler) EmailTemplateCreate(c *gin.Context) {
+	appIDStr := c.PostForm("app_id")
+	emailTypeIDStr := c.PostForm("email_type_id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	subject := strings.TrimSpace(c.PostForm("subject"))
+	bodyHTML := c.PostForm("body_html")
+	bodyText := c.PostForm("body_text")
+	templateEngine := c.PostForm("template_engine")
+	fromEmail := strings.TrimSpace(c.PostForm("from_email"))
+	fromName := strings.TrimSpace(c.PostForm("from_name_override"))
+	serverConfigIDStr := c.PostForm("server_config_id")
+	isActive := c.PostForm("is_active") == "true"
+
+	if emailTypeIDStr == "" || name == "" || subject == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Email type, name, and subject are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	emailTypeID, err := uuid.Parse(emailTypeIDStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid email type ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if templateEngine == "" {
+		templateEngine = "go_template"
+	}
+
+	var serverConfigID *uuid.UUID
+	if serverConfigIDStr != "" {
+		parsed, err := uuid.Parse(serverConfigIDStr)
+		if err == nil {
+			serverConfigID = &parsed
+		}
+	}
+
+	tmpl := &models.EmailTemplate{
+		Name:           name,
+		Subject:        subject,
+		BodyHTML:       bodyHTML,
+		BodyText:       bodyText,
+		TemplateEngine: templateEngine,
+		FromEmail:      fromEmail,
+		FromName:       fromName,
+		ServerConfigID: serverConfigID,
+		IsActive:       isActive,
+	}
+
+	if appIDStr == "" {
+		// Global default
+		if err := h.EmailService.SaveGlobalTemplate(emailTypeID, tmpl); err != nil {
+			c.String(http.StatusInternalServerError,
+				`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to save template.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+			return
+		}
+	} else {
+		appID, err := uuid.Parse(appIDStr)
+		if err != nil {
+			c.String(http.StatusBadRequest,
+				`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid application ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+			return
+		}
+		if err := h.EmailService.SaveAppTemplate(appID, emailTypeID, tmpl); err != nil {
+			c.String(http.StatusInternalServerError,
+				`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to save template.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+			return
+		}
+	}
+
+	c.Header("HX-Trigger", "emailTemplateListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Email template created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// EmailTemplateEditForm returns the pre-filled edit form for an email template.
+// GET /gui/email-templates/:id/edit
+func (h *GUIHandler) EmailTemplateEditForm(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid template ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	tmpl, err := h.EmailService.GetTemplateByID(id)
+	if err != nil || tmpl == nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Template not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	apps, _ := h.Repo.ListAllAppsWithTenantName()
+	emailTypes, _ := h.EmailService.GetAllEmailTypes()
+	serverConfigs, _ := h.EmailService.GetAllServerConfigs()
+
+	appIDStr := ""
+	if tmpl.AppID != nil {
+		appIDStr = tmpl.AppID.String()
+	}
+
+	serverConfigIDStr := ""
+	if tmpl.ServerConfigID != nil {
+		serverConfigIDStr = tmpl.ServerConfigID.String()
+	}
+
+	c.HTML(http.StatusOK, "email_template_form", gin.H{
+		"IsEdit":         true,
+		"ID":             tmpl.ID.String(),
+		"AppID":          appIDStr,
+		"EmailTypeID":    tmpl.EmailTypeID.String(),
+		"Name":           tmpl.Name,
+		"Subject":        tmpl.Subject,
+		"BodyHTML":       tmpl.BodyHTML,
+		"BodyText":       tmpl.BodyText,
+		"TemplateEngine": tmpl.TemplateEngine,
+		"FromEmail":      tmpl.FromEmail,
+		"FromName":       tmpl.FromName,
+		"ServerConfigID": serverConfigIDStr,
+		"IsActive":       tmpl.IsActive,
+		"Apps":           apps,
+		"EmailTypes":     emailTypes,
+		"ServerConfigs":  serverConfigs,
+	})
+}
+
+// EmailTemplateUpdate handles updating an email template.
+// PUT /gui/email-templates/:id
+func (h *GUIHandler) EmailTemplateUpdate(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid template ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	tmpl, err := h.EmailService.GetTemplateByID(id)
+	if err != nil || tmpl == nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Template not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	name := strings.TrimSpace(c.PostForm("name"))
+	subject := strings.TrimSpace(c.PostForm("subject"))
+	bodyHTML := c.PostForm("body_html")
+	bodyText := c.PostForm("body_text")
+	templateEngine := c.PostForm("template_engine")
+	fromEmail := strings.TrimSpace(c.PostForm("from_email"))
+	fromName := strings.TrimSpace(c.PostForm("from_name_override"))
+	serverConfigIDStr := c.PostForm("server_config_id")
+	isActive := c.PostForm("is_active") == "true"
+
+	if name == "" || subject == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Name and subject are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	tmpl.Name = name
+	tmpl.Subject = subject
+	tmpl.BodyHTML = bodyHTML
+	tmpl.BodyText = bodyText
+	if templateEngine != "" {
+		tmpl.TemplateEngine = templateEngine
+	}
+	tmpl.FromEmail = fromEmail
+	tmpl.FromName = fromName
+	if serverConfigIDStr != "" {
+		parsed, err := uuid.Parse(serverConfigIDStr)
+		if err == nil {
+			tmpl.ServerConfigID = &parsed
+		}
+	} else {
+		tmpl.ServerConfigID = nil
+	}
+	tmpl.IsActive = isActive
+
+	if tmpl.AppID == nil {
+		if err := h.EmailService.SaveGlobalTemplate(tmpl.EmailTypeID, tmpl); err != nil {
+			c.String(http.StatusInternalServerError,
+				`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update template.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+			return
+		}
+	} else {
+		if err := h.EmailService.SaveAppTemplate(*tmpl.AppID, tmpl.EmailTypeID, tmpl); err != nil {
+			c.String(http.StatusInternalServerError,
+				`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update template.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+			return
+		}
+	}
+
+	c.Header("HX-Trigger", "emailTemplateListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Email template updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// EmailTemplateDeleteConfirm returns the delete confirmation modal body.
+// GET /gui/email-templates/:id/delete
+func (h *GUIHandler) EmailTemplateDeleteConfirm(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="modal-body"><div class="alert alert-danger">Invalid template ID.</div></div>`)
+		return
+	}
+
+	tmpl, err := h.EmailService.GetTemplateByID(id)
+	if err != nil || tmpl == nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Template not found.</div></div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "email_template_delete_confirm", gin.H{
+		"ID":            tmpl.ID.String(),
+		"Name":          tmpl.Name,
+		"EmailTypeName": tmpl.EmailType.Name,
+	})
+}
+
+// EmailTemplateDelete handles deleting an email template.
+// DELETE /gui/email-templates/:id
+func (h *GUIHandler) EmailTemplateDelete(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Invalid template ID.</div>`)
+		return
+	}
+
+	if err := h.EmailService.DeleteTemplate(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to delete template.</div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "emailTemplateDeleted")
+	// Return refreshed list
+	h.EmailTemplateList(c)
+}
+
+// EmailTemplateResetConfirm returns the reset confirmation modal body.
+// GET /gui/email-templates/:id/reset
+func (h *GUIHandler) EmailTemplateResetConfirm(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="modal-body"><div class="alert alert-danger">Invalid template ID.</div></div>`)
+		return
+	}
+
+	tmpl, err := h.EmailService.GetTemplateByID(id)
+	if err != nil || tmpl == nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Template not found.</div></div>`)
+		return
+	}
+
+	// Check that a hardcoded default exists for this email type
+	if email.GetDefaultTemplate(tmpl.EmailType.Code) == nil {
+		c.String(http.StatusBadRequest,
+			`<div class="modal-body"><div class="alert alert-warning">No built-in default available for this email type.</div></div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "email_template_reset_confirm", gin.H{
+		"ID":            tmpl.ID.String(),
+		"Name":          tmpl.Name,
+		"EmailTypeName": tmpl.EmailType.Name,
+	})
+}
+
+// EmailTemplateReset resets a template's content to the built-in hardcoded default.
+// POST /gui/email-templates/:id/reset
+func (h *GUIHandler) EmailTemplateReset(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Invalid template ID.</div>`)
+		return
+	}
+
+	if err := h.EmailService.ResetTemplateToDefault(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			fmt.Sprintf(`<div class="alert alert-danger alert-dismissible fade show" role="alert">%s<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`, err.Error()))
+		return
+	}
+
+	c.Header("HX-Trigger", "emailTemplateReset, emailTemplateListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Template has been reset to the built-in default.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// EmailTemplateFormCancel clears the form container.
+// GET /gui/email-templates/form-cancel
+func (h *GUIHandler) EmailTemplateFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// EmailTemplatePreview renders a preview of the template.
+// POST /gui/email-templates/preview
+func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
+	subject := c.PostForm("subject")
+	bodyHTML := c.PostForm("body_html")
+	templateEngine := c.PostForm("template_engine")
+	if templateEngine == "" {
+		templateEngine = "go_template"
+	}
+
+	tmpl := &models.EmailTemplate{
+		Subject:        subject,
+		BodyHTML:       bodyHTML,
+		TemplateEngine: templateEngine,
+	}
+
+	// Use sample variables for preview
+	sampleVars := map[string]string{
+		"app_name":           "My Application",
+		"user_email":         "user@example.com",
+		"user_name":          "John Doe",
+		"verification_link":  "https://example.com/verify?token=abc123",
+		"verification_token": "abc123",
+		"reset_link":         "https://example.com/reset?token=xyz789",
+		"code":               "123456",
+		"expiration_minutes": "5",
+		"change_time":        "2026-02-22 10:30:00 UTC",
+	}
+
+	renderedSubject, renderedHTML, _, err := h.EmailService.PreviewTemplate(tmpl, sampleVars)
+	if err != nil {
+		c.String(http.StatusOK,
+			fmt.Sprintf(`<div class="alert alert-danger">Preview error: %s</div>`, err.Error()))
+		return
+	}
+
+	c.String(http.StatusOK, fmt.Sprintf(`
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-light">
+        <small class="text-muted">Subject:</small> <strong>%s</strong>
+    </div>
+    <div class="card-body p-0">
+        <iframe srcdoc="%s" style="width:100%%;min-height:400px;border:none;" sandbox="allow-same-origin"></iframe>
+    </div>
+</div>`, renderedSubject, strings.ReplaceAll(strings.ReplaceAll(renderedHTML, `"`, `&quot;`), `<`, `&lt;`)))
+}
+
+// ============================================================
+// Email Types GUI Handlers
+// ============================================================
+
+// EmailTypesPage renders the email types management page.
+// GET /gui/email-types
+func (h *GUIHandler) EmailTypesPage(c *gin.Context) {
+	data := web.TemplateData{
+		ActivePage:    "email-types",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+	}
+	c.HTML(http.StatusOK, "email_types", data)
+}
+
+// EmailTypeList returns the email type list partial (HTMX fragment).
+// GET /gui/email-types/list
+func (h *GUIHandler) EmailTypeList(c *gin.Context) {
+	types, err := h.EmailService.GetAllEmailTypes()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load email types.</div>`)
+		return
+	}
+
+	// Parse variables JSON for each type to get count
+	type emailTypeItem struct {
+		ID             string
+		Code           string
+		Name           string
+		Description    string
+		DefaultSubject string
+		IsSystem       bool
+		IsActive       bool
+		VarCount       int
+	}
+
+	var items []emailTypeItem
+	for _, t := range types {
+		varCount := 0
+		if len(t.Variables) > 0 {
+			var vars []models.EmailTypeVariable
+			if err := json.Unmarshal(t.Variables, &vars); err == nil {
+				varCount = len(vars)
+			}
+		}
+		items = append(items, emailTypeItem{
+			ID:             t.ID.String(),
+			Code:           t.Code,
+			Name:           t.Name,
+			Description:    t.Description,
+			DefaultSubject: t.DefaultSubject,
+			IsSystem:       t.IsSystem,
+			IsActive:       t.IsActive,
+			VarCount:       varCount,
+		})
+	}
+
+	c.HTML(http.StatusOK, "email_type_list", gin.H{
+		"Types": items,
+	})
+}
+
+// EmailTypeCreateForm returns the empty create form for email types.
+// GET /gui/email-types/new
+func (h *GUIHandler) EmailTypeCreateForm(c *gin.Context) {
+	c.HTML(http.StatusOK, "email_type_form", gin.H{
+		"IsEdit":   false,
+		"IsActive": true,
+	})
+}
+
+// EmailTypeCreate handles creating a new custom email type.
+// POST /gui/email-types
+func (h *GUIHandler) EmailTypeCreate(c *gin.Context) {
+	code := strings.TrimSpace(c.PostForm("code"))
+	name := strings.TrimSpace(c.PostForm("name"))
+	description := strings.TrimSpace(c.PostForm("description"))
+	defaultSubject := strings.TrimSpace(c.PostForm("default_subject"))
+	isActive := c.PostForm("is_active") == "true"
+
+	if code == "" || name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Code and Name are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	// Check for duplicate code
+	existing, _ := h.EmailService.GetEmailTypeByCode(code)
+	if existing != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">An email type with this code already exists.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	// Parse variables from dynamic form rows
+	varsJSON := parseVariablesFromForm(c)
+
+	emailType := &models.EmailType{
+		Code:           code,
+		Name:           name,
+		Description:    description,
+		DefaultSubject: defaultSubject,
+		Variables:      varsJSON,
+		IsSystem:       false,
+		IsActive:       isActive,
+	}
+
+	if err := h.EmailService.CreateEmailType(emailType); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create email type. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "emailTypeListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Email type created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// EmailTypeEditForm returns the pre-filled edit form for an email type.
+// GET /gui/email-types/:id/edit
+func (h *GUIHandler) EmailTypeEditForm(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	emailType, err := h.EmailService.GetEmailTypeByID(id)
+	if err != nil || emailType == nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Email type not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	// Parse variables JSON for the form
+	var vars []models.EmailTypeVariable
+	if len(emailType.Variables) > 0 {
+		_ = json.Unmarshal(emailType.Variables, &vars)
+	}
+
+	c.HTML(http.StatusOK, "email_type_form", gin.H{
+		"IsEdit":         true,
+		"ID":             emailType.ID.String(),
+		"Code":           emailType.Code,
+		"Name":           emailType.Name,
+		"Description":    emailType.Description,
+		"DefaultSubject": emailType.DefaultSubject,
+		"IsSystem":       emailType.IsSystem,
+		"IsActive":       emailType.IsActive,
+		"Variables":      vars,
+	})
+}
+
+// EmailTypeUpdate handles updating an email type.
+// PUT /gui/email-types/:id
+func (h *GUIHandler) EmailTypeUpdate(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	emailType, err := h.EmailService.GetEmailTypeByID(id)
+	if err != nil || emailType == nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Email type not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	name := strings.TrimSpace(c.PostForm("name"))
+	description := strings.TrimSpace(c.PostForm("description"))
+	defaultSubject := strings.TrimSpace(c.PostForm("default_subject"))
+	isActive := c.PostForm("is_active") == "true"
+
+	if name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Name is required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	emailType.Name = name
+	emailType.Description = description
+	emailType.DefaultSubject = defaultSubject
+	emailType.IsActive = isActive
+	emailType.Variables = parseVariablesFromForm(c)
+
+	if err := h.EmailService.UpdateEmailType(emailType); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update email type.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "emailTypeListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Email type updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// EmailTypeDeleteConfirm returns the delete confirmation modal body.
+// GET /gui/email-types/:id/delete
+func (h *GUIHandler) EmailTypeDeleteConfirm(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="modal-body"><div class="alert alert-danger">Invalid ID.</div></div>`)
+		return
+	}
+
+	emailType, err := h.EmailService.GetEmailTypeByID(id)
+	if err != nil || emailType == nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Email type not found.</div></div>`)
+		return
+	}
+
+	if emailType.IsSystem {
+		c.String(http.StatusBadRequest,
+			`<div class="modal-body"><div class="alert alert-warning">System email types cannot be deleted.</div></div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "email_type_delete_confirm", gin.H{
+		"ID":   emailType.ID.String(),
+		"Code": emailType.Code,
+		"Name": emailType.Name,
+	})
+}
+
+// EmailTypeDelete handles deleting a custom email type.
+// DELETE /gui/email-types/:id
+func (h *GUIHandler) EmailTypeDelete(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Invalid ID.</div>`)
+		return
+	}
+
+	if err := h.EmailService.DeleteEmailType(id); err != nil {
+		c.String(http.StatusBadRequest,
+			fmt.Sprintf(`<div class="alert alert-danger">%s</div>`, err.Error()))
+		return
+	}
+
+	c.Header("HX-Trigger", "emailTypeDeleted")
+	// Return refreshed list
+	h.EmailTypeList(c)
+}
+
+// EmailTypeFormCancel clears the email type form container.
+// GET /gui/email-types/form-cancel
+func (h *GUIHandler) EmailTypeFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// parseVariablesFromForm parses variable rows from the dynamic form.
+// Variables are submitted as var_name[], var_description[], var_required[] arrays.
+func parseVariablesFromForm(c *gin.Context) []byte {
+	names := c.PostFormArray("var_name[]")
+	descriptions := c.PostFormArray("var_description[]")
+	requireds := c.PostFormArray("var_required[]")
+
+	var vars []models.EmailTypeVariable
+	for i, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		desc := ""
+		if i < len(descriptions) {
+			desc = strings.TrimSpace(descriptions[i])
+		}
+		required := false
+		if i < len(requireds) {
+			required = requireds[i] == "true"
+		}
+		vars = append(vars, models.EmailTypeVariable{
+			Name:        name,
+			Description: desc,
+			Required:    required,
+		})
+	}
+
+	if len(vars) == 0 {
+		return nil
+	}
+
+	data, err := json.Marshal(vars)
+	if err != nil {
+		return nil
+	}
+	return data
 }

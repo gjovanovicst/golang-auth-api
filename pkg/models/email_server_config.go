@@ -9,7 +9,7 @@ import (
 // EmailServerConfig stores per-application SMTP server configuration.
 // Multiple configs can exist per application (e.g., transactional, marketing, finance).
 // One config per app is marked as the default (is_default=true).
-// When an application does not have its own config, the global system settings are used.
+// When an application does not have its own config, the email sender falls back to dev mode (logs to stdout).
 type EmailServerConfig struct {
 	ID           uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	AppID        uuid.UUID `gorm:"type:uuid;not null;index" json:"app_id"`

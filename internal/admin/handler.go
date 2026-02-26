@@ -278,7 +278,7 @@ func (h *Handler) GetEmailType(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param emailType body dto.CreateEmailTypeRequest true "Email Type Data"
-// @Success 201 {object} models.EmailType
+// @Success 201 {object} dto.EmailTypeResponse
 // @Failure 400 {object} dto.ErrorResponse
 // @Failure 409 {object} dto.ErrorResponse
 // @Failure 500 {object} dto.ErrorResponse
@@ -340,7 +340,7 @@ func (h *Handler) CreateEmailType(c *gin.Context) {
 // @Produce json
 // @Param id path string true "Email Type ID"
 // @Param emailType body dto.UpdateEmailTypeRequest true "Email Type Update Data"
-// @Success 200 {object} models.EmailType
+// @Success 200 {object} dto.EmailTypeResponse
 // @Failure 400 {object} dto.ErrorResponse
 // @Failure 404 {object} dto.ErrorResponse
 // @Failure 500 {object} dto.ErrorResponse
@@ -465,12 +465,13 @@ func (h *Handler) SendCustomEmail(c *gin.Context) {
 		return
 	}
 
-	// Validate required variables
+	// Validate required variables (only enforce "explicit" source variables;
+	// "user" and "setting" source variables are auto-resolved by the pipeline)
 	if len(emailType.Variables) > 0 {
 		var typeVars []models.EmailTypeVariable
 		if err := json.Unmarshal(emailType.Variables, &typeVars); err == nil {
 			for _, v := range typeVars {
-				if v.Required {
+				if v.Required && v.Source == models.VarSourceExplicit {
 					if val, ok := req.Variables[v.Name]; !ok || val == "" {
 						c.JSON(http.StatusBadRequest, dto.ErrorResponse{
 							Error: "Missing required variable: " + v.Name,
@@ -1103,4 +1104,29 @@ func (h *Handler) SendTestEmail(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Test email sent successfully"})
+}
+
+// ListWellKnownVariables returns the list of all variables the system can auto-resolve.
+// @Summary List well-known email template variables
+// @Description Returns all variables that the system can automatically resolve from user profiles, app settings, or that must be passed explicitly. Use this as a reference when adding variables to email types.
+// @Tags Admin - Email
+// @Produce json
+// @Success 200 {array} dto.EmailTypeVariableResponse
+// @Security AdminApiKey
+// @Router /admin/email-variables [get]
+func (h *Handler) ListWellKnownVariables(c *gin.Context) {
+	wellKnown := h.EmailService.GetWellKnownVariables()
+
+	response := make([]dto.EmailTypeVariableResponse, len(wellKnown))
+	for i, v := range wellKnown {
+		response[i] = dto.EmailTypeVariableResponse{
+			Name:         v.Name,
+			Description:  v.Description,
+			Required:     v.Required,
+			DefaultValue: v.DefaultValue,
+			Source:       v.Source,
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
 }

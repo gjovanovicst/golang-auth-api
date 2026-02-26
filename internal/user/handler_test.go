@@ -22,7 +22,7 @@ func setupTestHandler() *Handler {
 	// Use a simple in-memory mock instead of SQLite
 	// For production, these would be integration tests with real DB
 	repo := &Repository{} // Empty repo for basic testing
-	emailService := email.NewService(nil)
+	emailService := email.NewService(nil, nil)
 	service := NewService(repo, emailService, nil)
 	handler := NewHandler(service)
 

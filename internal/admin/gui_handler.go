@@ -2639,8 +2639,9 @@ func (h *GUIHandler) EmailTypeList(c *gin.Context) {
 // GET /gui/email-types/new
 func (h *GUIHandler) EmailTypeCreateForm(c *gin.Context) {
 	c.HTML(http.StatusOK, "email_type_form", gin.H{
-		"IsEdit":   false,
-		"IsActive": true,
+		"IsEdit":             false,
+		"IsActive":           true,
+		"WellKnownVariables": email.WellKnownVariables,
 	})
 }
 
@@ -2716,15 +2717,16 @@ func (h *GUIHandler) EmailTypeEditForm(c *gin.Context) {
 	}
 
 	c.HTML(http.StatusOK, "email_type_form", gin.H{
-		"IsEdit":         true,
-		"ID":             emailType.ID.String(),
-		"Code":           emailType.Code,
-		"Name":           emailType.Name,
-		"Description":    emailType.Description,
-		"DefaultSubject": emailType.DefaultSubject,
-		"IsSystem":       emailType.IsSystem,
-		"IsActive":       emailType.IsActive,
-		"Variables":      vars,
+		"IsEdit":             true,
+		"ID":                 emailType.ID.String(),
+		"Code":               emailType.Code,
+		"Name":               emailType.Name,
+		"Description":        emailType.Description,
+		"DefaultSubject":     emailType.DefaultSubject,
+		"IsSystem":           emailType.IsSystem,
+		"IsActive":           emailType.IsActive,
+		"Variables":          vars,
+		"WellKnownVariables": email.WellKnownVariables,
 	})
 }
 
@@ -2834,11 +2836,14 @@ func (h *GUIHandler) EmailTypeFormCancel(c *gin.Context) {
 }
 
 // parseVariablesFromForm parses variable rows from the dynamic form.
-// Variables are submitted as var_name[], var_description[], var_required[] arrays.
+// Variables are submitted as var_name[], var_description[], var_required[],
+// var_source[], and var_default_value[] arrays.
 func parseVariablesFromForm(c *gin.Context) []byte {
 	names := c.PostFormArray("var_name[]")
 	descriptions := c.PostFormArray("var_description[]")
 	requireds := c.PostFormArray("var_required[]")
+	sources := c.PostFormArray("var_source[]")
+	defaultValues := c.PostFormArray("var_default_value[]")
 
 	var vars []models.EmailTypeVariable
 	for i, name := range names {
@@ -2854,10 +2859,20 @@ func parseVariablesFromForm(c *gin.Context) []byte {
 		if i < len(requireds) {
 			required = requireds[i] == "true"
 		}
+		source := ""
+		if i < len(sources) {
+			source = strings.TrimSpace(sources[i])
+		}
+		defaultValue := ""
+		if i < len(defaultValues) {
+			defaultValue = strings.TrimSpace(defaultValues[i])
+		}
 		vars = append(vars, models.EmailTypeVariable{
-			Name:        name,
-			Description: desc,
-			Required:    required,
+			Name:         name,
+			Description:  desc,
+			Required:     required,
+			Source:       source,
+			DefaultValue: defaultValue,
 		})
 	}
 

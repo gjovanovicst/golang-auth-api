@@ -75,6 +75,7 @@ func AppApiKeyMiddleware(keyValidator web.ApiKeyValidator) gin.HandlerFunc {
 		// Update last_used_at asynchronously
 		go keyValidator.UpdateApiKeyLastUsed(foundKey.ID)
 
+		c.Set(web.AuthTypeKey, web.AuthTypeApp)
 		c.Next()
 	}
 }

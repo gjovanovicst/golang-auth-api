@@ -31,6 +31,17 @@ const (
 	// RateLimitErrorKey is the Gin context key set by the rate limiter
 	// when a request is rate-limited. The value is the error message string.
 	RateLimitErrorKey = "rate_limit_error"
+
+	// AuthTypeKey is the Gin context key set by API key middleware to indicate
+	// how the request was authenticated. Handlers can use this to adjust behavior
+	// based on access type (e.g., hide sensitive fields for app-level access).
+	AuthTypeKey = "auth_type"
+
+	// AuthTypeAdmin indicates the request was authenticated with an admin API key.
+	AuthTypeAdmin = "admin"
+
+	// AuthTypeApp indicates the request was authenticated with a per-application API key.
+	AuthTypeApp = "app"
 )
 
 // SessionValidator is the interface used by GUI middleware to validate sessions

@@ -106,7 +106,6 @@ var categoryMeta = []struct {
 	{"general", "General", "bi-gear"},
 	{"jwt", "JWT & Tokens", "bi-shield-lock"},
 	{"admin", "Admin Session", "bi-person-lock"},
-	{"email", "Email / SMTP", "bi-envelope"},
 	{"log_retention", "Log Retention", "bi-archive"},
 	{"log_cleanup", "Log Cleanup", "bi-trash"},
 	{"log_behavior", "Log Behavior", "bi-toggles"},
@@ -128,13 +127,6 @@ var settingsRegistry = []SettingDefinition{
 
 	// --- Admin Session ---
 	{Key: "ADMIN_SESSION_EXPIRATION_HOURS", EnvVar: "ADMIN_SESSION_EXPIRATION_HOURS", Category: "admin", Type: SettingTypeInt, DefaultValue: "8", Label: "Session Expiration (hours)", Description: "How long admin GUI sessions remain active.", Sensitive: false, RequiresRestart: false},
-
-	// --- Email / SMTP ---
-	{Key: "EMAIL_HOST", EnvVar: "EMAIL_HOST", Category: "email", Type: SettingTypeString, DefaultValue: "", Label: "SMTP Host", Description: "SMTP server hostname (e.g., smtp.gmail.com).", Sensitive: false, RequiresRestart: false},
-	{Key: "EMAIL_PORT", EnvVar: "EMAIL_PORT", Category: "email", Type: SettingTypeInt, DefaultValue: "587", Label: "SMTP Port", Description: "SMTP server port (587 for TLS, 465 for SSL).", Sensitive: false, RequiresRestart: false},
-	{Key: "EMAIL_USERNAME", EnvVar: "EMAIL_USERNAME", Category: "email", Type: SettingTypeString, DefaultValue: "", Label: "SMTP Username", Description: "Username for SMTP authentication.", Sensitive: false, RequiresRestart: false},
-	{Key: "EMAIL_PASSWORD", EnvVar: "EMAIL_PASSWORD", Category: "email", Type: SettingTypeString, DefaultValue: "", Label: "SMTP Password", Description: "Password for SMTP authentication.", Sensitive: true, RequiresRestart: false},
-	{Key: "EMAIL_FROM", EnvVar: "EMAIL_FROM", Category: "email", Type: SettingTypeString, DefaultValue: "", Label: "From Address", Description: "Email address shown as the sender.", Sensitive: false, RequiresRestart: false},
 
 	// --- Log Retention ---
 	{Key: "LOG_RETENTION_CRITICAL", EnvVar: "LOG_RETENTION_CRITICAL", Category: "log_retention", Type: SettingTypeInt, DefaultValue: "365", Label: "Critical Events (days)", Description: "Retention period for critical events (login, password change, etc.).", Sensitive: false, RequiresRestart: false},

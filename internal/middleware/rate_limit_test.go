@@ -2,12 +2,14 @@ package middleware
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/web"
 )
 
@@ -32,13 +34,52 @@ func doRequest(r *gin.Engine) *httptest.ResponseRecorder {
 	return w
 }
 
-// clearFallback removes all entries from the in-memory fallback store
-// so that tests don't interfere with each other.
-func clearFallback() {
+// clearRateLimitState removes all entries from the in-memory fallback store
+// AND flushes any matching rate-limit keys from Redis, so that tests don't
+// interfere with each other across runs or across tests within the same run.
+func clearRateLimitState(keyPrefixes ...string) {
+	// 1. Clear in-memory fallback store.
 	fallback.entries.Range(func(key, _ any) bool {
 		fallback.entries.Delete(key)
 		return true
 	})
+
+	// 2. Clear Redis rate-limit keys (if Redis is available).
+	if redis.Rdb == nil {
+		return
+	}
+	ctx := redis.Rdb.Context()
+	if _, err := redis.Rdb.Ping(ctx).Result(); err != nil {
+		return // Redis not reachable — nothing to clean.
+	}
+	for _, prefix := range keyPrefixes {
+		// Delete keys for all identifiers using a SCAN + pattern match.
+		pattern := fmt.Sprintf("rl:%s:*", prefix)
+		var cursor uint64
+		for {
+			keys, next, err := redis.Rdb.Scan(ctx, cursor, pattern, 100).Result()
+			if err != nil {
+				break
+			}
+			if len(keys) > 0 {
+				redis.Rdb.Del(ctx, keys...)
+			}
+			cursor = next
+			if cursor == 0 {
+				break
+			}
+		}
+	}
+}
+
+// clearFallback is a convenience alias that clears the in-memory store and
+// all known test key prefixes from Redis.
+func clearFallback() {
+	clearRateLimitState(
+		"test:under", "test:over", "test:lockout",
+		"test:ctxkey", "test:customkey", "test:window",
+		"gui:login",
+	)
 }
 
 // ---------------------------------------------------------------------------

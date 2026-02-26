@@ -29,6 +29,7 @@ func AdminAuthMiddleware(keyValidator web.ApiKeyValidator) gin.HandlerFunc {
 		requiredKey := viper.GetString("ADMIN_API_KEY")
 		if requiredKey != "" {
 			if subtle.ConstantTimeCompare([]byte(apiKey), []byte(requiredKey)) == 1 {
+				c.Set(web.AuthTypeKey, web.AuthTypeAdmin)
 				c.Next()
 				return
 			}
@@ -43,6 +44,7 @@ func AdminAuthMiddleware(keyValidator web.ApiKeyValidator) gin.HandlerFunc {
 			if err == nil && foundKey != nil && foundKey.KeyType == admin.KeyTypeAdmin {
 				// Update last_used_at asynchronously
 				go keyValidator.UpdateApiKeyLastUsed(foundKey.ID)
+				c.Set(web.AuthTypeKey, web.AuthTypeAdmin)
 				c.Next()
 				return
 			}

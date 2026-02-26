@@ -54,6 +54,11 @@ import (
 // @name X-Admin-API-Key
 // @description Admin API Key for protected admin routes
 
+// @securityDefinitions.apikey AppApiKey
+// @in header
+// @name X-App-API-Key
+// @description Per-application API Key for app-scoped routes
+
 func main() {
 	// Load environment variables from .env file
 	if err := godotenv.Load(); err != nil {
@@ -90,7 +95,7 @@ func main() {
 	socialRepo := social.NewRepository(database.DB)
 	logRepo := logService.NewRepository(database.DB)
 	emailRepo := email.NewRepository(database.DB)
-	emailService := email.NewService(emailRepo)
+	emailService := email.NewService(emailRepo, database.DB)
 	userService := user.NewService(userRepo, emailService, database.DB)
 	socialService := social.NewService(userRepo, socialRepo)
 	twofaService := twofa.NewService(userRepo, database.DB, emailService)
@@ -208,6 +213,7 @@ func main() {
 		// Email management API
 		adminRoutes.GET("/email-types", adminHandler.ListEmailTypes)
 		adminRoutes.GET("/email-types/:code", adminHandler.GetEmailType)
+		adminRoutes.GET("/email-variables", adminHandler.ListWellKnownVariables)
 		adminRoutes.GET("/email-templates", adminHandler.ListEmailTemplates)
 		adminRoutes.GET("/email-templates/:id", adminHandler.GetEmailTemplate)
 		adminRoutes.POST("/email-templates", adminHandler.SaveEmailTemplate)
@@ -232,6 +238,24 @@ func main() {
 		adminRoutes.PUT("/email-types/:id", adminHandler.UpdateEmailType)
 		adminRoutes.DELETE("/email-types/:id", adminHandler.DeleteEmailType)
 		adminRoutes.POST("/apps/:id/send-email", adminHandler.SendCustomEmail)
+	}
+
+	// App API routes (protected by per-application API key)
+	// These expose a subset of admin functionality for app-level access.
+	// Requires both X-App-ID and X-App-API-Key headers.
+	// The app key must be bound to the same application as X-App-ID,
+	// and AppRouteGuardMiddleware ensures the URL :id matches X-App-ID.
+	appRoutes := r.Group("/app/:id")
+	appRoutes.Use(middleware.AppApiKeyMiddleware(adminRepo))
+	appRoutes.Use(middleware.AppRouteGuardMiddleware())
+	{
+		// Read-only: SMTP configuration
+		appRoutes.GET("/email-config", adminHandler.GetEmailServerConfig)
+		appRoutes.GET("/email-servers", adminHandler.ListEmailServerConfigsByApp)
+
+		// Send emails
+		appRoutes.POST("/email-test", adminHandler.SendTestEmail)
+		appRoutes.POST("/send-email", adminHandler.SendCustomEmail)
 	}
 
 	// GUI routes (Admin web interface)
@@ -339,7 +363,7 @@ func main() {
 			guiAuth.PUT("/email-templates/:id", guiHandler.EmailTemplateUpdate)
 			guiAuth.GET("/email-templates/:id/delete", guiHandler.EmailTemplateDeleteConfirm)
 			guiAuth.DELETE("/email-templates/:id", guiHandler.EmailTemplateDelete)
-			guiAuth.GET("/email-templates/:id/preview", guiHandler.EmailTemplatePreview)
+			guiAuth.POST("/email-templates/preview", guiHandler.EmailTemplatePreview)
 			guiAuth.GET("/email-templates/:id/reset", guiHandler.EmailTemplateResetConfirm)
 			guiAuth.POST("/email-templates/:id/reset", guiHandler.EmailTemplateReset)
 

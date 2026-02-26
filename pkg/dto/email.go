@@ -55,9 +55,11 @@ type EmailTypeResponse struct {
 
 // EmailTypeVariableResponse represents a template variable in API responses
 type EmailTypeVariableResponse struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Required    bool   `json:"required"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Required     bool   `json:"required"`
+	DefaultValue string `json:"default_value,omitempty"`
+	Source       string `json:"source,omitempty"`
 }
 
 // CreateEmailTypeRequest represents the request payload for creating a custom email type

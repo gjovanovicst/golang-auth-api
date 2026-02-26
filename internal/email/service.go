@@ -7,40 +7,51 @@ import (
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
+	"gorm.io/gorm"
 )
 
 // Service is the main email service that orchestrates template resolution,
-// rendering, SMTP config resolution, and email sending.
+// rendering, variable resolution, SMTP config resolution, and email sending.
 type Service struct {
 	repo     *Repository
 	renderer *Renderer
 	sender   *Sender
+	resolver *VariableResolver
 }
 
 // NewService creates a new email Service with all its dependencies.
+// The db parameter is used for variable resolution (user lookups, settings).
 // If repo is nil, the service operates in legacy mode (no DB templates, global SMTP only).
-func NewService(repo *Repository) *Service {
+func NewService(repo *Repository, db *gorm.DB) *Service {
 	return &Service{
 		repo:     repo,
 		renderer: NewRenderer(),
 		sender:   NewSender(),
+		resolver: NewVariableResolver(db),
 	}
 }
 
-// SendEmail is the primary method for sending any email. It:
-// 1. Resolves the email template (app-specific -> global -> hardcoded default)
-// 2. Renders the template with the provided variables
-// 3. Resolves the SMTP config (template-linked config -> per-app default -> global)
-// 4. Applies template-level sender overrides if set
-// 5. Sends the email
+// SendEmail is a backward-compatible wrapper around SendEmailWithContext.
+// It sends an email without user context (no auto-populated user profile variables).
 func (s *Service) SendEmail(appID uuid.UUID, emailTypeCode string, toEmail string, vars map[string]string) error {
-	// Ensure app_name is always available
-	if _, ok := vars[VarAppName]; !ok {
-		vars[VarAppName] = s.resolveAppName(appID)
-	}
-	if _, ok := vars[VarUserEmail]; !ok {
-		vars[VarUserEmail] = toEmail
-	}
+	return s.SendEmailWithContext(appID, emailTypeCode, toEmail, nil, vars)
+}
+
+// SendEmailWithContext is the primary method for sending any email. It:
+// 1. Resolves all template variables through the multi-source pipeline
+// 2. Resolves the email template (app-specific -> global -> hardcoded default)
+// 3. Renders the template with the resolved variables
+// 4. Resolves the SMTP config (template-linked config -> per-app default -> global)
+// 5. Sends the email
+//
+// Variable resolution priority (highest wins):
+//   - Explicit vars passed by the caller
+//   - User profile fields (when userID is provided)
+//   - App/system settings (app_name, frontend_url, etc.)
+//   - Static default values defined on the email type's variable declarations
+func (s *Service) SendEmailWithContext(appID uuid.UUID, emailTypeCode string, toEmail string, userID *uuid.UUID, vars map[string]string) error {
+	// Resolve all variables through the pipeline
+	resolvedVars := s.resolver.ResolveVariables(appID, emailTypeCode, toEmail, userID, vars)
 
 	// 1. Resolve template
 	tmpl, err := s.resolveTemplate(appID, emailTypeCode)
@@ -52,7 +63,7 @@ func (s *Service) SendEmail(appID uuid.UUID, emailTypeCode string, toEmail strin
 	}
 
 	// 2. Render template
-	subject, htmlBody, textBody, err := s.renderer.RenderTemplate(tmpl, vars)
+	subject, htmlBody, textBody, err := s.renderer.RenderTemplate(tmpl, resolvedVars)
 	if err != nil {
 		return fmt.Errorf("failed to render template for %s: %w", emailTypeCode, err)
 	}
@@ -65,55 +76,54 @@ func (s *Service) SendEmail(appID uuid.UUID, emailTypeCode string, toEmail strin
 }
 
 // SendVerificationEmail sends an email verification email.
-// Backward compatible convenience method.
-func (s *Service) SendVerificationEmail(appID uuid.UUID, toEmail, token string) error {
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendVerificationEmail(appID uuid.UUID, toEmail, token string, userID *uuid.UUID) error {
 	frontendURL := viper.GetString("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:8080"
 	}
 	verificationLink := fmt.Sprintf("%s/verify-email?token=%s", frontendURL, token)
 
-	return s.SendEmail(appID, TypeEmailVerification, toEmail, map[string]string{
+	return s.SendEmailWithContext(appID, TypeEmailVerification, toEmail, userID, map[string]string{
 		VarVerificationLink:  verificationLink,
 		VarVerificationToken: token,
 	})
 }
 
 // SendPasswordResetEmail sends a password reset email.
-// Backward compatible convenience method.
-func (s *Service) SendPasswordResetEmail(appID uuid.UUID, toEmail, resetLink string) error {
-	return s.SendEmail(appID, TypePasswordReset, toEmail, map[string]string{
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendPasswordResetEmail(appID uuid.UUID, toEmail, resetLink string, userID *uuid.UUID) error {
+	return s.SendEmailWithContext(appID, TypePasswordReset, toEmail, userID, map[string]string{
 		VarResetLink:         resetLink,
 		VarExpirationMinutes: "60",
 	})
 }
 
 // Send2FACodeEmail sends a 2FA verification code via email.
-func (s *Service) Send2FACodeEmail(appID uuid.UUID, toEmail, code string) error {
-	return s.SendEmail(appID, TypeTwoFACode, toEmail, map[string]string{
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) Send2FACodeEmail(appID uuid.UUID, toEmail, code string, userID *uuid.UUID) error {
+	return s.SendEmailWithContext(appID, TypeTwoFACode, toEmail, userID, map[string]string{
 		VarCode:              code,
 		VarExpirationMinutes: "5",
 	})
 }
 
 // SendWelcomeEmail sends a welcome email after successful email verification.
-func (s *Service) SendWelcomeEmail(appID uuid.UUID, toEmail, userName string) error {
-	return s.SendEmail(appID, TypeWelcome, toEmail, map[string]string{
-		VarUserName: userName,
-	})
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendWelcomeEmail(appID uuid.UUID, toEmail string, userID *uuid.UUID) error {
+	return s.SendEmailWithContext(appID, TypeWelcome, toEmail, userID, map[string]string{})
 }
 
 // SendAccountDeactivatedEmail sends a notification when an account is deactivated.
-func (s *Service) SendAccountDeactivatedEmail(appID uuid.UUID, toEmail, userName string) error {
-	return s.SendEmail(appID, TypeAccountDeactivated, toEmail, map[string]string{
-		VarUserName: userName,
-	})
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendAccountDeactivatedEmail(appID uuid.UUID, toEmail string, userID *uuid.UUID) error {
+	return s.SendEmailWithContext(appID, TypeAccountDeactivated, toEmail, userID, map[string]string{})
 }
 
 // SendPasswordChangedEmail sends a security notification when a password is changed.
-func (s *Service) SendPasswordChangedEmail(appID uuid.UUID, toEmail, userName, changeTime string) error {
-	return s.SendEmail(appID, TypePasswordChanged, toEmail, map[string]string{
-		VarUserName:   userName,
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendPasswordChangedEmail(appID uuid.UUID, toEmail, changeTime string, userID *uuid.UUID) error {
+	return s.SendEmailWithContext(appID, TypePasswordChanged, toEmail, userID, map[string]string{
 		VarChangeTime: changeTime,
 	})
 }
@@ -142,7 +152,7 @@ func (s *Service) resolveTemplate(appID uuid.UUID, typeCode string) (*models.Ema
 }
 
 // resolveSMTPConfig resolves the SMTP configuration for an application.
-// Resolution order: per-app DB config -> global system settings / .env.
+// Resolution order: per-app DB config -> dev/fallback mode (logs to stdout).
 func (s *Service) resolveSMTPConfig(appID uuid.UUID) SMTPConfig {
 	// Try per-app config from DB
 	if s.repo != nil {
@@ -163,7 +173,7 @@ func (s *Service) resolveSMTPConfig(appID uuid.UUID) SMTPConfig {
 		}
 	}
 
-	// Fall back to global settings
+	// No per-app config found; fall back to dev/fallback mode
 	return ResolveGlobalSMTPConfig()
 }
 
@@ -171,7 +181,7 @@ func (s *Service) resolveSMTPConfig(appID uuid.UUID) SMTPConfig {
 // optional linked server config and sender overrides.
 // Resolution chain:
 //  1. If template has a ServerConfigID, use that specific config
-//  2. Otherwise fall back to resolveSMTPConfig (app default -> global)
+//  2. Otherwise fall back to resolveSMTPConfig (app default -> dev/fallback mode)
 //  3. If template has FromEmail/FromName overrides, apply them on top
 func (s *Service) resolveSMTPConfigForTemplate(appID uuid.UUID, tmpl *models.EmailTemplate) SMTPConfig {
 	var smtpConfig SMTPConfig
@@ -213,18 +223,15 @@ func (s *Service) resolveSMTPConfigForTemplate(appID uuid.UUID, tmpl *models.Ema
 }
 
 // resolveAppName determines the application name for use in email templates.
+// Delegates to the resolver for consistency.
 func (s *Service) resolveAppName(appID uuid.UUID) string {
-	if s.repo != nil {
-		var app models.Application
-		if err := s.repo.DB.Select("name").First(&app, "id = ?", appID).Error; err == nil && app.Name != "" {
-			return app.Name
-		}
-	}
-	appName := viper.GetString("APP_NAME")
-	if appName == "" {
-		appName = "Auth API"
-	}
-	return appName
+	return s.resolver.resolveAppName(appID)
+}
+
+// GetWellKnownVariables returns the list of all variables the system can auto-resolve.
+// This is useful for the admin GUI/API to show available variables when editing email types.
+func (s *Service) GetWellKnownVariables() []models.EmailTypeVariable {
+	return WellKnownVariables
 }
 
 // ============================================================================

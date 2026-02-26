@@ -44,7 +44,7 @@ func TestPasswordHashing(t *testing.T) {
 func TestServiceCreation(t *testing.T) {
 	// Test that service can be created without errors
 	repo := &Repository{}
-	emailService := email.NewService(nil)
+	emailService := email.NewService(nil, nil)
 	service := NewService(repo, emailService, nil)
 
 	if service == nil {

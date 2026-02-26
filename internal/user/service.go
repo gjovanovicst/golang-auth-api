@@ -74,7 +74,7 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store verification token")
 	}
 
-	if err := s.EmailService.SendVerificationEmail(appID, user.Email, verificationToken); err != nil {
+	if err := s.EmailService.SendVerificationEmail(appID, user.Email, verificationToken, &user.ID); err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
 	}
 
@@ -122,7 +122,7 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 			if storeErr := redis.Set2FAEmailCode(appID.String(), user.ID.String(), code); storeErr != nil {
 				return nil, errors.NewAppError(errors.ErrInternal, "Failed to prepare 2FA verification")
 			}
-			if sendErr := s.EmailService.Send2FACodeEmail(appID, user.Email, code); sendErr != nil {
+			if sendErr := s.EmailService.Send2FACodeEmail(appID, user.Email, code, &user.ID); sendErr != nil {
 				log.Printf("Warning: Failed to send 2FA email code to %s: %v", user.Email, sendErr)
 				return nil, errors.NewAppError(errors.ErrInternal, "Failed to send 2FA code email")
 			}
@@ -275,7 +275,7 @@ func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.Ap
 	}
 
 	resetLink := fmt.Sprintf("http://your-frontend-app/reset-password?token=%s", resetToken)
-	if err := s.EmailService.SendPasswordResetEmail(appID, user.Email, resetLink); err != nil {
+	if err := s.EmailService.SendPasswordResetEmail(appID, user.Email, resetLink, &user.ID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send password reset email")
 	}
 
@@ -427,7 +427,7 @@ func (s *Service) UpdateUserEmail(appID uuid.UUID, userID string, req dto.Update
 		return errors.NewAppError(errors.ErrInternal, "Failed to generate verification token")
 	}
 
-	if err := s.EmailService.SendVerificationEmail(appID, req.Email, verificationToken); err != nil {
+	if err := s.EmailService.SendVerificationEmail(appID, req.Email, verificationToken, &user.ID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
 	}
 

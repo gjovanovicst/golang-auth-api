@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/spf13/viper"
 	"gopkg.in/mail.v2"
 )
 
@@ -151,15 +150,10 @@ func (s *Sender) logDevEmail(to, from, subject, textBody, htmlBody string) {
 	log.Printf("=== EMAIL END ===")
 }
 
-// ResolveGlobalSMTPConfig builds an SMTPConfig from global system settings / .env.
+// ResolveGlobalSMTPConfig returns an empty SMTPConfig.
+// SMTP configuration is now managed exclusively through per-app EmailServerConfig
+// records in the database (email_server_configs table), not through environment variables.
+// When no per-app config exists, the sender will log the email in dev mode.
 func ResolveGlobalSMTPConfig() SMTPConfig {
-	return SMTPConfig{
-		Host:        viper.GetString("EMAIL_HOST"),
-		Port:        viper.GetInt("EMAIL_PORT"),
-		Username:    viper.GetString("EMAIL_USERNAME"),
-		Password:    viper.GetString("EMAIL_PASSWORD"),
-		FromAddress: viper.GetString("EMAIL_FROM"),
-		FromName:    viper.GetString("EMAIL_FROM_NAME"),
-		UseTLS:      viper.GetBool("EMAIL_USE_TLS"),
-	}
+	return SMTPConfig{}
 }

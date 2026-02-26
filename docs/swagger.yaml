@@ -53,6 +53,28 @@ definitions:
     - name
     - tenant_id
     type: object
+  dto.CreateEmailTypeRequest:
+    properties:
+      code:
+        maxLength: 50
+        minLength: 2
+        type: string
+      default_subject:
+        type: string
+      description:
+        type: string
+      name:
+        maxLength: 100
+        minLength: 2
+        type: string
+      variables:
+        items:
+          $ref: '#/definitions/dto.EmailTypeVariableResponse'
+        type: array
+    required:
+    - code
+    - name
+    type: object
   dto.CreateTenantRequest:
     properties:
       name:
@@ -113,6 +135,10 @@ definitions:
         type: string
       is_active:
         type: boolean
+      is_default:
+        type: boolean
+      name:
+        type: string
       smtp_host:
         type: string
       smtp_password:
@@ -145,6 +171,10 @@ definitions:
         type: string
       is_active:
         type: boolean
+      is_default:
+        type: boolean
+      name:
+        type: string
       smtp_host:
         type: string
       smtp_port:
@@ -162,11 +192,17 @@ definitions:
         type: string
       body_text:
         type: string
+      from_email:
+        type: string
+      from_name:
+        type: string
       is_active:
         type: boolean
       name:
         maxLength: 100
         minLength: 2
+        type: string
+      server_config_id:
         type: string
       subject:
         maxLength: 255
@@ -199,11 +235,17 @@ definitions:
         type: string
       email_type_name:
         type: string
+      from_email:
+        type: string
+      from_name:
+        type: string
       id:
         type: string
       is_active:
         type: boolean
       name:
+        type: string
+      server_config_id:
         type: string
       subject:
         type: string
@@ -246,12 +288,16 @@ definitions:
     type: object
   dto.EmailTypeVariableResponse:
     properties:
+      default_value:
+        type: string
       description:
         type: string
       name:
         type: string
       required:
         type: boolean
+      source:
+        type: string
     type: object
   dto.ErrorResponse:
     properties:
@@ -371,6 +417,29 @@ definitions:
     - new_password
     - token
     type: object
+  dto.SendEmailRequest:
+    properties:
+      to_email:
+        type: string
+      type_code:
+        type: string
+      variables:
+        additionalProperties:
+          type: string
+        type: object
+    required:
+    - to_email
+    - type_code
+    type: object
+  dto.SendEmailResponse:
+    properties:
+      message:
+        type: string
+      to_email:
+        type: string
+      type_code:
+        type: string
+    type: object
   dto.SocialAccountResponse:
     properties:
       created_at:
@@ -487,6 +556,23 @@ definitions:
     required:
     - email
     - password
+    type: object
+  dto.UpdateEmailTypeRequest:
+    properties:
+      default_subject:
+        type: string
+      description:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        maxLength: 100
+        minLength: 2
+        type: string
+      variables:
+        items:
+          $ref: '#/definitions/dto.EmailTypeVariableResponse'
+        type: array
     type: object
   dto.UpdatePasswordRequest:
     properties:
@@ -1088,143 +1174,6 @@ paths:
       summary: Create a new application
       tags:
       - Admin
-  /admin/apps/{app_id}/email-config:
-    delete:
-      description: Remove the per-application SMTP server configuration (falls back
-        to global)
-      parameters:
-      - description: Application ID
-        in: path
-        name: app_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - AdminApiKey: []
-      summary: Delete SMTP config for application
-      tags:
-      - Admin - Email
-    get:
-      description: Retrieve the per-application SMTP server configuration
-      parameters:
-      - description: Application ID
-        in: path
-        name: app_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.EmailServerConfigResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - AdminApiKey: []
-      summary: Get SMTP config for application
-      tags:
-      - Admin - Email
-    put:
-      consumes:
-      - application/json
-      description: Create or update the per-application SMTP server configuration
-      parameters:
-      - description: Application ID
-        in: path
-        name: app_id
-        required: true
-        type: string
-      - description: SMTP Config
-        in: body
-        name: config
-        required: true
-        schema:
-          $ref: '#/definitions/dto.EmailServerConfigRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - AdminApiKey: []
-      summary: Save SMTP config for application
-      tags:
-      - Admin - Email
-  /admin/apps/{app_id}/email-test:
-    post:
-      consumes:
-      - application/json
-      description: Send a test email to verify SMTP configuration
-      parameters:
-      - description: Application ID
-        in: path
-        name: app_id
-        required: true
-        type: string
-      - description: Test Email Data
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/dto.EmailTestRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      security:
-      - AdminApiKey: []
-      summary: Send test email
-      tags:
-      - Admin - Email
   /admin/apps/{id}:
     get:
       consumes:
@@ -1256,6 +1205,175 @@ paths:
       summary: Get application details
       tags:
       - Admin
+  /admin/apps/{id}/email-config:
+    delete:
+      description: Remove all SMTP server configurations for an application (falls
+        back to global)
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete SMTP configs for application
+      tags:
+      - Admin - Email
+    get:
+      description: Retrieve the default SMTP server configuration for an application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EmailServerConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get default SMTP config for application
+      tags:
+      - Admin - Email
+    put:
+      consumes:
+      - application/json
+      description: Create or update an SMTP server configuration for an application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: SMTP Config
+        in: body
+        name: config
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailServerConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Save SMTP config for application
+      tags:
+      - Admin - Email
+  /admin/apps/{id}/email-servers:
+    get:
+      description: Retrieve all SMTP server configurations for a specific application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.EmailServerConfigResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List SMTP configs for application
+      tags:
+      - Admin - Email Servers
+  /admin/apps/{id}/email-test:
+    post:
+      consumes:
+      - application/json
+      description: Send a test email to verify the default SMTP configuration for
+        an application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Test Email Data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailTestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Send test email (app-scoped)
+      tags:
+      - Admin - Email
   /admin/apps/{id}/oauth-config:
     post:
       consumes:
@@ -1294,6 +1412,243 @@ paths:
       summary: Set OAuth configuration
       tags:
       - Admin
+  /admin/apps/{id}/send-email:
+    post:
+      consumes:
+      - application/json
+      description: Send an email of the specified type using app's SMTP config and
+        templates
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Send Email Data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SendEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SendEmailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Send an email
+      tags:
+      - Admin - Email
+  /admin/email-servers:
+    get:
+      description: Retrieve all SMTP server configurations across all applications
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.EmailServerConfigResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List all SMTP configs
+      tags:
+      - Admin - Email Servers
+    post:
+      consumes:
+      - application/json
+      description: Create a new SMTP server configuration for an application
+      parameters:
+      - description: Application ID
+        in: query
+        name: app_id
+        required: true
+        type: string
+      - description: SMTP Config
+        in: body
+        name: config
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailServerConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create SMTP config
+      tags:
+      - Admin - Email Servers
+  /admin/email-servers/{id}:
+    delete:
+      description: Remove a specific SMTP server configuration by its ID
+      parameters:
+      - description: Config ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete SMTP config by ID
+      tags:
+      - Admin - Email Servers
+    get:
+      description: Retrieve a specific SMTP server configuration by its ID
+      parameters:
+      - description: Config ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EmailServerConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get SMTP config by ID
+      tags:
+      - Admin - Email Servers
+    put:
+      consumes:
+      - application/json
+      description: Update an existing SMTP server configuration by its ID
+      parameters:
+      - description: Config ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: SMTP Config
+        in: body
+        name: config
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailServerConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Update SMTP config
+      tags:
+      - Admin - Email Servers
+  /admin/email-servers/{id}/test:
+    post:
+      consumes:
+      - application/json
+      description: Send a test email to verify a specific SMTP configuration
+      parameters:
+      - description: Config ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Test Email Data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmailTestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Send test email by config ID
+      tags:
+      - Admin - Email Servers
   /admin/email-templates:
     get:
       description: Retrieve email templates for a specific app or global defaults
@@ -1471,6 +1826,41 @@ paths:
       summary: List all email types
       tags:
       - Admin - Email
+    post:
+      consumes:
+      - application/json
+      description: Register a new custom email type for use in templates
+      parameters:
+      - description: Email Type Data
+        in: body
+        name: emailType
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateEmailTypeRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.EmailTypeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create a custom email type
+      tags:
+      - Admin - Email
   /admin/email-types/{code}:
     get:
       description: Retrieve a specific email type by its code
@@ -1494,6 +1884,97 @@ paths:
       security:
       - AdminApiKey: []
       summary: Get email type by code
+      tags:
+      - Admin - Email
+  /admin/email-types/{id}:
+    delete:
+      description: Delete a custom email type (system types cannot be deleted)
+      parameters:
+      - description: Email Type ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete a custom email type
+      tags:
+      - Admin - Email
+    put:
+      consumes:
+      - application/json
+      description: Update an existing email type's name, description, subject, or
+        variables
+      parameters:
+      - description: Email Type ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Email Type Update Data
+        in: body
+        name: emailType
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateEmailTypeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.EmailTypeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Update an email type
+      tags:
+      - Admin - Email
+  /admin/email-variables:
+    get:
+      description: Returns all variables that the system can automatically resolve
+        from user profiles, app settings, or that must be passed explicitly. Use this
+        as a reference when adding variables to email types.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.EmailTypeVariableResponse'
+            type: array
+      security:
+      - AdminApiKey: []
+      summary: List well-known email template variables
       tags:
       - Admin - Email
   /admin/tenants:
@@ -2211,6 +2692,11 @@ securityDefinitions:
     description: Type "Bearer" + your JWT token
     in: header
     name: Authorization
+    type: apiKey
+  AppApiKey:
+    description: Per-application API Key for app-scoped routes
+    in: header
+    name: X-App-API-Key
     type: apiKey
   AppID:
     description: The UUID of the application context

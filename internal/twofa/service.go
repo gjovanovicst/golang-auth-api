@@ -296,7 +296,7 @@ func (s *Service) GenerateEmail2FACode(appID uuid.UUID, userID string) *errors.A
 
 	// Send the code via email
 	if s.EmailService != nil {
-		if err := s.EmailService.Send2FACodeEmail(appID, usr.Email, code); err != nil {
+		if err := s.EmailService.Send2FACodeEmail(appID, usr.Email, code, &usr.ID); err != nil {
 			log.Printf("Error sending 2FA email to %s: %v", usr.Email, err)
 			return errors.NewAppError(errors.ErrInternal, "Failed to send 2FA code email")
 		}

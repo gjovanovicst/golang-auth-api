@@ -18,7 +18,8 @@
 </div>
 
 <p class="text-muted small mb-3">
-    Configure per-application SMTP servers. Applications without a dedicated config will use the global SMTP settings from the Settings page.
+    Configure SMTP servers for sending emails. Add a <strong>Global / System</strong> config as a fallback for all applications and admin emails, or per-application configs for specific apps.
+    Resolution chain: app-specific config &rarr; global config &rarr; dev mode (log to stdout).
 </p>
 
 <!-- Form container (populated by HTMX when creating/editing) -->

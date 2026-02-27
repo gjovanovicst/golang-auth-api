@@ -68,3 +68,40 @@ func (r *AccountRepository) Count() (int64, error) {
 func (r *AccountRepository) DeleteByID(id string) error {
 	return r.DB.Delete(&models.AdminAccount{}, "id = ?", id).Error
 }
+
+// UpdateEmail sets the email address for an admin account
+func (r *AccountRepository) UpdateEmail(id, email string) error {
+	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).Update("email", email).Error
+}
+
+// UpdatePassword updates the password hash for an admin account
+func (r *AccountRepository) UpdatePassword(id, passwordHash string) error {
+	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).Update("password_hash", passwordHash).Error
+}
+
+// Enable2FA activates two-factor authentication for an admin account.
+// It sets the method, secret, and recovery codes in a single update.
+func (r *AccountRepository) Enable2FA(id, method, secret string, recoveryCodes []byte) error {
+	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"two_fa_enabled":        true,
+		"two_fa_method":         method,
+		"two_fa_secret":         secret,
+		"two_fa_recovery_codes": recoveryCodes,
+	}).Error
+}
+
+// Disable2FA deactivates two-factor authentication for an admin account,
+// clearing all 2FA-related fields.
+func (r *AccountRepository) Disable2FA(id string) error {
+	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"two_fa_enabled":        false,
+		"two_fa_method":         "",
+		"two_fa_secret":         "",
+		"two_fa_recovery_codes": []byte("[]"),
+	}).Error
+}
+
+// UpdateRecoveryCodes replaces the recovery codes for an admin account.
+func (r *AccountRepository) UpdateRecoveryCodes(id string, codes []byte) error {
+	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).Update("two_fa_recovery_codes", codes).Error
+}

@@ -109,7 +109,7 @@ func main() {
 
 	// Initialize Admin GUI Services and Handler
 	accountRepo := admin.NewAccountRepository(database.DB)
-	accountService := admin.NewAccountService(accountRepo)
+	accountService := admin.NewAccountService(accountRepo, emailService)
 	dashboardService := admin.NewDashboardService(database.DB)
 	settingsRepo := admin.NewSettingsRepository(database.DB)
 	settingsService := admin.NewSettingsService(settingsRepo)
@@ -268,6 +268,11 @@ func main() {
 		gui.GET("/login", guiHandler.LoginPage)
 		gui.POST("/login", middleware.LoginRateLimitMiddleware(), guiHandler.LoginSubmit)
 
+		// 2FA verification during login (no auth required — uses temp token)
+		gui.GET("/2fa-verify", guiHandler.TwoFAVerifyPage)
+		gui.POST("/2fa-verify", guiHandler.TwoFAVerifySubmit)
+		gui.POST("/2fa-resend-email", guiHandler.TwoFAResendEmail)
+
 		// Authenticated GUI routes
 		guiAuth := gui.Group("/")
 		guiAuth.Use(middleware.GUIAuthMiddleware(accountService))
@@ -377,6 +382,17 @@ func main() {
 			guiAuth.PUT("/email-types/:id", guiHandler.EmailTypeUpdate)
 			guiAuth.GET("/email-types/:id/delete", guiHandler.EmailTypeDeleteConfirm)
 			guiAuth.DELETE("/email-types/:id", guiHandler.EmailTypeDelete)
+
+			// My Account & 2FA management
+			guiAuth.GET("/my-account", guiHandler.MyAccountPage)
+			guiAuth.POST("/my-account/email", guiHandler.MyAccountUpdateEmail)
+			guiAuth.POST("/my-account/password", guiHandler.MyAccountChangePassword)
+			guiAuth.POST("/my-account/2fa/generate", guiHandler.MyAccount2FAGenerateTOTP)
+			guiAuth.POST("/my-account/2fa/verify-totp", guiHandler.MyAccount2FAVerifyTOTP)
+			guiAuth.POST("/my-account/2fa/enable-email", guiHandler.MyAccount2FAEnableEmail)
+			guiAuth.POST("/my-account/2fa/disable", guiHandler.MyAccount2FADisable)
+			guiAuth.GET("/my-account/2fa/status", guiHandler.MyAccount2FAStatus)
+			guiAuth.POST("/my-account/2fa/regenerate-codes", guiHandler.MyAccount2FARegenerateCodes)
 		}
 	}
 

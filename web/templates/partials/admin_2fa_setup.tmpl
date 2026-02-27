@@ -1,0 +1,72 @@
+{{define "admin_2fa_setup"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-transparent border-bottom">
+        <h6 class="mb-0 fw-semibold">
+            {{if .Data.Switching}}
+            <i class="bi bi-arrow-left-right me-2"></i>Switch to Authenticator App
+            {{else}}
+            <i class="bi bi-qr-code me-2"></i>Set Up Authenticator App
+            {{end}}
+        </h6>
+    </div>
+    <div class="card-body">
+        {{if .Data.Switching}}
+        <div class="alert alert-info py-2 small mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            After verifying your authenticator app, your 2FA method will be switched and new recovery codes will be generated.
+        </div>
+        {{end}}
+        <div class="mb-3">
+            <p class="small text-muted mb-2">
+                <strong>Step 1:</strong> Scan the QR code below with your authenticator app
+                (Google Authenticator, Authy, 1Password, etc.)
+            </p>
+            <div class="text-center mb-3">
+                <img src="{{.Data.QRCodeData | safeURL}}" alt="TOTP QR Code" class="img-fluid rounded border p-2"
+                     style="max-width: 220px;">
+            </div>
+            <div class="mb-3">
+                <label class="form-label small text-muted">
+                    Can't scan? Enter this secret manually:
+                </label>
+                <div class="input-group input-group-sm">
+                    <input type="text" class="form-control font-monospace" value="{{.Data.Secret}}"
+                           id="totp-secret" readonly>
+                    <button class="btn btn-outline-secondary" type="button"
+                            onclick="navigator.clipboard.writeText(document.getElementById('totp-secret').value)">
+                        <i class="bi bi-clipboard"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <hr>
+
+        <p class="small text-muted mb-2">
+            <strong>Step 2:</strong> Enter the 6-digit code from your authenticator app to verify setup.
+        </p>
+        <form hx-post="/gui/my-account/2fa/verify-totp"
+              hx-target="#twofa-setup-area" hx-swap="innerHTML">
+            <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+            {{if .Data.Switching}}
+            <input type="hidden" name="switching" value="true">
+            {{end}}
+            <div class="mb-3">
+                <input type="text" class="form-control text-center font-monospace fs-5"
+                       name="code" maxlength="6" placeholder="000000"
+                       inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code"
+                       autofocus required>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-success btn-sm flex-grow-1">
+                    <i class="bi bi-check-circle me-1"></i>Verify & Enable
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm"
+                        onclick="document.getElementById('twofa-setup-area').innerHTML = '';">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

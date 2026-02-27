@@ -151,9 +151,9 @@ func (s *Sender) logDevEmail(to, from, subject, textBody, htmlBody string) {
 }
 
 // ResolveGlobalSMTPConfig returns an empty SMTPConfig.
-// SMTP configuration is now managed exclusively through per-app EmailServerConfig
-// records in the database (email_server_configs table), not through environment variables.
-// When no per-app config exists, the sender will log the email in dev mode.
+// Deprecated: Global SMTP configuration is now managed through EmailServerConfig records
+// with NULL app_id in the database. The resolution chain in resolveSMTPConfig handles
+// fallback to global config automatically. This function exists only for backward compatibility.
 func ResolveGlobalSMTPConfig() SMTPConfig {
 	return SMTPConfig{}
 }

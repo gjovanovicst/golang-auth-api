@@ -128,6 +128,53 @@ func (s *Service) SendPasswordChangedEmail(appID uuid.UUID, toEmail, changeTime 
 	})
 }
 
+// SendAdmin2FACodeEmail sends a 2FA verification code to an admin's email address.
+// This bypasses the app-scoped template/SMTP resolution and uses the global SMTP config
+// with a simple hardcoded template, since admin accounts are not scoped to any application.
+// Resolution chain: global DB config -> dev mode (log to stdout).
+func (s *Service) SendAdmin2FACodeEmail(toEmail, code, adminUsername string) error {
+	subject := "Auth API Admin - Your Login Verification Code"
+	htmlBody := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8f9fa; padding: 40px 20px;">
+  <div style="max-width: 480px; margin: 0 auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 32px;">
+    <h2 style="margin: 0 0 8px; color: #212529;">Login Verification Code</h2>
+    <p style="color: #6c757d; margin: 0 0 24px;">Hi <strong>%s</strong>, use the code below to complete your admin login.</p>
+    <div style="background: #f0f4ff; border-radius: 6px; padding: 20px; text-align: center; margin-bottom: 24px;">
+      <span style="font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #0d6efd;">%s</span>
+    </div>
+    <p style="color: #6c757d; font-size: 14px; margin: 0;">This code expires in <strong>5 minutes</strong>. If you didn't request this, please ignore this email.</p>
+  </div>
+</body>
+</html>`, adminUsername, code)
+
+	textBody := fmt.Sprintf("Hi %s,\n\nYour login verification code is: %s\n\nThis code expires in 5 minutes.\n\nIf you didn't request this, please ignore this email.", adminUsername, code)
+
+	// Use the global SMTP config (admin is not scoped to any app)
+	var smtpConfig SMTPConfig
+	if s.repo != nil {
+		globalConfig, err := s.repo.GetGlobalServerConfig()
+		if err != nil {
+			log.Printf("Warning: failed to look up global SMTP config for admin 2FA email: %v", err)
+		}
+		if globalConfig != nil && globalConfig.IsActive {
+			smtpConfig = SMTPConfig{
+				Host:        globalConfig.SMTPHost,
+				Port:        globalConfig.SMTPPort,
+				Username:    globalConfig.SMTPUsername,
+				Password:    globalConfig.SMTPPassword,
+				FromAddress: globalConfig.FromAddress,
+				FromName:    globalConfig.FromName,
+				UseTLS:      globalConfig.UseTLS,
+			}
+		}
+	}
+
+	return s.sender.Send(smtpConfig, toEmail, subject, htmlBody, textBody)
+}
+
 // ============================================================================
 // Resolution helpers
 // ============================================================================
@@ -152,7 +199,7 @@ func (s *Service) resolveTemplate(appID uuid.UUID, typeCode string) (*models.Ema
 }
 
 // resolveSMTPConfig resolves the SMTP configuration for an application.
-// Resolution order: per-app DB config -> dev/fallback mode (logs to stdout).
+// Resolution order: per-app DB config -> global DB config -> dev/fallback mode (logs to stdout).
 func (s *Service) resolveSMTPConfig(appID uuid.UUID) SMTPConfig {
 	// Try per-app config from DB
 	if s.repo != nil {
@@ -171,10 +218,27 @@ func (s *Service) resolveSMTPConfig(appID uuid.UUID) SMTPConfig {
 				UseTLS:      config.UseTLS,
 			}
 		}
+
+		// Try global config from DB
+		globalConfig, err := s.repo.GetGlobalServerConfig()
+		if err != nil {
+			log.Printf("Warning: failed to look up global SMTP config: %v", err)
+		}
+		if globalConfig != nil && globalConfig.IsActive {
+			return SMTPConfig{
+				Host:        globalConfig.SMTPHost,
+				Port:        globalConfig.SMTPPort,
+				Username:    globalConfig.SMTPUsername,
+				Password:    globalConfig.SMTPPassword,
+				FromAddress: globalConfig.FromAddress,
+				FromName:    globalConfig.FromName,
+				UseTLS:      globalConfig.UseTLS,
+			}
+		}
 	}
 
-	// No per-app config found; fall back to dev/fallback mode
-	return ResolveGlobalSMTPConfig()
+	// No per-app or global config found; fall back to dev/fallback mode
+	return SMTPConfig{}
 }
 
 // resolveSMTPConfigForTemplate resolves the SMTP config considering the template's
@@ -501,7 +565,10 @@ func (s *Service) SendTestEmailWithConfigID(configID uuid.UUID, toEmail string) 
 		UseTLS:      config.UseTLS,
 	}
 
-	appName := s.resolveAppName(config.AppID)
+	appName := "System"
+	if config.AppID != nil {
+		appName = s.resolveAppName(*config.AppID)
+	}
 	configName := config.Name
 	if configName == "" {
 		configName = "Default"

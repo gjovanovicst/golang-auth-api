@@ -21,9 +21,13 @@
                     {{range .Configs}}
                     <tr>
                         <td class="ps-3">
+                            {{if .IsGlobal}}
+                            <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-globe me-1"></i>Global / System</span>
+                            {{else}}
                             <span class="fw-semibold">{{.AppName}}</span>
                             <br>
                             <small class="text-muted">{{.TenantName}}</small>
+                            {{end}}
                         </td>
                         <td>
                             <span class="fw-semibold">{{.Name}}</span>
@@ -88,8 +92,8 @@
         {{else}}
         <div class="text-center py-5 text-muted">
             <i class="bi bi-envelope-at fs-1"></i>
-            <p class="mt-2 mb-0">No per-application SMTP configurations found.</p>
-            <p class="small">Applications will use the global SMTP settings from the Settings page.</p>
+            <p class="mt-2 mb-0">No SMTP configurations found.</p>
+            <p class="small">Add a Global/System config as a fallback, or per-application configs for specific apps.</p>
         </div>
         {{end}}
     </div>

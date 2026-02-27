@@ -564,7 +564,7 @@ func (h *Handler) SaveEmailServerConfig(c *gin.Context) {
 	}
 
 	config := &models.EmailServerConfig{
-		AppID:        appID,
+		AppID:        &appID,
 		Name:         req.Name,
 		SMTPHost:     req.SMTPHost,
 		SMTPPort:     req.SMTPPort,
@@ -728,7 +728,7 @@ func (h *Handler) CreateEmailServerConfig(c *gin.Context) {
 	}
 
 	config := &models.EmailServerConfig{
-		AppID:        appID,
+		AppID:        &appID,
 		Name:         req.Name,
 		SMTPHost:     req.SMTPHost,
 		SMTPPort:     req.SMTPPort,

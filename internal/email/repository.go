@@ -80,10 +80,23 @@ func (r *Repository) GetServerConfigsByApp(appID uuid.UUID) ([]models.EmailServe
 	return configs, nil
 }
 
-// GetAllServerConfigs returns all SMTP configurations across all applications.
+// GetAllServerConfigs returns all SMTP configurations across all applications and global.
+// Global configs (app_id IS NULL) are returned first.
 func (r *Repository) GetAllServerConfigs() ([]models.EmailServerConfig, error) {
 	var configs []models.EmailServerConfig
-	err := r.DB.Order("app_id, is_default DESC, name ASC").Find(&configs).Error
+	err := r.DB.Order("app_id IS NOT NULL, app_id, is_default DESC, name ASC").Find(&configs).Error
+	if err != nil {
+		return nil, err
+	}
+	return configs, nil
+}
+
+// ListAllActiveServerConfigs returns all active SMTP configurations across all applications.
+// Deprecated: Use GetGlobalServerConfig() for admin/system emails instead.
+// Kept for backward compatibility with any external callers.
+func (r *Repository) ListAllActiveServerConfigs() ([]models.EmailServerConfig, error) {
+	var configs []models.EmailServerConfig
+	err := r.DB.Where("is_active = ?", true).Order("is_default DESC, created_at ASC").Find(&configs).Error
 	if err != nil {
 		return nil, err
 	}
@@ -110,11 +123,40 @@ func (r *Repository) DeleteServerConfigByID(id uuid.UUID) error {
 	return r.DB.Where("id = ?", id).Delete(&models.EmailServerConfig{}).Error
 }
 
-// ClearDefaultFlag unsets is_default on all configs for an app.
-func (r *Repository) ClearDefaultFlag(appID uuid.UUID) error {
+// ClearDefaultFlag unsets is_default on all configs for the same scope (app or global).
+// If appID is nil, clears the default flag on global configs (app_id IS NULL).
+// If appID is set, clears the default flag on configs for that specific app.
+func (r *Repository) ClearDefaultFlag(appID *uuid.UUID) error {
+	if appID == nil {
+		return r.DB.Model(&models.EmailServerConfig{}).
+			Where("app_id IS NULL").
+			Update("is_default", false).Error
+	}
 	return r.DB.Model(&models.EmailServerConfig{}).
-		Where("app_id = ?", appID).
+		Where("app_id = ?", *appID).
 		Update("is_default", false).Error
+}
+
+// GetGlobalServerConfig returns the active default global SMTP configuration (app_id IS NULL).
+// Returns nil, nil if no global config exists.
+func (r *Repository) GetGlobalServerConfig() (*models.EmailServerConfig, error) {
+	var config models.EmailServerConfig
+	err := r.DB.Where("app_id IS NULL AND is_active = ? AND is_default = ?", true, true).First(&config).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// Fallback: try any active global config (if no default is flagged)
+			err = r.DB.Where("app_id IS NULL AND is_active = ?", true).First(&config).Error
+			if err != nil {
+				if err == gorm.ErrRecordNotFound {
+					return nil, nil
+				}
+				return nil, err
+			}
+			return &config, nil
+		}
+		return nil, err
+	}
+	return &config, nil
 }
 
 // ============================================================================

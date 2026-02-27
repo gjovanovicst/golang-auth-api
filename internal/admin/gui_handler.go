@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -49,6 +50,8 @@ func (h *GUIHandler) LoginPage(c *gin.Context) {
 }
 
 // LoginSubmit handles login form submission.
+// If the admin has 2FA enabled, it creates a temporary session and redirects
+// to the 2FA verification page instead of creating a full session.
 // POST /gui/login
 func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	// Check if rate limiter already blocked the request
@@ -90,7 +93,43 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 		return
 	}
 
-	// Create session
+	// Check if 2FA is enabled for this admin
+	if account.TwoFAEnabled {
+		// Create a temporary session (not a full session)
+		tempToken, err := h.AccountService.Create2FATempSession(account.ID.String())
+		if err != nil {
+			data := web.TemplateData{
+				Error:    "An internal error occurred. Please try again.",
+				Username: username,
+				Redirect: redirect,
+			}
+			c.HTML(http.StatusInternalServerError, "login", data)
+			return
+		}
+
+		// For email-based 2FA, generate and send the code now
+		if account.TwoFAMethod == "email" {
+			if err := h.AccountService.GenerateAndSendEmail2FACode(account.ID.String()); err != nil {
+				data := web.TemplateData{
+					Error:    "Failed to send verification code. Please try again.",
+					Username: username,
+					Redirect: redirect,
+				}
+				c.HTML(http.StatusInternalServerError, "login", data)
+				return
+			}
+		}
+
+		// Build redirect URL to 2FA verification page
+		redirectURL := fmt.Sprintf("/gui/2fa-verify?token=%s&method=%s", tempToken, account.TwoFAMethod)
+		if redirect != "" && redirect != "/gui/login" {
+			redirectURL += "&redirect=" + redirect
+		}
+		c.Redirect(http.StatusFound, redirectURL)
+		return
+	}
+
+	// No 2FA — create full session directly
 	sessionID, err := h.AccountService.CreateSession(account.ID.String())
 	if err != nil {
 		data := web.TemplateData{
@@ -1691,19 +1730,25 @@ func (h *GUIHandler) EmailServerList(c *gin.Context) {
 		UseTLS      bool
 		IsDefault   bool
 		IsActive    bool
+		IsGlobal    bool
 	}
 
 	var items []serverItem
 	for _, config := range allConfigs {
 		appName := ""
 		tenantName := ""
-		if app, ok := appMap[config.AppID.String()]; ok {
-			appName = app.Name
-			tenantName = app.TenantName
+		appIDStr := ""
+		isGlobal := config.AppID == nil
+		if !isGlobal {
+			appIDStr = config.AppID.String()
+			if app, ok := appMap[appIDStr]; ok {
+				appName = app.Name
+				tenantName = app.TenantName
+			}
 		}
 		items = append(items, serverItem{
 			ID:          config.ID.String(),
-			AppID:       config.AppID.String(),
+			AppID:       appIDStr,
 			AppName:     appName,
 			TenantName:  tenantName,
 			Name:        config.Name,
@@ -1714,6 +1759,7 @@ func (h *GUIHandler) EmailServerList(c *gin.Context) {
 			UseTLS:      config.UseTLS,
 			IsDefault:   config.IsDefault,
 			IsActive:    config.IsActive,
+			IsGlobal:    isGlobal,
 		})
 	}
 
@@ -1727,15 +1773,7 @@ func (h *GUIHandler) EmailServerList(c *gin.Context) {
 func (h *GUIHandler) EmailServerCreateForm(c *gin.Context) {
 	apps, err := h.Repo.ListAllAppsWithTenantName()
 	if err != nil {
-		c.String(http.StatusInternalServerError,
-			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to load applications.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
-		return
-	}
-
-	if len(apps) == 0 {
-		c.String(http.StatusOK,
-			`<div class="alert alert-info alert-dismissible fade show" role="alert"><i class="bi bi-info-circle me-2"></i>No applications found. Create an application first.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
-		return
+		apps = nil // Non-fatal: global config can still be created without apps
 	}
 
 	c.HTML(http.StatusOK, "email_server_form", gin.H{
@@ -1764,17 +1802,22 @@ func (h *GUIHandler) EmailServerCreate(c *gin.Context) {
 	isDefault := c.PostForm("is_default") == "true"
 	isActive := c.PostForm("is_active") == "true"
 
-	if appIDStr == "" || smtpHost == "" || fromAddress == "" {
+	if smtpHost == "" || fromAddress == "" {
 		c.String(http.StatusBadRequest,
-			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Application, SMTP Host, and From Address are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">SMTP Host and From Address are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
 	}
 
-	appID, err := uuid.Parse(appIDStr)
-	if err != nil {
-		c.String(http.StatusBadRequest,
-			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid application ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
-		return
+	// app_id is optional: empty = global/system-level config
+	var appIDPtr *uuid.UUID
+	if appIDStr != "" {
+		appID, err := uuid.Parse(appIDStr)
+		if err != nil {
+			c.String(http.StatusBadRequest,
+				`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid application ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+			return
+		}
+		appIDPtr = &appID
 	}
 
 	smtpPort, _ := strconv.Atoi(smtpPortStr)
@@ -1787,7 +1830,7 @@ func (h *GUIHandler) EmailServerCreate(c *gin.Context) {
 	}
 
 	config := &models.EmailServerConfig{
-		AppID:        appID,
+		AppID:        appIDPtr,
 		Name:         name,
 		SMTPHost:     smtpHost,
 		SMTPPort:     smtpPort,
@@ -1831,10 +1874,15 @@ func (h *GUIHandler) EmailServerEditForm(c *gin.Context) {
 
 	apps, _ := h.Repo.ListAllAppsWithTenantName()
 
+	appIDStr := ""
+	if found.AppID != nil {
+		appIDStr = found.AppID.String()
+	}
+
 	c.HTML(http.StatusOK, "email_server_form", gin.H{
 		"IsEdit":       true,
 		"ID":           found.ID.String(),
-		"AppID":        found.AppID.String(),
+		"AppID":        appIDStr,
 		"Name":         found.Name,
 		"SMTPHost":     found.SMTPHost,
 		"SMTPPort":     found.SMTPPort,
@@ -1879,17 +1927,22 @@ func (h *GUIHandler) EmailServerUpdate(c *gin.Context) {
 	isDefault := c.PostForm("is_default") == "true"
 	isActive := c.PostForm("is_active") == "true"
 
-	if appIDStr == "" || smtpHost == "" || fromAddress == "" {
+	if smtpHost == "" || fromAddress == "" {
 		c.String(http.StatusBadRequest,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">SMTP Host and From Address are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
 	}
 
-	appID, err := uuid.Parse(appIDStr)
-	if err != nil {
-		c.String(http.StatusBadRequest,
-			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid application ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
-		return
+	// app_id is optional: empty = global/system-level config
+	var appIDPtr *uuid.UUID
+	if appIDStr != "" {
+		appID, err := uuid.Parse(appIDStr)
+		if err != nil {
+			c.String(http.StatusBadRequest,
+				`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid application ID.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+			return
+		}
+		appIDPtr = &appID
 	}
 
 	smtpPort, _ := strconv.Atoi(smtpPortStr)
@@ -1907,7 +1960,7 @@ func (h *GUIHandler) EmailServerUpdate(c *gin.Context) {
 	}
 
 	config := &models.EmailServerConfig{
-		AppID:        appID,
+		AppID:        appIDPtr,
 		Name:         name,
 		SMTPHost:     smtpHost,
 		SMTPPort:     smtpPort,
@@ -2833,6 +2886,422 @@ func (h *GUIHandler) EmailTypeDelete(c *gin.Context) {
 // GET /gui/email-types/form-cancel
 func (h *GUIHandler) EmailTypeFormCancel(c *gin.Context) {
 	c.String(http.StatusOK, "")
+}
+
+// ============================================================================
+// 2FA Login Verification Handlers
+// ============================================================================
+
+// TwoFAVerifyPage renders the 2FA verification form during login.
+// The admin has already authenticated with password and received a temp token.
+// GET /gui/2fa-verify
+func (h *GUIHandler) TwoFAVerifyPage(c *gin.Context) {
+	tempToken := c.Query("token")
+	method := c.Query("method")
+	redirect := c.Query("redirect")
+
+	if tempToken == "" {
+		c.Redirect(http.StatusFound, "/gui/login")
+		return
+	}
+
+	// Validate the temp session still exists
+	if _, err := h.AccountService.Validate2FATempSession(tempToken); err != nil {
+		c.Redirect(http.StatusFound, "/gui/login?error=session_expired")
+		return
+	}
+
+	data := web.TemplateData{
+		TempToken:   tempToken,
+		TwoFAMethod: method,
+		Redirect:    redirect,
+	}
+	c.HTML(http.StatusOK, "2fa_verify", data)
+}
+
+// TwoFAVerifySubmit handles 2FA code submission during login.
+// On success, creates a full session and redirects to the dashboard.
+// POST /gui/2fa-verify
+func (h *GUIHandler) TwoFAVerifySubmit(c *gin.Context) {
+	tempToken := c.PostForm("temp_token")
+	code := c.PostForm("code")
+	method := c.PostForm("method")
+	redirect := c.PostForm("redirect")
+	useRecovery := c.PostForm("use_recovery") == "true"
+
+	if tempToken == "" || code == "" {
+		data := web.TemplateData{
+			Error:       "Verification code is required.",
+			TempToken:   tempToken,
+			TwoFAMethod: method,
+			Redirect:    redirect,
+		}
+		c.HTML(http.StatusBadRequest, "2fa_verify", data)
+		return
+	}
+
+	// Validate temp session (without consuming it yet)
+	account, err := h.AccountService.Validate2FATempSession(tempToken)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/gui/login?error=session_expired")
+		return
+	}
+
+	// Verify the code
+	adminID := account.ID.String()
+	if useRecovery {
+		err = h.AccountService.VerifyRecoveryCode(adminID, code)
+	} else if method == "email" {
+		err = h.AccountService.VerifyEmail2FACode(adminID, code)
+	} else {
+		err = h.AccountService.VerifyTOTPCode(adminID, code)
+	}
+
+	if err != nil {
+		data := web.TemplateData{
+			Error:       "Invalid verification code. Please try again.",
+			TempToken:   tempToken,
+			TwoFAMethod: method,
+			Redirect:    redirect,
+		}
+		c.HTML(http.StatusUnauthorized, "2fa_verify", data)
+		return
+	}
+
+	// 2FA verified — consume temp session and create full session
+	_, _ = h.AccountService.Consume2FATempSession(tempToken)
+
+	sessionID, err := h.AccountService.CreateSession(adminID)
+	if err != nil {
+		data := web.TemplateData{
+			Error:       "An internal error occurred. Please try again.",
+			TempToken:   tempToken,
+			TwoFAMethod: method,
+			Redirect:    redirect,
+		}
+		c.HTML(http.StatusInternalServerError, "2fa_verify", data)
+		return
+	}
+
+	// Set session cookie
+	maxAge := sessionMaxAgeSeconds()
+	web.SetSessionCookie(c, sessionID, maxAge)
+
+	// Clear rate limit counters on successful login
+	_ = redis.ClearLoginAttempts(c.ClientIP())
+	_ = redis.ClearRateLimitKeys("gui:login", c.ClientIP())
+	if web.ClearRateLimitFallback != nil {
+		web.ClearRateLimitFallback("gui:login", c.ClientIP())
+	}
+
+	if redirect != "" && redirect != "/gui/login" {
+		c.Redirect(http.StatusFound, redirect)
+		return
+	}
+	c.Redirect(http.StatusFound, "/gui/")
+}
+
+// TwoFAResendEmail resends the 2FA email code during login verification.
+// POST /gui/2fa-resend-email
+func (h *GUIHandler) TwoFAResendEmail(c *gin.Context) {
+	tempToken := c.PostForm("temp_token")
+
+	account, err := h.AccountService.Validate2FATempSession(tempToken)
+	if err != nil {
+		c.String(http.StatusUnauthorized, `<div class="alert alert-danger py-2"><small>Session expired. Please log in again.</small></div>`)
+		return
+	}
+
+	if err := h.AccountService.GenerateAndSendEmail2FACode(account.ID.String()); err != nil {
+		c.String(http.StatusInternalServerError, `<div class="alert alert-danger py-2"><small>Failed to send code. Please try again.</small></div>`)
+		return
+	}
+
+	c.String(http.StatusOK, `<div class="alert alert-success py-2"><small>A new code has been sent to your email.</small></div>`)
+}
+
+// ============================================================================
+// My Account Handlers
+// ============================================================================
+
+// MyAccountData holds data for the My Account page template.
+type MyAccountData struct {
+	Email              string
+	TwoFAEnabled       bool
+	TwoFAMethod        string
+	RecoveryCodesCount int
+}
+
+// MyAccountPage renders the "My Account" page with 2FA settings.
+// GET /gui/my-account
+func (h *GUIHandler) MyAccountPage(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/gui/")
+		return
+	}
+
+	// Count remaining recovery codes
+	recoveryCount := 0
+	if account.TwoFAEnabled && len(account.TwoFARecoveryCodes) > 0 {
+		var codes []string
+		if json.Unmarshal(account.TwoFARecoveryCodes, &codes) == nil {
+			recoveryCount = len(codes)
+		}
+	}
+
+	data := web.TemplateData{
+		ActivePage:    "my-account",
+		AdminUsername: c.GetString(web.GUIAdminUsernameKey),
+		AdminID:       adminID,
+		CSRFToken:     c.GetString(web.CSRFTokenKey),
+		Data: MyAccountData{
+			Email:              account.Email,
+			TwoFAEnabled:       account.TwoFAEnabled,
+			TwoFAMethod:        account.TwoFAMethod,
+			RecoveryCodesCount: recoveryCount,
+		},
+	}
+	c.HTML(http.StatusOK, "my_account", data)
+}
+
+// MyAccountUpdateEmail updates the admin's email address.
+// POST /gui/my-account/email
+func (h *GUIHandler) MyAccountUpdateEmail(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	email := strings.TrimSpace(c.PostForm("email"))
+
+	if email == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>Email address is required.</small></div>`)
+		return
+	}
+
+	if err := h.AccountService.UpdateEmail(adminID, email); err != nil {
+		msg := "Failed to update email."
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			msg = "This email address is already in use."
+		}
+		c.String(http.StatusBadRequest,
+			fmt.Sprintf(`<div class="alert alert-danger py-2"><small>%s</small></div>`, msg))
+		return
+	}
+
+	c.String(http.StatusOK,
+		fmt.Sprintf(`<div class="alert alert-success py-2"><small>Email updated to %s.</small></div>`, email))
+}
+
+// MyAccountChangePassword handles password changes.
+// POST /gui/my-account/password
+func (h *GUIHandler) MyAccountChangePassword(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	currentPassword := c.PostForm("current_password")
+	newPassword := c.PostForm("new_password")
+	confirmPassword := c.PostForm("confirm_password")
+
+	if currentPassword == "" || newPassword == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>All password fields are required.</small></div>`)
+		return
+	}
+
+	if len(newPassword) < 8 {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>New password must be at least 8 characters.</small></div>`)
+		return
+	}
+
+	if newPassword != confirmPassword {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>New passwords do not match.</small></div>`)
+		return
+	}
+
+	if err := h.AccountService.ChangePassword(adminID, currentPassword, newPassword); err != nil {
+		c.String(http.StatusBadRequest,
+			fmt.Sprintf(`<div class="alert alert-danger py-2"><small>%s</small></div>`, err.Error()))
+		return
+	}
+
+	c.String(http.StatusOK,
+		`<div class="alert alert-success py-2"><small>Password changed successfully.</small></div>`)
+}
+
+// MyAccount2FAGenerateTOTP generates a TOTP secret and returns the QR code partial.
+// POST /gui/my-account/2fa/generate
+func (h *GUIHandler) MyAccount2FAGenerateTOTP(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	username := c.GetString(web.GUIAdminUsernameKey)
+	switching := c.PostForm("switching") == "true"
+
+	setup, err := h.AccountService.GenerateTOTPSecret(adminID, username)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			fmt.Sprintf(`<div class="alert alert-danger py-2"><small>%s</small></div>`, err.Error()))
+		return
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: map[string]interface{}{
+			"Secret":     setup.Secret,
+			"QRCodeData": fmt.Sprintf("data:image/png;base64,%s", base64Encode(setup.QRCodeData)),
+			"Switching":  switching,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_2fa_setup", data)
+}
+
+// MyAccount2FAVerifyTOTP verifies the TOTP code during setup.
+// POST /gui/my-account/2fa/verify-totp
+func (h *GUIHandler) MyAccount2FAVerifyTOTP(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	code := strings.TrimSpace(c.PostForm("code"))
+	switching := c.PostForm("switching") == "true"
+
+	if code == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>Please enter the 6-digit code from your authenticator app.</small></div>`)
+		return
+	}
+
+	if err := h.AccountService.VerifyTOTPSetup(adminID, code); err != nil {
+		c.String(http.StatusBadRequest,
+			fmt.Sprintf(`<div class="alert alert-danger py-2"><small>%s</small></div>`, err.Error()))
+		return
+	}
+
+	// Verification succeeded — enable TOTP and return recovery codes
+	recoveryCodes, err := h.AccountService.EnableTOTP(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			fmt.Sprintf(`<div class="alert alert-danger py-2"><small>%s</small></div>`, err.Error()))
+		return
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: map[string]interface{}{
+			"RecoveryCodes": recoveryCodes,
+			"Method":        "totp",
+			"Switched":      switching,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_2fa_recovery", data)
+}
+
+// MyAccount2FAEnableEmail enables email-based 2FA.
+// POST /gui/my-account/2fa/enable-email
+func (h *GUIHandler) MyAccount2FAEnableEmail(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	switching := c.PostForm("switching") == "true"
+
+	recoveryCodes, err := h.AccountService.EnableEmail2FA(adminID)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			fmt.Sprintf(`<div class="alert alert-danger py-2"><small>%s</small></div>`, err.Error()))
+		return
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: map[string]interface{}{
+			"RecoveryCodes": recoveryCodes,
+			"Method":        "email",
+			"Switched":      switching,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_2fa_recovery", data)
+}
+
+// MyAccount2FADisable disables 2FA for the admin (requires password).
+// POST /gui/my-account/2fa/disable
+func (h *GUIHandler) MyAccount2FADisable(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	password := c.PostForm("password")
+
+	if password == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>Password is required to disable 2FA.</small></div>`)
+		return
+	}
+
+	if err := h.AccountService.Disable2FA(adminID, password); err != nil {
+		c.String(http.StatusBadRequest,
+			fmt.Sprintf(`<div class="alert alert-danger py-2"><small>%s</small></div>`, err.Error()))
+		return
+	}
+
+	// Return refreshed 2FA status partial
+	h.MyAccount2FAStatus(c)
+}
+
+// MyAccount2FAStatus returns the current 2FA status as an HTMX partial.
+// GET /gui/my-account/2fa/status
+func (h *GUIHandler) MyAccount2FAStatus(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to load account.</small></div>`)
+		return
+	}
+
+	recoveryCount := 0
+	if account.TwoFAEnabled && len(account.TwoFARecoveryCodes) > 0 {
+		var codes []string
+		if json.Unmarshal(account.TwoFARecoveryCodes, &codes) == nil {
+			recoveryCount = len(codes)
+		}
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: MyAccountData{
+			Email:              account.Email,
+			TwoFAEnabled:       account.TwoFAEnabled,
+			TwoFAMethod:        account.TwoFAMethod,
+			RecoveryCodesCount: recoveryCount,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_2fa_status", data)
+}
+
+// MyAccount2FARegenerateCodes regenerates recovery codes (requires password).
+// POST /gui/my-account/2fa/regenerate-codes
+func (h *GUIHandler) MyAccount2FARegenerateCodes(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	password := c.PostForm("password")
+
+	if password == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>Password is required to regenerate codes.</small></div>`)
+		return
+	}
+
+	codes, err := h.AccountService.RegenerateRecoveryCodes(adminID, password)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			fmt.Sprintf(`<div class="alert alert-danger py-2"><small>%s</small></div>`, err.Error()))
+		return
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: map[string]interface{}{
+			"RecoveryCodes": codes,
+			"Regenerated":   true,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_2fa_recovery", data)
+}
+
+// base64Encode is a helper to encode bytes to base64 for inline images.
+func base64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
 }
 
 // parseVariablesFromForm parses variable rows from the dynamic form.

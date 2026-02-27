@@ -155,6 +155,14 @@
 
         <!-- User info at bottom -->
         <hr class="text-secondary mx-3 my-0">
+        <ul class="nav flex-column my-1">
+            <li class="nav-item">
+                <a class="nav-link{{if eq .ActivePage "my-account"}} active{{end}}" href="/gui/my-account">
+                    <i class="bi bi-person-gear"></i> My Account
+                </a>
+            </li>
+        </ul>
+        <hr class="text-secondary mx-3 my-0">
         <div class="p-3">
             <div class="d-flex align-items-center text-white-50">
                 <i class="bi bi-person-circle me-2"></i>

@@ -1,0 +1,213 @@
+{{define "admin_2fa_status"}}
+{{if .Data.TwoFAEnabled}}{{else}}
+<!-- 2FA Recommendation Banner (inside HTMX partial so it refreshes automatically) -->
+<div class="alert alert-info border-0 shadow-sm d-flex align-items-start mb-4" role="alert">
+    <i class="bi bi-shield-exclamation fs-4 me-3 text-info"></i>
+    <div>
+        <h6 class="alert-heading fw-semibold mb-1">Secure your account with 2FA</h6>
+        <p class="mb-0 small">
+            Two-factor authentication adds an extra layer of security. Even if your password is compromised,
+            your account stays protected. We strongly recommend enabling it.
+        </p>
+    </div>
+</div>
+{{end}}
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-transparent border-bottom d-flex align-items-center justify-content-between">
+        <h6 class="mb-0 fw-semibold"><i class="bi bi-shield-lock me-2"></i>Two-Factor Authentication</h6>
+        {{if .Data.TwoFAEnabled}}
+        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Enabled</span>
+        {{else}}
+        <span class="badge bg-secondary">Disabled</span>
+        {{end}}
+    </div>
+    <div class="card-body">
+        {{if .Data.TwoFAEnabled}}
+        <!-- 2FA is enabled -->
+        <div class="mb-3">
+            <div class="d-flex align-items-center mb-2">
+                {{if eq .Data.TwoFAMethod "totp"}}
+                <i class="bi bi-phone text-success me-2 fs-5"></i>
+                <div>
+                    <div class="fw-semibold small">Authenticator App</div>
+                    <div class="text-muted" style="font-size: 0.8rem;">Using TOTP codes from your authenticator app</div>
+                </div>
+                {{else}}
+                <i class="bi bi-envelope text-success me-2 fs-5"></i>
+                <div>
+                    <div class="fw-semibold small">Email Verification</div>
+                    <div class="text-muted" style="font-size: 0.8rem;">Codes are sent to your email at login</div>
+                </div>
+                {{end}}
+            </div>
+        </div>
+
+        <!-- Recovery codes info -->
+        <div class="d-flex align-items-center mb-3 p-2 bg-light rounded">
+            <i class="bi bi-key me-2 text-warning"></i>
+            <div class="small">
+                <span class="fw-semibold">{{.Data.RecoveryCodesCount}}</span> recovery codes remaining
+                {{if le .Data.RecoveryCodesCount 2}}
+                <span class="text-danger ms-1">(low — consider regenerating)</span>
+                {{end}}
+            </div>
+        </div>
+
+        <!-- Regenerate recovery codes -->
+        <div class="mb-3">
+            <button class="btn btn-outline-warning btn-sm w-100" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#regenerate-codes-form">
+                <i class="bi bi-arrow-repeat me-1"></i>Regenerate Recovery Codes
+            </button>
+            <div class="collapse mt-2" id="regenerate-codes-form">
+                <form hx-post="/gui/my-account/2fa/regenerate-codes"
+                      hx-target="#twofa-setup-area" hx-swap="innerHTML">
+                    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                    <div class="mb-2">
+                        <label class="form-label small">Confirm Password</label>
+                        <input type="password" class="form-control form-control-sm" name="password"
+                               placeholder="Enter your password" required>
+                    </div>
+                    <button type="submit" class="btn btn-warning btn-sm">
+                        <i class="bi bi-arrow-repeat me-1"></i>Regenerate
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <hr>
+
+        <!-- Switch 2FA Method -->
+        <div class="mb-3">
+            {{if eq .Data.TwoFAMethod "totp"}}
+            <button class="btn btn-outline-primary btn-sm w-100" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#switch-method-section">
+                <i class="bi bi-envelope me-1"></i>Switch to Email Verification
+            </button>
+            <div class="collapse mt-2" id="switch-method-section">
+                <div class="alert alert-info py-2 small mb-2">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Switching methods will generate new recovery codes. Your current codes will be invalidated.
+                </div>
+                {{if not .Data.Email}}
+                <div class="alert alert-warning py-2 small mb-0">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    You must set an email address before switching to email-based 2FA.
+                </div>
+                {{else}}
+                <form hx-post="/gui/my-account/2fa/enable-email"
+                      hx-target="#twofa-setup-area" hx-swap="innerHTML">
+                    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                    <input type="hidden" name="switching" value="true">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-arrow-left-right me-1"></i>Switch to Email
+                    </button>
+                </form>
+                {{end}}
+            </div>
+            {{else}}
+            <button class="btn btn-outline-primary btn-sm w-100" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#switch-method-section">
+                <i class="bi bi-phone me-1"></i>Switch to Authenticator App
+            </button>
+            <div class="collapse mt-2" id="switch-method-section">
+                <div class="alert alert-info py-2 small mb-2">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Switching methods will generate new recovery codes. Your current codes will be invalidated.
+                </div>
+                <form hx-post="/gui/my-account/2fa/generate"
+                      hx-target="#twofa-setup-area" hx-swap="innerHTML">
+                    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                    <input type="hidden" name="switching" value="true">
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-arrow-left-right me-1"></i>Set Up Authenticator
+                    </button>
+                </form>
+            </div>
+            {{end}}
+        </div>
+
+        <hr>
+
+        <!-- Disable 2FA -->
+        <button class="btn btn-outline-danger btn-sm w-100" type="button"
+                data-bs-toggle="collapse" data-bs-target="#disable-2fa-form">
+            <i class="bi bi-shield-x me-1"></i>Disable Two-Factor Authentication
+        </button>
+        <div class="collapse mt-2" id="disable-2fa-form">
+            <div class="alert alert-warning py-2 small mb-2">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                Disabling 2FA will make your account less secure. All recovery codes will be deleted.
+            </div>
+            <form hx-post="/gui/my-account/2fa/disable"
+                  hx-target="#twofa-section" hx-swap="innerHTML">
+                <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                <div class="mb-2">
+                    <label class="form-label small">Confirm Password</label>
+                    <input type="password" class="form-control form-control-sm" name="password"
+                           placeholder="Enter your password" required>
+                </div>
+                <button type="submit" class="btn btn-danger btn-sm">
+                    <i class="bi bi-shield-x me-1"></i>Disable 2FA
+                </button>
+            </form>
+        </div>
+
+        {{else}}
+        <!-- 2FA is not enabled — show setup options -->
+        <p class="text-muted small mb-3">
+            Choose a method to add two-factor authentication to your account.
+        </p>
+
+        <!-- Option 1: Authenticator App (TOTP) -->
+        <div class="card border mb-3">
+            <div class="card-body p-3">
+                <div class="d-flex align-items-start">
+                    <i class="bi bi-phone fs-4 text-primary me-3 mt-1"></i>
+                    <div class="flex-grow-1">
+                        <h6 class="mb-1 fw-semibold">Authenticator App</h6>
+                        <p class="text-muted small mb-2">
+                            Use an app like Google Authenticator, Authy, or 1Password to generate time-based codes.
+                        </p>
+                        <form hx-post="/gui/my-account/2fa/generate"
+                              hx-target="#twofa-setup-area" hx-swap="innerHTML">
+                            <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                            <button type="submit" class="btn btn-primary btn-sm">
+                                <i class="bi bi-qr-code me-1"></i>Set Up Authenticator
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Option 2: Email -->
+        <div class="card border">
+            <div class="card-body p-3">
+                <div class="d-flex align-items-start">
+                    <i class="bi bi-envelope fs-4 text-primary me-3 mt-1"></i>
+                    <div class="flex-grow-1">
+                        <h6 class="mb-1 fw-semibold">Email Verification</h6>
+                        <p class="text-muted small mb-2">
+                            Receive a 6-digit code to your email address each time you log in.
+                            {{if not .Data.Email}}
+                            <br><span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>You must set an email address first.</span>
+                            {{end}}
+                        </p>
+                        <form hx-post="/gui/my-account/2fa/enable-email"
+                              hx-target="#twofa-setup-area" hx-swap="innerHTML">
+                            <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                            <button type="submit" class="btn btn-primary btn-sm"
+                                    {{if not .Data.Email}}disabled{{end}}>
+                                <i class="bi bi-envelope-check me-1"></i>Enable Email 2FA
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

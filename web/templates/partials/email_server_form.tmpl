@@ -18,10 +18,8 @@
             <div class="row g-3">
                 <div class="col-md-3">
                     <label for="esApp" class="form-label small text-muted">Application</label>
-                    <select class="form-select" id="esApp" name="app_id" {{if .IsEdit}}disabled{{end}} required>
-                        {{if not .IsEdit}}
-                        <option value="">Select an application...</option>
-                        {{end}}
+                    <select class="form-select" id="esApp" name="app_id" {{if .IsEdit}}disabled{{end}}>
+                        <option value="">Global / System</option>
                         {{range .Apps}}
                         <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.AppID}}selected{{end}}>{{.Name}} ({{.TenantName}})</option>
                         {{end}}
@@ -29,6 +27,7 @@
                     {{if .IsEdit}}
                     <input type="hidden" name="app_id" value="{{.AppID}}">
                     {{end}}
+                    <small class="text-muted">Leave as "Global / System" for a fallback SMTP config</small>
                 </div>
                 <div class="col-md-3">
                     <label for="esName" class="form-label small text-muted">Config Name</label>

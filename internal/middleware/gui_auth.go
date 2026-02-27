@@ -14,8 +14,11 @@ func GUIAuthMiddleware(sessionValidator web.SessionValidator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
-		// Skip authentication for login page and static assets
-		if path == "/gui/login" || strings.HasPrefix(path, "/gui/static/") {
+		// Skip authentication for login page, 2FA verification, and static assets
+		if path == "/gui/login" ||
+			path == "/gui/2fa-verify" ||
+			path == "/gui/2fa-resend-email" ||
+			strings.HasPrefix(path, "/gui/static/") {
 			c.Next()
 			return
 		}

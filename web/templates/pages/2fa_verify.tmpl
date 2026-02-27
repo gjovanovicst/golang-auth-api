@@ -1,0 +1,151 @@
+{{define "2fa_verify"}}
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Two-Factor Verification - Auth API Admin</title>
+    <link rel="stylesheet" href="/gui/static/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/gui/static/css/bootstrap-icons.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .verify-card {
+            width: 100%;
+            max-width: 440px;
+        }
+        .code-input {
+            font-size: 1.5rem;
+            letter-spacing: 0.5rem;
+            text-align: center;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="verify-card">
+        <div class="text-center mb-4">
+            <i class="bi bi-shield-check text-primary" style="font-size: 3rem;"></i>
+            <h3 class="mt-2 fw-bold">Two-Factor Verification</h3>
+            <p class="text-muted">
+                {{if eq .TwoFAMethod "email"}}
+                Enter the 6-digit code sent to your email
+                {{else}}
+                Enter the 6-digit code from your authenticator app
+                {{end}}
+            </p>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                {{if .Error}}
+                <div class="alert alert-danger py-2" role="alert">
+                    <i class="bi bi-exclamation-triangle me-1"></i>{{.Error}}
+                </div>
+                {{end}}
+
+                <!-- Status area for resend feedback -->
+                <div id="resend-status"></div>
+
+                <form method="POST" action="/gui/2fa-verify" id="verify-form">
+                    <input type="hidden" name="temp_token" value="{{.TempToken}}">
+                    <input type="hidden" name="method" value="{{.TwoFAMethod}}">
+                    <input type="hidden" name="use_recovery" value="false" id="use_recovery_field">
+                    {{if .Redirect}}
+                    <input type="hidden" name="redirect" value="{{.Redirect}}">
+                    {{end}}
+
+                    <div class="mb-3" id="code-section">
+                        <label for="code" class="form-label" id="code-label">
+                            {{if eq .TwoFAMethod "email"}}
+                            <i class="bi bi-envelope me-1"></i>Email Code
+                            {{else}}
+                            <i class="bi bi-phone me-1"></i>Authenticator Code
+                            {{end}}
+                        </label>
+                        <input type="text" class="form-control code-input" id="code" name="code"
+                               maxlength="16" placeholder="000000"
+                               autocomplete="one-time-code" inputmode="numeric" autofocus required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100 mb-3" id="verify-btn">
+                        <i class="bi bi-check-circle me-1"></i>Verify
+                    </button>
+                </form>
+
+                <hr class="my-3">
+
+                <div class="d-flex flex-column gap-2">
+                    {{if eq .TwoFAMethod "email"}}
+                    <!-- Resend email code button -->
+                    <form hx-post="/gui/2fa-resend-email" hx-target="#resend-status" hx-swap="innerHTML">
+                        <input type="hidden" name="temp_token" value="{{.TempToken}}">
+                        <button type="submit" class="btn btn-outline-secondary btn-sm w-100">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Resend Code
+                        </button>
+                    </form>
+                    {{end}}
+
+                    <!-- Toggle recovery code input -->
+                    <button type="button" class="btn btn-outline-warning btn-sm w-100" id="toggle-recovery-btn"
+                            onclick="toggleRecoveryMode()">
+                        <i class="bi bi-key me-1"></i>Use Recovery Code Instead
+                    </button>
+
+                    <a href="/gui/login" class="btn btn-link btn-sm text-muted w-100">
+                        <i class="bi bi-arrow-left me-1"></i>Back to Login
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <p class="text-center text-muted mt-3 small">
+            Auth API Admin Panel &bull; Secure Access Only
+        </p>
+    </div>
+
+    <script src="/gui/static/js/bootstrap.bundle.min.js"></script>
+    <script src="/gui/static/js/htmx.min.js"></script>
+    <script>
+        var recoveryMode = false;
+
+        function toggleRecoveryMode() {
+            recoveryMode = !recoveryMode;
+            var codeInput = document.getElementById('code');
+            var codeLabel = document.getElementById('code-label');
+            var recoveryField = document.getElementById('use_recovery_field');
+            var toggleBtn = document.getElementById('toggle-recovery-btn');
+
+            if (recoveryMode) {
+                codeInput.placeholder = 'Enter recovery code';
+                codeInput.maxLength = 32;
+                codeInput.inputMode = 'text';
+                codeInput.classList.remove('code-input');
+                codeLabel.innerHTML = '<i class="bi bi-key me-1"></i>Recovery Code';
+                recoveryField.value = 'true';
+                toggleBtn.innerHTML = '<i class="bi bi-phone me-1"></i>Use Verification Code Instead';
+            } else {
+                codeInput.placeholder = '000000';
+                codeInput.maxLength = 16;
+                codeInput.inputMode = 'numeric';
+                codeInput.classList.add('code-input');
+                {{if eq .TwoFAMethod "email"}}
+                codeLabel.innerHTML = '<i class="bi bi-envelope me-1"></i>Email Code';
+                {{else}}
+                codeLabel.innerHTML = '<i class="bi bi-phone me-1"></i>Authenticator Code';
+                {{end}}
+                recoveryField.value = 'false';
+                toggleBtn.innerHTML = '<i class="bi bi-key me-1"></i>Use Recovery Code Instead';
+            }
+            codeInput.value = '';
+            codeInput.focus();
+        }
+    </script>
+</body>
+</html>
+{{end}}

@@ -39,6 +39,10 @@ type TemplateData struct {
 	Username string // Pre-filled username on login error
 	Redirect string // Post-login redirect URL
 
+	// 2FA-specific fields
+	TempToken   string // Temporary token for 2FA login verification
+	TwoFAMethod string // "totp" or "email" — which 2FA method is required
+
 	// Page-specific data (each page can put arbitrary data here)
 	Data interface{}
 }
@@ -188,6 +192,11 @@ func defaultFuncMap() template.FuncMap {
 		// HTML safety — use sparingly and only with trusted content
 		"safeHTML": func(s string) template.HTML {
 			return template.HTML(s)
+		},
+
+		// URL safety — use for trusted data URIs (e.g. base64 inline images)
+		"safeURL": func(s string) template.URL {
+			return template.URL(s)
 		},
 
 		// Comparison helpers for templates

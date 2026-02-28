@@ -223,7 +223,9 @@ func tryRedis(c *gin.Context, cfg RateLimitConfig, attemptsKey, lockoutKey strin
 	}
 	var currentCount int64
 	if countStr != "" {
-		fmt.Sscanf(countStr, "%d", &currentCount)
+		if _, err := fmt.Sscanf(countStr, "%d", &currentCount); err != nil {
+			log.Printf("[rate-limit] Failed to parse attempt count %q: %v", countStr, err)
+		}
 	}
 	if currentCount >= cfg.MaxAttempts {
 		rejectRequest(c, cfg, "Too many requests. Please wait a moment before trying again.")

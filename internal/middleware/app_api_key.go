@@ -13,7 +13,7 @@ import (
 
 const (
 	// HeaderAppAPIKey is the HTTP header for per-application API keys.
-	HeaderAppAPIKey = "X-App-API-Key"
+	HeaderAppAPIKey = "X-App-API-Key" // #nosec G101 -- This is a header name, not a credential.
 )
 
 // AppApiKeyMiddleware validates per-application API keys.

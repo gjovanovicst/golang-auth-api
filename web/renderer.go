@@ -191,12 +191,12 @@ func defaultFuncMap() template.FuncMap {
 
 		// HTML safety — use sparingly and only with trusted content
 		"safeHTML": func(s string) template.HTML {
-			return template.HTML(s)
+			return template.HTML(s) // #nosec G203 -- Intentional: used only with server-controlled trusted content.
 		},
 
 		// URL safety — use for trusted data URIs (e.g. base64 inline images)
 		"safeURL": func(s string) template.URL {
-			return template.URL(s)
+			return template.URL(s) // #nosec G203 -- Intentional: used only with server-controlled trusted data URIs.
 		},
 
 		// Comparison helpers for templates

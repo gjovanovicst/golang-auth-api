@@ -256,9 +256,9 @@ NEW_CONFIG_OPTION=value
 
 Files to update:
 
-- [ ] [MIGRATIONS.md](../MIGRATIONS.md) - Add to current migrations list
-- [ ] [BREAKING_CHANGES.md](../BREAKING_CHANGES.md) - If breaking, add entry
-- [ ] [UPGRADE_GUIDE.md](../UPGRADE_GUIDE.md) - Add upgrade instructions
+- [ ] [MIGRATIONS.md](../docs/migrations/MIGRATIONS.md) - Add to current migrations list
+- [ ] [BREAKING_CHANGES.md](../docs/BREAKING_CHANGES.md) - If breaking, add entry
+- [ ] [UPGRADE_GUIDE.md](../docs/migrations/UPGRADE_GUIDE.md) - Add upgrade instructions
 - [ ] [CHANGELOG.md](../CHANGELOG.md) - Add to version changelog
 - [ ] [migrations/MIGRATIONS_LOG.md](MIGRATIONS_LOG.md) - Add to log
 - [ ] [README.md](../README.md) - Update if features changed

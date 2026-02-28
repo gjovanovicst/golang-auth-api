@@ -1,0 +1,142 @@
+{{define "email_templates"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Email Templates{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-file-earmark-code me-2"></i>Email Templates
+    </h4>
+    <div class="d-flex align-items-center gap-3">
+        <!-- Scope filter -->
+        <div class="d-flex align-items-center gap-2">
+            <label for="scopeFilter" class="form-label mb-0 small text-muted text-nowrap">Scope:</label>
+            <select class="form-select form-select-sm" id="scopeFilter" style="min-width: 160px;">
+                <option value="global">Global Defaults</option>
+                <option value="app">Per-Application</option>
+            </select>
+        </div>
+        <!-- App filter (shown when scope=app) -->
+        <div class="d-flex align-items-center gap-2" id="appFilterContainer" style="display: none !important;">
+            <label for="templateAppFilter" class="form-label mb-0 small text-muted text-nowrap">Application:</label>
+            <select class="form-select form-select-sm" id="templateAppFilter" style="min-width: 220px;">
+                <option value="">Select an application...</option>
+                {{if .Data}}
+                {{range .Data.Apps}}
+                <option value="{{.ID}}">{{.Name}} ({{.TenantName}})</option>
+                {{end}}
+                {{end}}
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm"
+                hx-get="/gui/email-templates/new"
+                hx-target="#email-template-form-container"
+                hx-swap="innerHTML">
+            <i class="bi bi-plus-lg me-1"></i>Create Template
+        </button>
+    </div>
+</div>
+
+<p class="text-muted small mb-3">
+    Manage email templates per application or set global defaults. Templates support 3 engines: <code>go_template</code> (Go html/template), <code>placeholder</code> ({var_name}), and <code>raw_html</code>.
+</p>
+
+<!-- Form container -->
+<div id="email-template-form-container" class="mb-3"></div>
+
+<!-- Preview container -->
+<div id="email-template-preview-container" class="mb-3"></div>
+
+<!-- Template list (loaded via HTMX) -->
+<div id="email-template-table"
+     hx-get="/gui/email-templates/list?scope=global"
+     hx-trigger="load, emailTemplateListRefresh from:body"
+     hx-swap="innerHTML">
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading email templates...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteEmailTemplateModal" tabindex="-1" aria-labelledby="deleteEmailTemplateModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteEmailTemplateModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Email Template
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-email-template-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Reset to default confirmation modal -->
+<div class="modal fade" id="resetEmailTemplateModal" tabindex="-1" aria-labelledby="resetEmailTemplateModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="resetEmailTemplateModalLabel">
+                    <i class="bi bi-arrow-counterclockwise text-warning me-2"></i>Reset to Default
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="reset-email-template-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close delete modal after successful deletion
+    document.body.addEventListener('emailTemplateDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteEmailTemplateModal'));
+        if (modal) modal.hide();
+    });
+
+    // Close reset modal after successful reset
+    document.body.addEventListener('emailTemplateReset', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('resetEmailTemplateModal'));
+        if (modal) modal.hide();
+    });
+
+    // Scope filter change
+    document.getElementById('scopeFilter').addEventListener('change', function() {
+        var scope = this.value;
+        var appFilterContainer = document.getElementById('appFilterContainer');
+        var appFilter = document.getElementById('templateAppFilter');
+
+        if (scope === 'app') {
+            appFilterContainer.style.display = '';
+            appFilterContainer.classList.add('d-flex');
+            // Don't load until an app is selected
+        } else {
+            appFilterContainer.style.display = 'none';
+            appFilterContainer.classList.remove('d-flex');
+            appFilter.value = '';
+            htmx.ajax('GET', '/gui/email-templates/list?scope=global', {target: '#email-template-table', swap: 'innerHTML'});
+        }
+    });
+
+    // App filter change
+    document.getElementById('templateAppFilter').addEventListener('change', function() {
+        var appID = this.value;
+        if (appID) {
+            htmx.ajax('GET', '/gui/email-templates/list?scope=app&app_id=' + appID, {target: '#email-template-table', swap: 'innerHTML'});
+        }
+    });
+</script>
+{{end}}

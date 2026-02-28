@@ -8,8 +8,8 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// Setup test configuration
-	viper.Set("JWT_SECRET", "testsecret")
+	// Setup test configuration — secret must be >= 32 bytes
+	viper.Set("JWT_SECRET", "test-jwt-secret-that-is-at-least-32-bytes-long!")
 	viper.Set("ACCESS_TOKEN_EXPIRATION_MINUTES", 15)
 	viper.Set("REFRESH_TOKEN_EXPIRATION_HOURS", 720)
 

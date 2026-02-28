@@ -182,3 +182,174 @@ func IsUserTokensBlacklisted(appID, userID string) (bool, error) {
 	}
 	return true, nil // All user tokens are blacklisted
 }
+
+// Admin Session Functions
+
+// SetAdminSession stores an admin session in Redis
+func SetAdminSession(sessionID, adminID string, expiration time.Duration) error {
+	key := fmt.Sprintf("admin:session:%s", sessionID)
+	return Rdb.Set(ctx, key, adminID, expiration).Err()
+}
+
+// GetAdminSession retrieves an admin session from Redis, returning the admin ID
+func GetAdminSession(sessionID string) (string, error) {
+	key := fmt.Sprintf("admin:session:%s", sessionID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteAdminSession removes an admin session from Redis
+func DeleteAdminSession(sessionID string) error {
+	key := fmt.Sprintf("admin:session:%s", sessionID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// Admin CSRF Functions
+
+// SetCSRFToken stores a CSRF token for an admin session
+func SetCSRFToken(sessionID, token string, expiration time.Duration) error {
+	key := fmt.Sprintf("admin:csrf:%s", sessionID)
+	return Rdb.Set(ctx, key, token, expiration).Err()
+}
+
+// GetCSRFToken retrieves the CSRF token for an admin session
+func GetCSRFToken(sessionID string) (string, error) {
+	key := fmt.Sprintf("admin:csrf:%s", sessionID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// Admin Login Rate Limiting Functions
+
+// IncrLoginAttempts increments the login attempt counter for an IP and sets a 60-second TTL.
+// Returns the new count after increment.
+func IncrLoginAttempts(ip string) (int64, error) {
+	key := fmt.Sprintf("admin:login_attempts:%s", ip)
+	count, err := Rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	// Set TTL only on first attempt (when count == 1)
+	if count == 1 {
+		Rdb.Expire(ctx, key, 60*time.Second)
+	}
+	return count, nil
+}
+
+// GetLoginAttempts returns the current login attempt count for an IP
+func GetLoginAttempts(ip string) (int64, error) {
+	key := fmt.Sprintf("admin:login_attempts:%s", ip)
+	count, err := Rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return count, err
+}
+
+// SetLoginLockout sets a lockout flag for an IP with the given expiration
+func SetLoginLockout(ip string, expiration time.Duration) error {
+	key := fmt.Sprintf("admin:login_lockout:%s", ip)
+	return Rdb.Set(ctx, key, "locked", expiration).Err()
+}
+
+// IsLoginLocked checks if an IP is currently locked out
+func IsLoginLocked(ip string) (bool, error) {
+	key := fmt.Sprintf("admin:login_lockout:%s", ip)
+	_, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ClearLoginAttempts removes the attempt counter and lockout for an IP (called on successful login)
+func ClearLoginAttempts(ip string) error {
+	attemptsKey := fmt.Sprintf("admin:login_attempts:%s", ip)
+	lockoutKey := fmt.Sprintf("admin:login_lockout:%s", ip)
+	return Rdb.Del(ctx, attemptsKey, lockoutKey).Err()
+}
+
+// Email 2FA Code Functions
+
+// Set2FAEmailCode stores a 2FA email verification code with a 5-minute expiration.
+func Set2FAEmailCode(appID, userID, code string) error {
+	key := fmt.Sprintf("app:%s:2fa_email:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, 5*time.Minute).Err()
+}
+
+// Get2FAEmailCode retrieves a stored 2FA email verification code.
+func Get2FAEmailCode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:2fa_email:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// Delete2FAEmailCode removes a 2FA email verification code after successful verification.
+func Delete2FAEmailCode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:2fa_email:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ClearRateLimitKeys removes the generic rate-limit attempt counter and lockout
+// for a given prefix + identifier. Used by the generic RateLimitMiddleware.
+func ClearRateLimitKeys(keyPrefix, identifier string) error {
+	attemptsKey := fmt.Sprintf("rl:%s:attempts:%s", keyPrefix, identifier)
+	lockoutKey := fmt.Sprintf("rl:%s:lockout:%s", keyPrefix, identifier)
+	return Rdb.Del(ctx, attemptsKey, lockoutKey).Err()
+}
+
+// Admin 2FA Functions
+
+// SetAdmin2FATempSecret stores a temporary TOTP secret during admin 2FA setup (10-minute TTL).
+func SetAdmin2FATempSecret(adminID, secret string) error {
+	key := fmt.Sprintf("admin:2fa_temp_secret:%s", adminID)
+	return Rdb.Set(ctx, key, secret, 10*time.Minute).Err()
+}
+
+// GetAdmin2FATempSecret retrieves a temporary TOTP secret during admin 2FA setup.
+func GetAdmin2FATempSecret(adminID string) (string, error) {
+	key := fmt.Sprintf("admin:2fa_temp_secret:%s", adminID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteAdmin2FATempSecret removes the temporary TOTP secret after setup is complete.
+func DeleteAdmin2FATempSecret(adminID string) error {
+	key := fmt.Sprintf("admin:2fa_temp_secret:%s", adminID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// SetAdmin2FATempSession stores a partial login session awaiting 2FA verification (10-minute TTL).
+// The value is the admin account ID.
+func SetAdmin2FATempSession(tempToken, adminID string) error {
+	key := fmt.Sprintf("admin:2fa_temp_session:%s", tempToken)
+	return Rdb.Set(ctx, key, adminID, 10*time.Minute).Err()
+}
+
+// GetAdmin2FATempSession retrieves the admin ID from a temporary 2FA login session.
+func GetAdmin2FATempSession(tempToken string) (string, error) {
+	key := fmt.Sprintf("admin:2fa_temp_session:%s", tempToken)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteAdmin2FATempSession removes a temporary 2FA login session after verification.
+func DeleteAdmin2FATempSession(tempToken string) error {
+	key := fmt.Sprintf("admin:2fa_temp_session:%s", tempToken)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// SetAdmin2FAEmailCode stores a 2FA email verification code for an admin (5-minute TTL).
+func SetAdmin2FAEmailCode(adminID, code string) error {
+	key := fmt.Sprintf("admin:2fa_email:%s", adminID)
+	return Rdb.Set(ctx, key, code, 5*time.Minute).Err()
+}
+
+// GetAdmin2FAEmailCode retrieves a stored 2FA email verification code for an admin.
+func GetAdmin2FAEmailCode(adminID string) (string, error) {
+	key := fmt.Sprintf("admin:2fa_email:%s", adminID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteAdmin2FAEmailCode removes a 2FA email verification code after successful verification.
+func DeleteAdmin2FAEmailCode(adminID string) error {
+	key := fmt.Sprintf("admin:2fa_email:%s", adminID)
+	return Rdb.Del(ctx, key).Err()
+}

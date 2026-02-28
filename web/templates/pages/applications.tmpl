@@ -1,0 +1,92 @@
+{{define "applications"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Applications{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-app-indicator me-2"></i>Applications
+    </h4>
+    <div class="d-flex align-items-center gap-3">
+        <!-- Tenant filter dropdown -->
+        <div class="d-flex align-items-center gap-2">
+            <label for="tenantFilter" class="form-label mb-0 small text-muted text-nowrap">Filter by Tenant:</label>
+            <select class="form-select form-select-sm" id="tenantFilter" style="min-width: 200px;"
+                    hx-get="/gui/applications/list"
+                    hx-target="#app-table"
+                    hx-swap="innerHTML"
+                    hx-include="[name='tenant_id']"
+                    name="tenant_id">
+                <option value="">All Tenants</option>
+                {{range .Data}}
+                <option value="{{.ID}}">{{.Name}}</option>
+                {{end}}
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm"
+                hx-get="/gui/applications/new"
+                hx-target="#app-form-container"
+                hx-swap="innerHTML">
+            <i class="bi bi-plus-lg me-1"></i>Create Application
+        </button>
+    </div>
+</div>
+
+<!-- Form container (populated by HTMX when creating/editing) -->
+<div id="app-form-container" class="mb-3"></div>
+
+<!-- Application table (loaded via HTMX) -->
+<div id="app-table"
+     hx-get="/gui/applications/list?page=1"
+     hx-trigger="load, appListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading applications...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteAppModal" tabindex="-1" aria-labelledby="deleteAppModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteAppModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Application
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-app-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close delete modal after successful deletion
+    document.body.addEventListener('appDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteAppModal'));
+        if (modal) modal.hide();
+    });
+
+    // When tenant filter changes, also pass page=1
+    document.getElementById('tenantFilter').addEventListener('change', function() {
+        var tenantID = this.value;
+        var url = '/gui/applications/list?page=1';
+        if (tenantID) {
+            url += '&tenant_id=' + tenantID;
+        }
+        htmx.ajax('GET', url, {target: '#app-table', swap: 'innerHTML'});
+    });
+</script>
+{{end}}

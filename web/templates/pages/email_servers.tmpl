@@ -1,0 +1,155 @@
+{{define "email_servers"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Email Servers{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-envelope-at me-2"></i>Email Server Config
+    </h4>
+    <button class="btn btn-primary btn-sm"
+            hx-get="/gui/email-servers/new"
+            hx-target="#email-server-form-container"
+            hx-swap="innerHTML">
+        <i class="bi bi-plus-lg me-1"></i>Add SMTP Config
+    </button>
+</div>
+
+<p class="text-muted small mb-3">
+    Configure SMTP servers for sending emails. Add a <strong>Global / System</strong> config as a fallback for all applications and admin emails, or per-application configs for specific apps.
+    Resolution chain: app-specific config &rarr; global config &rarr; dev mode (log to stdout).
+</p>
+
+<!-- Form container (populated by HTMX when creating/editing) -->
+<div id="email-server-form-container" class="mb-3"></div>
+
+<!-- Test email result container -->
+<div id="email-server-test-result" class="mb-3"></div>
+
+<!-- Server config table (loaded via HTMX) -->
+<div id="email-server-table"
+     hx-get="/gui/email-servers/list"
+     hx-trigger="load, emailServerListRefresh from:body"
+     hx-swap="innerHTML">
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading email server configurations...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteEmailServerModal" tabindex="-1" aria-labelledby="deleteEmailServerModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteEmailServerModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete SMTP Config
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-email-server-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Test email modal -->
+<div class="modal fade" id="testEmailModal" tabindex="-1" aria-labelledby="testEmailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="testEmailModalLabel">
+                    <i class="bi bi-send me-2"></i>Send Test Email
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Result area inside modal -->
+                <div id="test-email-modal-result" class="mb-3"></div>
+                <form hx-post="" id="testEmailForm"
+                      hx-target="#test-email-modal-result"
+                      hx-swap="innerHTML"
+                      hx-indicator="#testEmailSpinner"
+                      hx-disabled-elt="#testEmailSubmitBtn">
+                    <div class="mb-3">
+                        <label for="testEmailTo" class="form-label small text-muted">Send test email to:</label>
+                        <input type="email" class="form-control" id="testEmailTo" name="to_email"
+                               placeholder="test@example.com" required>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary btn-sm" id="testEmailSubmitBtn">
+                            <span id="testEmailSpinner" class="spinner-border spinner-border-sm me-1 htmx-indicator" role="status" aria-hidden="true"></span>
+                            <i class="bi bi-send me-1" id="testEmailIcon"></i>
+                            <span id="testEmailBtnText">Send Test</span>
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close delete modal after successful deletion
+    document.body.addEventListener('emailServerDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteEmailServerModal'));
+        if (modal) modal.hide();
+    });
+
+    // Set up test email modal
+    function openTestEmailModal(configID, appID) {
+        // Reset modal state
+        document.getElementById('testEmailTo').value = '';
+        document.getElementById('test-email-modal-result').innerHTML = '';
+        document.getElementById('testEmailForm').setAttribute('hx-post', '/gui/email-servers/' + configID + '/test');
+        htmx.process(document.getElementById('testEmailForm'));
+        var modal = new bootstrap.Modal(document.getElementById('testEmailModal'));
+        modal.show();
+    }
+
+    // Hide send icon while HTMX request is in flight, show spinner
+    document.body.addEventListener('htmx:beforeRequest', function(event) {
+        if (event.detail.elt.id === 'testEmailForm') {
+            var icon = document.getElementById('testEmailIcon');
+            var btnText = document.getElementById('testEmailBtnText');
+            if (icon) icon.style.display = 'none';
+            if (btnText) btnText.textContent = 'Sending...';
+        }
+    });
+
+    // Restore send icon after HTMX response, handle success/error
+    document.body.addEventListener('htmx:afterRequest', function(event) {
+        if (event.detail.elt.id === 'testEmailForm') {
+            var icon = document.getElementById('testEmailIcon');
+            var btnText = document.getElementById('testEmailBtnText');
+            if (icon) icon.style.display = '';
+            if (btnText) btnText.textContent = 'Send Test';
+
+            // On success (2xx), close modal after a short delay
+            if (event.detail.successful) {
+                setTimeout(function() {
+                    var modal = bootstrap.Modal.getInstance(document.getElementById('testEmailModal'));
+                    if (modal) modal.hide();
+                    // Show the success message outside the modal
+                    var resultArea = document.getElementById('email-server-test-result');
+                    var modalResult = document.getElementById('test-email-modal-result');
+                    if (resultArea && modalResult) {
+                        resultArea.innerHTML = modalResult.innerHTML;
+                        modalResult.innerHTML = '';
+                    }
+                }, 1500);
+            }
+        }
+    });
+</script>
+{{end}}

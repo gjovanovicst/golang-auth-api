@@ -1,0 +1,67 @@
+{{define "api_key_created"}}
+<div class="card border-0 shadow-sm border-start border-success border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3 text-success">
+            <i class="bi bi-check-circle me-2"></i>API Key Created Successfully
+        </h6>
+        <div class="alert alert-warning mb-3">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>Copy this key now!</strong> It will not be shown again. Store it securely.
+        </div>
+        <div class="mb-3">
+            <label class="form-label small text-muted">API Key</label>
+            <div class="input-group">
+                <input type="text" class="form-control font-monospace bg-light" id="generatedApiKey"
+                       value="{{.RawKey}}" readonly>
+                <button class="btn btn-outline-primary" type="button" onclick="copyApiKey()" title="Copy to clipboard">
+                    <i class="bi bi-clipboard" id="copyIcon"></i>
+                </button>
+            </div>
+        </div>
+        <div class="row g-3">
+            <div class="col-auto">
+                <span class="small text-muted">Name:</span>
+                <span class="small fw-semibold">{{.Name}}</span>
+            </div>
+            <div class="col-auto">
+                <span class="small text-muted">Type:</span>
+                {{if eq .KeyType "admin"}}
+                <span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-shield-lock me-1"></i>Admin</span>
+                {{else}}
+                <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-app-indicator me-1"></i>App</span>
+                {{end}}
+            </div>
+            {{if .AppName}}
+            <div class="col-auto">
+                <span class="small text-muted">Application:</span>
+                <span class="small fw-semibold">{{.AppName}}</span>
+            </div>
+            {{end}}
+            {{if .ExpiresAt}}
+            <div class="col-auto">
+                <span class="small text-muted">Expires:</span>
+                <span class="small">{{.ExpiresAt}}</span>
+            </div>
+            {{end}}
+        </div>
+        <div class="mt-3">
+            <button type="button" class="btn btn-outline-secondary btn-sm"
+                    onclick="document.getElementById('apikey-created-container').innerHTML = ''; document.getElementById('apikey-form-container').innerHTML = '';">
+                <i class="bi bi-x-lg me-1"></i>Dismiss
+            </button>
+        </div>
+    </div>
+</div>
+<script>
+    function copyApiKey() {
+        var input = document.getElementById('generatedApiKey');
+        navigator.clipboard.writeText(input.value).then(function() {
+            var icon = document.getElementById('copyIcon');
+            icon.className = 'bi bi-check-lg text-success';
+            setTimeout(function() {
+                icon.className = 'bi bi-clipboard';
+            }, 2000);
+        });
+    }
+</script>
+{{end}}

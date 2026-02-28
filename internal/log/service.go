@@ -36,6 +36,7 @@ const (
 
 // LogEntry represents a log entry to be processed
 type LogEntry struct {
+	AppID     uuid.UUID
 	UserID    uuid.UUID
 	EventType string
 	IPAddress string
@@ -83,7 +84,7 @@ func GetLogService() *Service {
 }
 
 // LogActivity logs a user activity asynchronously with smart filtering
-func (s *Service) LogActivity(userID uuid.UUID, eventType, ipAddress, userAgent string, details map[string]interface{}) {
+func (s *Service) LogActivity(appID, userID uuid.UUID, eventType, ipAddress, userAgent string, details map[string]interface{}) {
 	// Get logging configuration
 	cfg := config.GetLoggingConfig()
 
@@ -137,6 +138,7 @@ func (s *Service) LogActivity(userID uuid.UUID, eventType, ipAddress, userAgent 
 	}
 
 	logEntry := LogEntry{
+		AppID:     appID,
 		UserID:    userID,
 		EventType: eventType,
 		IPAddress: ipAddress,
@@ -198,6 +200,7 @@ func (s *Service) processLogEntry(entry LogEntry) {
 	expiresAt := entry.Timestamp.AddDate(0, 0, retentionDays)
 
 	activityLog := models.ActivityLog{
+		AppID:     entry.AppID,
 		UserID:    entry.UserID,
 		EventType: entry.EventType,
 		Timestamp: entry.Timestamp,
@@ -261,95 +264,95 @@ func (s *Service) Shutdown() {
 // Helper functions for common logging scenarios
 
 // LogLogin logs a successful login event
-func LogLogin(userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
-	GetLogService().LogActivity(userID, EventLogin, ipAddress, userAgent, details)
+func LogLogin(appID, userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(appID, userID, EventLogin, ipAddress, userAgent, details)
 }
 
 // LogLogout logs a logout event
-func LogLogout(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventLogout, ipAddress, userAgent, nil)
+func LogLogout(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventLogout, ipAddress, userAgent, nil)
 }
 
 // LogRegister logs a user registration event
-func LogRegister(userID uuid.UUID, ipAddress, userAgent string, email string) {
+func LogRegister(appID, userID uuid.UUID, ipAddress, userAgent string, email string) {
 	details := map[string]interface{}{
 		"email": email,
 	}
-	GetLogService().LogActivity(userID, EventRegister, ipAddress, userAgent, details)
+	GetLogService().LogActivity(appID, userID, EventRegister, ipAddress, userAgent, details)
 }
 
 // LogPasswordChange logs a password change event
-func LogPasswordChange(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventPasswordChange, ipAddress, userAgent, nil)
+func LogPasswordChange(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventPasswordChange, ipAddress, userAgent, nil)
 }
 
 // LogPasswordReset logs a password reset event
-func LogPasswordReset(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventPasswordReset, ipAddress, userAgent, nil)
+func LogPasswordReset(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventPasswordReset, ipAddress, userAgent, nil)
 }
 
 // LogEmailVerify logs an email verification event
-func LogEmailVerify(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventEmailVerify, ipAddress, userAgent, nil)
+func LogEmailVerify(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventEmailVerify, ipAddress, userAgent, nil)
 }
 
 // Log2FAEnable logs a 2FA enable event
-func Log2FAEnable(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, Event2FAEnable, ipAddress, userAgent, nil)
+func Log2FAEnable(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, Event2FAEnable, ipAddress, userAgent, nil)
 }
 
 // Log2FADisable logs a 2FA disable event
-func Log2FADisable(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, Event2FADisable, ipAddress, userAgent, nil)
+func Log2FADisable(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, Event2FADisable, ipAddress, userAgent, nil)
 }
 
 // Log2FALogin logs a successful 2FA login event
-func Log2FALogin(userID uuid.UUID, ipAddress, userAgent string, method string) {
+func Log2FALogin(appID, userID uuid.UUID, ipAddress, userAgent string, method string) {
 	details := map[string]interface{}{
 		"method": method, // "totp" or "recovery_code"
 	}
-	GetLogService().LogActivity(userID, Event2FALogin, ipAddress, userAgent, details)
+	GetLogService().LogActivity(appID, userID, Event2FALogin, ipAddress, userAgent, details)
 }
 
 // LogTokenRefresh logs a token refresh event
-func LogTokenRefresh(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventTokenRefresh, ipAddress, userAgent, nil)
+func LogTokenRefresh(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventTokenRefresh, ipAddress, userAgent, nil)
 }
 
 // LogSocialLogin logs a social login event
-func LogSocialLogin(userID uuid.UUID, ipAddress, userAgent string, provider string) {
+func LogSocialLogin(appID, userID uuid.UUID, ipAddress, userAgent string, provider string) {
 	details := map[string]interface{}{
 		"provider": provider,
 	}
-	GetLogService().LogActivity(userID, EventSocialLogin, ipAddress, userAgent, details)
+	GetLogService().LogActivity(appID, userID, EventSocialLogin, ipAddress, userAgent, details)
 }
 
 // LogProfileAccess logs profile access (optional, for high-security environments)
-func LogProfileAccess(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventProfileAccess, ipAddress, userAgent, nil)
+func LogProfileAccess(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventProfileAccess, ipAddress, userAgent, nil)
 }
 
 // LogRecoveryCodeUsed logs when a recovery code is used
-func LogRecoveryCodeUsed(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventRecoveryCodeUsed, ipAddress, userAgent, nil)
+func LogRecoveryCodeUsed(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventRecoveryCodeUsed, ipAddress, userAgent, nil)
 }
 
 // LogRecoveryCodeGenerate logs when new recovery codes are generated
-func LogRecoveryCodeGenerate(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventRecoveryCodeGen, ipAddress, userAgent, nil)
+func LogRecoveryCodeGenerate(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventRecoveryCodeGen, ipAddress, userAgent, nil)
 }
 
 // LogEmailChange logs an email change event
-func LogEmailChange(userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
-	GetLogService().LogActivity(userID, EventEmailChange, ipAddress, userAgent, details)
+func LogEmailChange(appID, userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(appID, userID, EventEmailChange, ipAddress, userAgent, details)
 }
 
 // LogProfileUpdate logs a profile update event
-func LogProfileUpdate(userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
-	GetLogService().LogActivity(userID, EventProfileUpdate, ipAddress, userAgent, details)
+func LogProfileUpdate(appID, userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(appID, userID, EventProfileUpdate, ipAddress, userAgent, details)
 }
 
 // LogAccountDeletion logs an account deletion event
-func LogAccountDeletion(userID uuid.UUID, ipAddress, userAgent string) {
-	GetLogService().LogActivity(userID, EventAccountDeletion, ipAddress, userAgent, nil)
+func LogAccountDeletion(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventAccountDeletion, ipAddress, userAgent, nil)
 }

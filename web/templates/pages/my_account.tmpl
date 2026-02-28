@@ -1,0 +1,104 @@
+{{define "my_account"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}My Account{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-person-gear me-2"></i>My Account
+    </h4>
+</div>
+
+<div class="row g-4">
+    <!-- Left column: Email & Password -->
+    <div class="col-lg-6">
+        <!-- Email Address Card -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-transparent border-bottom">
+                <h6 class="mb-0 fw-semibold"><i class="bi bi-envelope me-2"></i>Email Address</h6>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-3">
+                    Your email is used for email-based two-factor authentication and account recovery notifications.
+                </p>
+                <form hx-post="/gui/my-account/email" hx-target="#email-result" hx-swap="innerHTML">
+                    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                    <div class="mb-3">
+                        <label for="email" class="form-label small">Email Address</label>
+                        <input type="email" class="form-control" id="email" name="email"
+                               value="{{.Data.Email}}" placeholder="admin@example.com" required>
+                    </div>
+                    <div id="email-result"></div>
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-check-lg me-1"></i>Update Email
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Change Password Card -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-transparent border-bottom">
+                <h6 class="mb-0 fw-semibold"><i class="bi bi-lock me-2"></i>Change Password</h6>
+            </div>
+            <div class="card-body">
+                <form hx-post="/gui/my-account/password" hx-target="#password-result" hx-swap="innerHTML">
+                    <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+                    <div class="mb-3">
+                        <label for="current_password" class="form-label small">Current Password</label>
+                        <input type="password" class="form-control" id="current_password"
+                               name="current_password" autocomplete="current-password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new_password" class="form-label small">New Password</label>
+                        <input type="password" class="form-control" id="new_password"
+                               name="new_password" minlength="8" autocomplete="new-password" required>
+                        <div class="form-text">Minimum 8 characters.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirm_password" class="form-label small">Confirm New Password</label>
+                        <input type="password" class="form-control" id="confirm_password"
+                               name="confirm_password" minlength="8" autocomplete="new-password" required>
+                    </div>
+                    <div id="password-result"></div>
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-key me-1"></i>Change Password
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right column: 2FA Settings -->
+    <div class="col-lg-6">
+        <!-- 2FA Status Section (HTMX-driven) -->
+        <div id="twofa-section"
+             hx-get="/gui/my-account/2fa/status"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <span class="ms-2 text-muted small">Loading 2FA status...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2FA Setup Area (populated by HTMX when setting up) -->
+        <div id="twofa-setup-area" class="mt-4"></div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Listen for 2FA status refresh events
+    document.body.addEventListener('2faStatusRefresh', function() {
+        htmx.trigger(document.getElementById('twofa-section'), 'load');
+    });
+</script>
+{{end}}

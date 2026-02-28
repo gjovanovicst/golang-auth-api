@@ -1,10 +1,13 @@
 package user
 
 import (
+	"crypto/rand"
 	"fmt"
+	"log"
+	"math/big"
 	"time"
 
-	"github.com/gjovanovicst/auth_api/internal/email"
+	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
@@ -12,24 +15,32 @@ import (
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
+
+// bcryptCost is the cost factor for password hashing. Set to 12 for stronger
+// security (matches the admin account bcrypt cost in cmd/setup).
+const bcryptCost = 12
 
 type Service struct {
 	Repo         *Repository
-	EmailService *email.Service
+	EmailService *emailpkg.Service
+	DB           *gorm.DB
 }
 
-func NewService(r *Repository, es *email.Service) *Service {
-	return &Service{Repo: r, EmailService: es}
+func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
+	return &Service{Repo: r, EmailService: es, DB: db}
 }
 
 // LoginResult represents the result of a login attempt
 type LoginResult struct {
-	RequiresTwoFA bool
-	UserID        uuid.UUID
-	AccessToken   string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
-	RefreshToken  string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
-	TwoFAResponse *dto.TwoFARequiredResponse
+	RequiresTwoFA      bool
+	RequiresTwoFASetup bool
+	UserID             uuid.UUID
+	AccessToken        string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
+	RefreshToken       string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
+	TwoFAResponse      *dto.TwoFARequiredResponse
+	TwoFASetupResponse *dto.TwoFASetupRequiredResponse
 }
 
 func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UUID, *errors.AppError) {
@@ -40,7 +51,7 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 	}
 
 	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to hash password")
 	}
@@ -58,20 +69,14 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 
 	// Generate email verification token and send email
 	verificationToken := uuid.New().String()
-	fmt.Printf("DEBUG: Generated verification token: %s for user: %s\n", verificationToken, user.Email)
 
 	if err := redis.SetEmailVerificationToken(appID.String(), user.ID.String(), verificationToken, 24*time.Hour); err != nil {
-		fmt.Printf("DEBUG: Failed to store token in Redis: %v\n", err)
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to store verification token")
 	}
-	fmt.Printf("DEBUG: Token stored in Redis successfully\n")
 
-	fmt.Printf("DEBUG: About to send verification email to: %s\n", user.Email)
-	if err := s.EmailService.SendVerificationEmail(user.Email, verificationToken); err != nil {
-		fmt.Printf("DEBUG: Email service returned error: %v\n", err)
+	if err := s.EmailService.SendVerificationEmail(appID, user.Email, verificationToken, &user.ID); err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
 	}
-	fmt.Printf("DEBUG: Email service call completed successfully\n")
 
 	return user.ID, nil
 }
@@ -87,6 +92,11 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
 	}
 
+	// Check if account is active
+	if !user.IsActive {
+		return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+	}
+
 	// Check if email is verified
 	if !user.EmailVerified {
 		return nil, errors.NewAppError(errors.ErrForbidden, "Email not verified. Please check your inbox.")
@@ -100,12 +110,63 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 			return nil, errors.NewAppError(errors.ErrInternal, "Failed to create temporary session")
 		}
 
+		// Determine the user's 2FA method (default to TOTP for backward compatibility)
+		twoFAMethod := user.TwoFAMethod
+		if twoFAMethod == "" {
+			twoFAMethod = emailpkg.TwoFAMethodTOTP
+		}
+
+		// If the user uses email 2FA, generate and send the code now
+		if twoFAMethod == emailpkg.TwoFAMethodEmail && s.EmailService != nil {
+			code := generateSecure6DigitCode()
+			if storeErr := redis.Set2FAEmailCode(appID.String(), user.ID.String(), code); storeErr != nil {
+				return nil, errors.NewAppError(errors.ErrInternal, "Failed to prepare 2FA verification")
+			}
+			if sendErr := s.EmailService.Send2FACodeEmail(appID, user.Email, code, &user.ID); sendErr != nil {
+				log.Printf("Warning: Failed to send 2FA email code to %s: %v", user.Email, sendErr)
+				return nil, errors.NewAppError(errors.ErrInternal, "Failed to send 2FA code email")
+			}
+		}
+
 		return &LoginResult{
 			RequiresTwoFA: true,
 			UserID:        user.ID,
 			TwoFAResponse: &dto.TwoFARequiredResponse{
 				Message:   "2FA verification required",
 				TempToken: tempToken,
+				Method:    twoFAMethod,
+			},
+		}, nil
+	}
+
+	// Check if this application requires 2FA setup for all users
+	var app models.Application
+	if err := s.DB.Select("two_fa_required").First(&app, "id = ?", appID).Error; err == nil && app.TwoFARequired {
+		// User doesn't have 2FA set up, but the app requires it.
+		// Issue tokens so the user can authenticate to /2fa/generate, but flag the response.
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
+		if err != nil {
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
+		}
+
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
+		if err != nil {
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
+		}
+
+		if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+		}
+
+		return &LoginResult{
+			RequiresTwoFASetup: true,
+			UserID:             user.ID,
+			AccessToken:        accessToken,
+			RefreshToken:       refreshToken,
+			TwoFASetupResponse: &dto.TwoFASetupRequiredResponse{
+				Message:      "2FA setup is required for this application",
+				AccessToken:  accessToken,
+				RefreshToken: refreshToken,
 			},
 		}, nil
 	}
@@ -138,6 +199,12 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, string,
 	claims, err := jwt.ParseToken(refreshToken)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid refresh token")
+	}
+
+	// Reject access tokens used as refresh tokens.
+	// Empty TokenType is allowed for backward compatibility with pre-existing tokens.
+	if claims.TokenType != "" && claims.TokenType != jwt.TokenTypeRefresh {
+		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid token type")
 	}
 
 	// Check if refresh token is blacklisted/revoked in Redis
@@ -183,12 +250,12 @@ func (s *Service) LogoutUser(appID, userID, refreshToken, accessToken string) *e
 			// Only blacklist if token hasn't expired yet
 			if err := redis.BlacklistAccessToken(appID, accessToken, userID, remainingTime); err != nil {
 				// Log the error but don't fail logout completely
-				fmt.Printf("Warning: Failed to blacklist access token: %v\n", err)
+				log.Printf("Warning: Failed to blacklist access token: %v\n", err)
 			}
 		}
 	} else {
 		// Log the error but don't fail logout completely
-		fmt.Printf("Warning: Failed to parse access token during logout: %v\n", err)
+		log.Printf("Warning: Failed to parse access token during logout: %v\n", err)
 	}
 
 	return nil
@@ -208,7 +275,7 @@ func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.Ap
 	}
 
 	resetLink := fmt.Sprintf("http://your-frontend-app/reset-password?token=%s", resetToken)
-	if err := s.EmailService.SendPasswordResetEmail(user.Email, resetLink); err != nil {
+	if err := s.EmailService.SendPasswordResetEmail(appID, user.Email, resetLink, &user.ID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send password reset email")
 	}
 
@@ -228,7 +295,7 @@ func (s *Service) VerifyEmail(appID uuid.UUID, token string) (uuid.UUID, *errors
 
 	// Invalidate the token after use
 	if err := redis.DeleteEmailVerificationToken(appID.String(), token); err != nil {
-		fmt.Printf("Warning: Failed to delete used email verification token from Redis: %v\n", err)
+		log.Printf("Warning: Failed to delete used email verification token from Redis: %v\n", err)
 	}
 
 	// Parse UUID for return
@@ -247,7 +314,7 @@ func (s *Service) ConfirmPasswordReset(appID uuid.UUID, token, newPassword strin
 		return uuid.UUID{}, errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired reset token")
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcryptCost)
 	if err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to hash new password")
 	}
@@ -258,12 +325,12 @@ func (s *Service) ConfirmPasswordReset(appID uuid.UUID, token, newPassword strin
 
 	// Invalidate the token after use
 	if err := redis.DeletePasswordResetToken(appID.String(), token); err != nil {
-		fmt.Printf("Warning: Failed to delete used password reset token from Redis: %v\n", err)
+		log.Printf("Warning: Failed to delete used password reset token from Redis: %v\n", err)
 	}
 
 	// Security: Revoke all existing tokens for this user after password change
 	if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
-		fmt.Printf("Warning: Failed to revoke all user tokens after password reset: %v\n", err.Message)
+		log.Printf("Warning: Failed to revoke all user tokens after password reset: %v\n", err.Message)
 	}
 
 	// Parse UUID for return
@@ -282,7 +349,7 @@ func (s *Service) RevokeAllUserTokens(appID, userID string) *errors.AppError {
 	currentRefreshToken, err := redis.GetRefreshToken(appID, userID)
 	if err == nil && currentRefreshToken != "" {
 		if err := redis.RevokeRefreshToken(appID, userID, currentRefreshToken); err != nil {
-			fmt.Printf("Warning: Failed to revoke refresh token for user %s: %v\n", userID, err)
+			log.Printf("Warning: Failed to revoke refresh token for user %s: %v\n", userID, err)
 		}
 	}
 
@@ -360,7 +427,7 @@ func (s *Service) UpdateUserEmail(appID uuid.UUID, userID string, req dto.Update
 		return errors.NewAppError(errors.ErrInternal, "Failed to generate verification token")
 	}
 
-	if err := s.EmailService.SendVerificationEmail(req.Email, verificationToken); err != nil {
+	if err := s.EmailService.SendVerificationEmail(appID, req.Email, verificationToken, &user.ID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
 	}
 
@@ -386,7 +453,7 @@ func (s *Service) UpdateUserPassword(appID uuid.UUID, userID string, req dto.Upd
 	}
 
 	// Hash new password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcryptCost)
 	if err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to hash new password")
 	}
@@ -398,7 +465,7 @@ func (s *Service) UpdateUserPassword(appID uuid.UUID, userID string, req dto.Upd
 
 	// Revoke all existing tokens for security
 	if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
-		fmt.Printf("Warning: Failed to revoke all user tokens after password change: %v\n", err.Message)
+		log.Printf("Warning: Failed to revoke all user tokens after password change: %v\n", err.Message)
 	}
 
 	return nil
@@ -426,7 +493,7 @@ func (s *Service) DeleteUserAccount(appID uuid.UUID, userID string, req dto.Dele
 
 	// Revoke all tokens
 	if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
-		fmt.Printf("Warning: Failed to revoke all user tokens before account deletion: %v\n", err.Message)
+		log.Printf("Warning: Failed to revoke all user tokens before account deletion: %v\n", err.Message)
 	}
 
 	// Delete user from database (cascade will delete related records)
@@ -435,4 +502,14 @@ func (s *Service) DeleteUserAccount(appID uuid.UUID, userID string, req dto.Dele
 	}
 
 	return nil
+}
+
+// generateSecure6DigitCode generates a cryptographically secure 6-digit numeric code for email 2FA.
+func generateSecure6DigitCode() string {
+	max := big.NewInt(1000000)
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate secure random number for 2FA code: %v", err))
+	}
+	return fmt.Sprintf("%06d", n.Int64())
 }

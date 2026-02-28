@@ -1,0 +1,209 @@
+{{define "email_type_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .IsEdit}}
+            <i class="bi bi-pencil me-2"></i>Edit Email Type
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Add Email Type
+            {{end}}
+        </h6>
+        <form {{if .IsEdit}}
+                hx-put="/gui/email-types/{{.ID}}"
+              {{else}}
+                hx-post="/gui/email-types"
+              {{end}}
+              hx-target="#email-type-form-container"
+              hx-swap="innerHTML">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="etCode" class="form-label small text-muted">Code</label>
+                    <input type="text" class="form-control font-monospace" id="etCode" name="code"
+                           value="{{.Code}}" placeholder="e.g. CUSTOM_WELCOME"
+                           {{if .IsEdit}}disabled{{end}}
+                           {{if not .IsEdit}}required{{end}}
+                           pattern="[A-Z0-9_]+" title="Uppercase letters, numbers, and underscores only">
+                    {{if .IsEdit}}
+                    <small class="text-muted">Code cannot be changed after creation.</small>
+                    {{end}}
+                </div>
+                <div class="col-md-3">
+                    <label for="etName" class="form-label small text-muted">Name</label>
+                    <input type="text" class="form-control" id="etName" name="name"
+                           value="{{.Name}}" placeholder="e.g. Custom Welcome Email" required>
+                </div>
+                <div class="col-md-4">
+                    <label for="etSubject" class="form-label small text-muted">Default Subject</label>
+                    <input type="text" class="form-control" id="etSubject" name="default_subject"
+                           value="{{.DefaultSubject}}" placeholder="e.g. Welcome to our platform!">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small text-muted d-block">&nbsp;</label>
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" id="etActive" name="is_active" value="true"
+                               {{if .IsActive}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="etActive">Active</label>
+                    </div>
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-12">
+                    <label for="etDesc" class="form-label small text-muted">Description</label>
+                    <textarea class="form-control" id="etDesc" name="description"
+                              rows="2" placeholder="Describe what this email type is used for...">{{.Description}}</textarea>
+                </div>
+            </div>
+
+            {{if and .IsEdit .IsSystem}}
+            <div class="alert alert-info mt-3 mb-0 py-2">
+                <i class="bi bi-info-circle me-1"></i>
+                <small>This is a system email type. You can update the name, description, subject, and variables, but it cannot be deleted.</small>
+            </div>
+            {{end}}
+
+            <!-- Dynamic Variables Section -->
+            <div class="mt-3">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <label class="form-label small text-muted mb-0">
+                        <i class="bi bi-braces me-1"></i>Template Variables
+                    </label>
+                    <div class="d-flex gap-2">
+                        {{if .WellKnownVariables}}
+                        <div class="dropdown">
+                            <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown">
+                                <i class="bi bi-lightning me-1"></i>Well-Known
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end" style="max-height:260px;overflow-y:auto;">
+                                {{range .WellKnownVariables}}
+                                <li>
+                                    <a class="dropdown-item small" href="#"
+                                       onclick="addWellKnownVariable('{{.Name}}','{{.Description}}','{{.Source}}'); return false;">
+                                        <code>{{.Name}}</code>
+                                        <span class="badge bg-{{if eq .Source "user"}}info{{else if eq .Source "setting"}}warning{{else}}secondary{{end}} ms-1">{{.Source}}</span>
+                                    </a>
+                                </li>
+                                {{end}}
+                            </ul>
+                        </div>
+                        {{end}}
+                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="addVariableRow()">
+                            <i class="bi bi-plus-lg me-1"></i>Add Variable
+                        </button>
+                    </div>
+                </div>
+                <div id="variableRows">
+                    {{if .Variables}}
+                    {{range $i, $v := .Variables}}
+                    <div class="row g-2 mb-2 variable-row">
+                        <div class="col-md-2">
+                            <input type="text" class="form-control form-control-sm font-monospace" name="var_name[]"
+                                   value="{{$v.Name}}" placeholder="variable_name">
+                        </div>
+                        <div class="col-md-3">
+                            <input type="text" class="form-control form-control-sm" name="var_description[]"
+                                   value="{{$v.Description}}" placeholder="Description">
+                        </div>
+                        <div class="col-md-2">
+                            <select class="form-select form-select-sm" name="var_source[]">
+                                <option value="" {{if eq $v.Source ""}}selected{{end}}>Any</option>
+                                <option value="user" {{if eq $v.Source "user"}}selected{{end}}>User</option>
+                                <option value="setting" {{if eq $v.Source "setting"}}selected{{end}}>Setting</option>
+                                <option value="explicit" {{if eq $v.Source "explicit"}}selected{{end}}>Explicit</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <input type="text" class="form-control form-control-sm" name="var_default_value[]"
+                                   value="{{$v.DefaultValue}}" placeholder="Default value">
+                        </div>
+                        <div class="col-md-2">
+                            <select class="form-select form-select-sm" name="var_required[]">
+                                <option value="false" {{if not $v.Required}}selected{{end}}>Optional</option>
+                                <option value="true" {{if $v.Required}}selected{{end}}>Required</option>
+                            </select>
+                        </div>
+                        <div class="col-md-1">
+                            <button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="removeVariableRow(this)">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {{end}}
+                    {{end}}
+                </div>
+                <p class="text-muted small mb-0 mt-1">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Variables define placeholders in email templates. <strong>Source</strong>: User = auto-filled from profile, Setting = from app config, Explicit = caller must provide.
+                </p>
+            </div>
+
+            <div class="mt-3 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update{{else}}Create{{end}}
+                </button>
+                <button type="button" class="btn btn-outline-secondary"
+                        hx-get="/gui/email-types/form-cancel"
+                        hx-target="#email-type-form-container"
+                        hx-swap="innerHTML">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function addVariableRow(name, description, source, defaultValue) {
+    var container = document.getElementById('variableRows');
+    var row = document.createElement('div');
+    row.className = 'row g-2 mb-2 variable-row';
+    var srcVal = source || '';
+    row.innerHTML = '' +
+        '<div class="col-md-2">' +
+            '<input type="text" class="form-control form-control-sm font-monospace" name="var_name[]" placeholder="variable_name" value="' + (name || '') + '">' +
+        '</div>' +
+        '<div class="col-md-3">' +
+            '<input type="text" class="form-control form-control-sm" name="var_description[]" placeholder="Description" value="' + (description || '') + '">' +
+        '</div>' +
+        '<div class="col-md-2">' +
+            '<select class="form-select form-select-sm" name="var_source[]">' +
+                '<option value=""' + (srcVal === '' ? ' selected' : '') + '>Any</option>' +
+                '<option value="user"' + (srcVal === 'user' ? ' selected' : '') + '>User</option>' +
+                '<option value="setting"' + (srcVal === 'setting' ? ' selected' : '') + '>Setting</option>' +
+                '<option value="explicit"' + (srcVal === 'explicit' ? ' selected' : '') + '>Explicit</option>' +
+            '</select>' +
+        '</div>' +
+        '<div class="col-md-2">' +
+            '<input type="text" class="form-control form-control-sm" name="var_default_value[]" placeholder="Default value" value="' + (defaultValue || '') + '">' +
+        '</div>' +
+        '<div class="col-md-2">' +
+            '<select class="form-select form-select-sm" name="var_required[]">' +
+                '<option value="false" selected>Optional</option>' +
+                '<option value="true">Required</option>' +
+            '</select>' +
+        '</div>' +
+        '<div class="col-md-1">' +
+            '<button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="removeVariableRow(this)">' +
+                '<i class="bi bi-trash"></i>' +
+            '</button>' +
+        '</div>';
+    container.appendChild(row);
+}
+
+function addWellKnownVariable(name, description, source) {
+    // Check if variable already exists
+    var existing = document.querySelectorAll('input[name="var_name[]"]');
+    for (var i = 0; i < existing.length; i++) {
+        if (existing[i].value === name) {
+            existing[i].closest('.variable-row').classList.add('border', 'border-warning', 'rounded');
+            setTimeout(function(el) { el.classList.remove('border', 'border-warning', 'rounded'); }, 2000, existing[i].closest('.variable-row'));
+            return;
+        }
+    }
+    addVariableRow(name, description, source, '');
+}
+
+function removeVariableRow(btn) {
+    btn.closest('.variable-row').remove();
+}
+</script>
+{{end}}

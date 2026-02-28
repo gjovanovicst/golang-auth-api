@@ -1,0 +1,874 @@
+{
+  "info": {
+    "name": "Auth API - Email Testing",
+    "description": "Comprehensive email testing collection for Auth API.\n\nThis collection tests all 6 email types, SMTP configuration, template preview, and sending.\n\n## Setup\n1. Import this collection and the companion environment file.\n2. Set the environment variables (base_url, admin_api_key, app_id, test_email).\n3. Optionally configure a real SMTP server using the 'Setup' folder requests.\n4. Run requests from 'Send All 6 Types' to test each email template.\n\n## Dev Mode\nIf no SMTP server is configured, emails are logged to the server console (stdout).\nCheck the API server logs to see the rendered email content.\n\n## Real SMTP\nConfigure an SMTP server first using 'Configure SMTP Server', then run 'Send Test Email' to verify connectivity.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [],
+  "item": [
+    {
+      "name": "Setup",
+      "description": "Configure SMTP servers, list email types and templates.",
+      "item": [
+        {
+          "name": "List Email Types",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/email-types",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-types"]
+            },
+            "description": "List all registered email types (system + custom). The response includes the 6 system types:\n- email_verification\n- password_reset\n- two_fa_code\n- welcome\n- account_deactivated\n- password_changed"
+          }
+        },
+        {
+          "name": "List Well-Known Variables",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/email-variables",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-variables"]
+            },
+            "description": "List all well-known template variables the system can auto-resolve.\n\nSources:\n- 'user': auto-populated from user profile (user_email, user_name, first_name, etc.)\n- 'setting': auto-populated from config (app_name, frontend_url)\n- 'explicit': must be passed by the caller (verification_link, reset_link, code, etc.)"
+          }
+        },
+        {
+          "name": "List Email Templates (Global Defaults)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates"]
+            },
+            "description": "List all global default email templates (app_id=NULL). These are the fallback templates used when no app-specific template exists."
+          }
+        },
+        {
+          "name": "List Email Templates (App-Specific)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates?app_id={{app_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates"],
+              "query": [
+                {
+                  "key": "app_id",
+                  "value": "{{app_id}}"
+                }
+              ]
+            },
+            "description": "List email templates specific to your application. These override global defaults."
+          }
+        },
+        {
+          "name": "List All Email Servers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/email-servers",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-servers"]
+            },
+            "description": "List all SMTP server configurations across all applications."
+          }
+        },
+        {
+          "name": "Configure SMTP Server (Gmail Example)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Gmail SMTP\",\n  \"smtp_host\": \"smtp.gmail.com\",\n  \"smtp_port\": 587,\n  \"smtp_username\": \"your-email@gmail.com\",\n  \"smtp_password\": \"your-app-password\",\n  \"from_address\": \"your-email@gmail.com\",\n  \"from_name\": \"My Auth App\",\n  \"use_tls\": true,\n  \"is_default\": true,\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-servers?app_id={{app_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-servers"],
+              "query": [
+                {
+                  "key": "app_id",
+                  "value": "{{app_id}}"
+                }
+              ]
+            },
+            "description": "Configure a Gmail SMTP server for your app.\n\nFor Gmail:\n- Enable 2-Step Verification on your Google account\n- Generate an App Password at https://myaccount.google.com/apppasswords\n- Use the app password as smtp_password (NOT your Google password)\n\nFor SendGrid:\n- smtp_host: smtp.sendgrid.net\n- smtp_port: 587\n- smtp_username: apikey\n- smtp_password: your-sendgrid-api-key\n\nFor Mailgun:\n- smtp_host: smtp.mailgun.org\n- smtp_port: 587\n- smtp_username: your-mailgun-smtp-user\n- smtp_password: your-mailgun-smtp-password"
+          }
+        },
+        {
+          "name": "Configure SMTP Server (SendGrid Example)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"SendGrid SMTP\",\n  \"smtp_host\": \"smtp.sendgrid.net\",\n  \"smtp_port\": 587,\n  \"smtp_username\": \"apikey\",\n  \"smtp_password\": \"SG.your-sendgrid-api-key-here\",\n  \"from_address\": \"noreply@yourdomain.com\",\n  \"from_name\": \"My Auth App\",\n  \"use_tls\": true,\n  \"is_default\": true,\n  \"is_active\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-servers?app_id={{app_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-servers"],
+              "query": [
+                {
+                  "key": "app_id",
+                  "value": "{{app_id}}"
+                }
+              ]
+            },
+            "description": "Configure a SendGrid SMTP server.\n\nSendGrid setup:\n1. Create an API key at https://app.sendgrid.com/settings/api_keys\n2. Use 'apikey' as the smtp_username (literally the word 'apikey')\n3. Use your API key as the smtp_password\n4. Verify your sender identity at https://app.sendgrid.com/settings/sender_auth"
+          }
+        }
+      ]
+    },
+    {
+      "name": "SMTP Testing",
+      "description": "Test SMTP connectivity before sending real emails.",
+      "item": [
+        {
+          "name": "Test App Default SMTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to_email\": \"{{test_email}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/apps/{{app_id}}/email-test",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "apps", "{{app_id}}", "email-test"]
+            },
+            "description": "Send a simple test email using the app's default SMTP config.\nThis sends a basic 'Test Email' message to verify SMTP connectivity.\nIf no SMTP is configured, this will return an error (unlike the send-email endpoint which falls back to dev mode)."
+          }
+        },
+        {
+          "name": "Test Specific SMTP Config",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to_email\": \"{{test_email}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-servers/{{config_id}}/test",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-servers", "{{config_id}}", "test"]
+            },
+            "description": "Send a test email using a specific SMTP config by ID.\nUseful when you have multiple SMTP configs and want to test each one individually.\n\nGet the config_id from 'List All Email Servers' response."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Send All 6 Email Types",
+      "description": "Send each of the 6 system email types via the admin send-email API.\n\nEach request uses POST /admin/apps/:id/send-email with the appropriate type_code and variables.\n\nIn dev mode (no SMTP configured), emails are logged to the server console.",
+      "item": [
+        {
+          "name": "1. Email Verification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type_code\": \"email_verification\",\n  \"to_email\": \"{{test_email}}\",\n  \"variables\": {\n    \"verification_link\": \"https://example.com/verify-email?token=abc123def456\",\n    \"verification_token\": \"abc123def456\",\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/apps/{{app_id}}/send-email",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "apps", "{{app_id}}", "send-email"]
+            },
+            "description": "Send an email verification email.\n\nRequired variables:\n- verification_link: The full URL the user clicks to verify their email\n- verification_token: The raw token value\n\nOptional variables (auto-resolved if not provided):\n- app_name: Falls back to app name from DB or 'Auth API'\n- user_name: Falls back to user profile if userID is known\n- user_email: Falls back to to_email"
+          }
+        },
+        {
+          "name": "2. Password Reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type_code\": \"password_reset\",\n  \"to_email\": \"{{test_email}}\",\n  \"variables\": {\n    \"reset_link\": \"https://example.com/reset-password?token=reset-token-xyz789\",\n    \"expiration_minutes\": \"60\",\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/apps/{{app_id}}/send-email",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "apps", "{{app_id}}", "send-email"]
+            },
+            "description": "Send a password reset email.\n\nRequired variables:\n- reset_link: The full URL the user clicks to reset their password\n- expiration_minutes: How long the link is valid (e.g., '60')\n\nThe template shows a 'Reset Password' button and the expiration warning."
+          }
+        },
+        {
+          "name": "3. 2FA Verification Code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type_code\": \"two_fa_code\",\n  \"to_email\": \"{{test_email}}\",\n  \"variables\": {\n    \"code\": \"847293\",\n    \"expiration_minutes\": \"5\",\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/apps/{{app_id}}/send-email",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "apps", "{{app_id}}", "send-email"]
+            },
+            "description": "Send a 2FA verification code email.\n\nRequired variables:\n- code: The 6-digit verification code (e.g., '847293')\n- expiration_minutes: How long the code is valid (e.g., '5')\n\nThe template shows the code in a large, styled box with monospace font."
+          }
+        },
+        {
+          "name": "4. Welcome",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type_code\": \"welcome\",\n  \"to_email\": \"{{test_email}}\",\n  \"variables\": {\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/apps/{{app_id}}/send-email",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "apps", "{{app_id}}", "send-email"]
+            },
+            "description": "Send a welcome email (sent after email verification).\n\nNo required explicit variables - app_name and user_name are auto-resolved.\nPassing them explicitly here overrides the auto-resolved values.\n\nNote: This email type is defined but not yet wired to trigger automatically after email verification."
+          }
+        },
+        {
+          "name": "5. Account Deactivated",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type_code\": \"account_deactivated\",\n  \"to_email\": \"{{test_email}}\",\n  \"variables\": {\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/apps/{{app_id}}/send-email",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "apps", "{{app_id}}", "send-email"]
+            },
+            "description": "Send an account deactivated notification.\n\nNo required explicit variables - app_name is auto-resolved.\nThe template has a red header to indicate the severity of the notification.\n\nNote: This email type is defined but not yet wired to trigger automatically on account deactivation."
+          }
+        },
+        {
+          "name": "6. Password Changed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type_code\": \"password_changed\",\n  \"to_email\": \"{{test_email}}\",\n  \"variables\": {\n    \"change_time\": \"2026-02-25 14:30:00 UTC\",\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/apps/{{app_id}}/send-email",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "apps", "{{app_id}}", "send-email"]
+            },
+            "description": "Send a password changed security notification.\n\nRequired variables:\n- change_time: Timestamp when the password was changed (e.g., '2026-02-25 14:30:00 UTC')\n\nThe template has an orange/amber header to indicate a security warning.\n\nNote: This email type is defined but not yet wired to trigger automatically after password changes."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Template Preview",
+      "description": "Preview rendered templates without actually sending emails.\nUseful for testing template changes before deploying them.\n\nThe preview endpoint renders the template with the provided variables and returns the rendered HTML/text.",
+      "item": [
+        {
+          "name": "Preview: Email Verification (go_template)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Verify Your Email Address\",\n  \"body_html\": \"<h2>Hello {{.UserName}}</h2><p>Please <a href='{{.VerificationLink}}'>verify your email</a> for {{.AppName}}.</p>\",\n  \"body_text\": \"Hello {{.UserName}}, please verify your email: {{.VerificationLink}}\",\n  \"template_engine\": \"go_template\",\n  \"variables\": {\n    \"user_name\": \"John Doe\",\n    \"verification_link\": \"https://example.com/verify?token=abc123\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "Preview an email verification template using the go_template engine.\nVariables use {{.PascalCase}} syntax (snake_case keys are auto-converted)."
+          }
+        },
+        {
+          "name": "Preview: Password Reset (go_template)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Reset Your Password\",\n  \"body_html\": \"<h2>Password Reset</h2><p>Hi {{.UserName}}, click <a href='{{.ResetLink}}'>here</a> to reset your password. This link expires in {{.ExpirationMinutes}} minutes.</p>\",\n  \"body_text\": \"Hi {{.UserName}}, reset your password: {{.ResetLink}} (expires in {{.ExpirationMinutes}} min)\",\n  \"template_engine\": \"go_template\",\n  \"variables\": {\n    \"user_name\": \"John Doe\",\n    \"reset_link\": \"https://example.com/reset?token=xyz789\",\n    \"expiration_minutes\": \"60\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "Preview a password reset template using the go_template engine."
+          }
+        },
+        {
+          "name": "Preview: 2FA Code (go_template)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Your Verification Code\",\n  \"body_html\": \"<h2>Your Code: {{.Code}}</h2><p>This code expires in {{.ExpirationMinutes}} minutes. Do not share it with anyone.</p>\",\n  \"body_text\": \"Your verification code: {{.Code}} (expires in {{.ExpirationMinutes}} min)\",\n  \"template_engine\": \"go_template\",\n  \"variables\": {\n    \"code\": \"847293\",\n    \"expiration_minutes\": \"5\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "Preview a 2FA verification code template."
+          }
+        },
+        {
+          "name": "Preview: Welcome (placeholder engine)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Welcome to {app_name}\",\n  \"body_html\": \"<h2>Welcome {user_name}!</h2><p>Your email has been verified. You're now part of {app_name}.</p>\",\n  \"body_text\": \"Welcome {user_name}! Your email has been verified. You're now part of {app_name}.\",\n  \"template_engine\": \"placeholder\",\n  \"variables\": {\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "Preview a welcome template using the PLACEHOLDER engine.\nVariables use {variable_name} syntax (simple string replacement, no escaping)."
+          }
+        },
+        {
+          "name": "Preview: Account Deactivated (raw_html engine)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Your Account Has Been Deactivated\",\n  \"body_html\": \"<h2 style='color:red;'>Account Deactivated</h2><p>Your account on {{.AppName}} has been deactivated. Contact an administrator if you believe this was in error.</p>\",\n  \"body_text\": \"Account Deactivated. Your account on {{.AppName}} has been deactivated.\",\n  \"template_engine\": \"raw_html\",\n  \"variables\": {\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "Preview an account deactivated template using the RAW_HTML engine.\nVariables use {{.VarName}} syntax but are NOT HTML-escaped (unlike go_template)."
+          }
+        },
+        {
+          "name": "Preview: Password Changed (go_template)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Your Password Has Been Changed\",\n  \"body_html\": \"<h2>Password Changed</h2><p>Your password for {{.AppName}} was changed on {{.ChangeTime}}.</p><p style='color:red;font-weight:bold;'>If you did not make this change, reset your password immediately.</p>\",\n  \"body_text\": \"Password Changed. Your password for {{.AppName}} was changed on {{.ChangeTime}}. If you did not make this change, reset your password immediately.\",\n  \"template_engine\": \"go_template\",\n  \"variables\": {\n    \"change_time\": \"2026-02-25 14:30:00 UTC\",\n    \"app_name\": \"My Test App\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "Preview a password changed security notification template."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Template Engine Comparison",
+      "description": "Side-by-side comparison of the 3 rendering engines (go_template, placeholder, raw_html) using the same content.",
+      "item": [
+        {
+          "name": "Engine: go_template ({{.VarName}})",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Hello {{.UserName}} from {{.AppName}}\",\n  \"body_html\": \"<h1>Welcome {{.UserName}}</h1><p>Your app: {{.AppName}}</p><p>Your email: {{.UserEmail}}</p><p>HTML chars: {{.HtmlContent}}</p>\",\n  \"body_text\": \"Welcome {{.UserName}}, app: {{.AppName}}, email: {{.UserEmail}}\",\n  \"template_engine\": \"go_template\",\n  \"variables\": {\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My App\",\n    \"user_email\": \"john@example.com\",\n    \"html_content\": \"<b>Bold Text</b>\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "go_template engine: Uses Go's html/template.\n- Syntax: {{.VarName}} (PascalCase)\n- HTML-escapes variable values by default (safe against XSS)\n- Note: html_content will be escaped to &lt;b&gt;Bold Text&lt;/b&gt;"
+          }
+        },
+        {
+          "name": "Engine: placeholder ({var_name})",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Hello {user_name} from {app_name}\",\n  \"body_html\": \"<h1>Welcome {user_name}</h1><p>Your app: {app_name}</p><p>Your email: {user_email}</p><p>HTML chars: {html_content}</p>\",\n  \"body_text\": \"Welcome {user_name}, app: {app_name}, email: {user_email}\",\n  \"template_engine\": \"placeholder\",\n  \"variables\": {\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My App\",\n    \"user_email\": \"john@example.com\",\n    \"html_content\": \"<b>Bold Text</b>\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "placeholder engine: Simple string replacement.\n- Syntax: {variable_name} (snake_case)\n- Does NOT HTML-escape values\n- Note: html_content will remain as <b>Bold Text</b>"
+          }
+        },
+        {
+          "name": "Engine: raw_html ({{.VarName}} no escape)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{admin_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"Hello {{.UserName}} from {{.AppName}}\",\n  \"body_html\": \"<h1>Welcome {{.UserName}}</h1><p>Your app: {{.AppName}}</p><p>Your email: {{.UserEmail}}</p><p>HTML chars: {{.HtmlContent}}</p>\",\n  \"body_text\": \"Welcome {{.UserName}}, app: {{.AppName}}, email: {{.UserEmail}}\",\n  \"template_engine\": \"raw_html\",\n  \"variables\": {\n    \"user_name\": \"John Doe\",\n    \"app_name\": \"My App\",\n    \"user_email\": \"john@example.com\",\n    \"html_content\": \"<b>Bold Text</b>\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/email-templates/preview",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-templates", "preview"]
+            },
+            "description": "raw_html engine: String replacement with {{.VarName}} syntax.\n- Syntax: {{.VarName}} (PascalCase, same as go_template)\n- Does NOT HTML-escape values (unlike go_template)\n- Note: html_content will remain as <b>Bold Text</b> (rendered as bold)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "App API Key Testing",
+      "description": "Test per-application API key authentication on /app routes.\n\nThese requests verify that:\n1. App API keys work correctly on /app/:id routes (positive tests)\n2. App API keys are REJECTED on /admin routes (negative tests)\n3. Admin API keys are REJECTED on /app routes (negative tests)\n4. Missing/wrong headers produce correct error codes\n\nPrerequisites:\n- Create an app API key in the GUI (/gui/api-keys)\n- Set the 'app_api_key' environment variable with the raw key (apk_...)\n- The key must be bound to the same application as 'app_id'",
+      "item": [
+        {
+          "name": "Positive: GET email-config with app key",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-App-ID",
+                "value": "{{app_id}}"
+              },
+              {
+                "key": "X-App-API-Key",
+                "value": "{{app_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/app/{{app_id}}/email-config",
+              "host": ["{{base_url}}"],
+              "path": ["app", "{{app_id}}", "email-config"]
+            },
+            "description": "Should return 200. Tests that a valid app API key can read the default SMTP config for its bound application."
+          }
+        },
+        {
+          "name": "Positive: GET email-servers with app key",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-App-ID",
+                "value": "{{app_id}}"
+              },
+              {
+                "key": "X-App-API-Key",
+                "value": "{{app_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/app/{{app_id}}/email-servers",
+              "host": ["{{base_url}}"],
+              "path": ["app", "{{app_id}}", "email-servers"]
+            },
+            "description": "Should return 200. Tests that a valid app API key can list all SMTP configs for its bound application."
+          }
+        },
+        {
+          "name": "Positive: POST email-test with app key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-App-ID",
+                "value": "{{app_id}}"
+              },
+              {
+                "key": "X-App-API-Key",
+                "value": "{{app_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to_email\": \"{{test_email}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/app/{{app_id}}/email-test",
+              "host": ["{{base_url}}"],
+              "path": ["app", "{{app_id}}", "email-test"]
+            },
+            "description": "Should return 200. Tests that a valid app API key can send a test email through its bound application's SMTP config."
+          }
+        },
+        {
+          "name": "Positive: POST send-email with app key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-App-ID",
+                "value": "{{app_id}}"
+              },
+              {
+                "key": "X-App-API-Key",
+                "value": "{{app_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type_code\": \"welcome\",\n  \"to_email\": \"{{test_email}}\",\n  \"variables\": {\n    \"user_name\": \"App Key Test User\",\n    \"app_name\": \"App Key Test\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/app/{{app_id}}/send-email",
+              "host": ["{{base_url}}"],
+              "path": ["app", "{{app_id}}", "send-email"]
+            },
+            "description": "Should return 200. Tests that a valid app API key can send typed emails through its bound application."
+          }
+        },
+        {
+          "name": "Negative: App key on /admin route (expect 401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-API-Key",
+                "value": "{{app_api_key}}",
+                "description": "Deliberately using an app key where admin key is expected"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/email-types",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "email-types"]
+            },
+            "description": "Should return 401. An app API key (apk_...) must NOT work on /admin routes. The admin middleware only accepts admin-type keys (ak_...) or the static ADMIN_API_KEY env var."
+          }
+        },
+        {
+          "name": "Negative: Admin key on /app route (expect 401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-App-ID",
+                "value": "{{app_id}}"
+              },
+              {
+                "key": "X-App-API-Key",
+                "value": "{{admin_api_key}}",
+                "description": "Deliberately using an admin key where app key is expected"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/app/{{app_id}}/email-config",
+              "host": ["{{base_url}}"],
+              "path": ["app", "{{app_id}}", "email-config"]
+            },
+            "description": "Should return 401. An admin API key (ak_...) must NOT work on /app routes. The app middleware only accepts app-type keys (apk_...) bound to the correct application."
+          }
+        },
+        {
+          "name": "Negative: Missing X-App-API-Key (expect 401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-App-ID",
+                "value": "{{app_id}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/app/{{app_id}}/email-config",
+              "host": ["{{base_url}}"],
+              "path": ["app", "{{app_id}}", "email-config"]
+            },
+            "description": "Should return 401. The X-App-API-Key header is required for /app routes."
+          }
+        },
+        {
+          "name": "Negative: Missing X-App-ID (expect 400)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-App-API-Key",
+                "value": "{{app_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/app/{{app_id}}/email-config",
+              "host": ["{{base_url}}"],
+              "path": ["app", "{{app_id}}", "email-config"]
+            },
+            "description": "Should return 400. The X-App-ID header is required by AppIDMiddleware for all non-admin routes."
+          }
+        },
+        {
+          "name": "Negative: Wrong app ID in URL (expect 403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-App-ID",
+                "value": "{{app_id}}"
+              },
+              {
+                "key": "X-App-API-Key",
+                "value": "{{app_api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/app/99999999-9999-9999-9999-999999999999/email-config",
+              "host": ["{{base_url}}"],
+              "path": ["app", "99999999-9999-9999-9999-999999999999", "email-config"]
+            },
+            "description": "Should return 403. The URL app ID does not match the X-App-ID header. AppRouteGuardMiddleware prevents cross-app access by rejecting requests where the URL :id differs from the X-App-ID header."
+          }
+        },
+        {
+          "name": "Negative: Invalid API key (expect 401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-App-ID",
+                "value": "{{app_id}}"
+              },
+              {
+                "key": "X-App-API-Key",
+                "value": "apk_this_is_a_totally_invalid_key_value"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/app/{{app_id}}/email-config",
+              "host": ["{{base_url}}"],
+              "path": ["app", "{{app_id}}", "email-config"]
+            },
+            "description": "Should return 401. A non-existent API key hash won't be found in the database."
+          }
+        }
+      ]
+    }
+  ]
+}

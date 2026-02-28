@@ -5,23 +5,113 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] - 2026-01-19
+> **Pre-release note:** All versions below are pre-release development milestones
+> (`1.0.0-alpha.N`). The first official public release will be `1.0.0`.
 
-### 🚨 BREAKING CHANGES - Multi-Tenancy Support
+## [Unreleased]
 
-This release introduces **multi-tenancy** architecture, enabling the API to serve multiple tenants and applications. **This is a major breaking change** that requires API client updates.
+_Changes planned for the upcoming `1.0.0` official release._
+
+## [1.0.0-alpha.4] - 2026-02-21
+
+### Added
+
+#### Admin GUI (Stories 1-12)
+- **Admin GUI Dashboard** — Full-featured web-based admin panel served at `/gui/*` from the same binary
+- **CLI Admin Setup** — `cmd/setup/main.go` interactive wizard for creating the initial admin account with bcrypt-hashed password
+- **Session-Based Authentication** — Redis-backed sessions with secure cookies (SameSite=Strict, HttpOnly, Secure)
+- **CSRF Protection** — Token-based CSRF middleware for all GUI mutation endpoints
+- **Dashboard Page** — Overview with tenant/app/user/log counts and recent activity
+- **Tenant Management** — Full CRUD with HTMX single-page interactions, paginated list
+- **Application Management** — Full CRUD with tenant filter dropdown, paginated flat list
+- **OAuth Config Management** — Full CRUD with provider dropdown, inline enable/disable toggle, secret masking
+- **User Management** — Read-only user list with search, inline detail panel, active/inactive toggle with token revocation
+- **Activity Log Viewer** — Read-only with multiple filters (event type, severity, app, date range, email search), inline detail panel
+- **API Key Management** — Admin-level and per-application API keys with SHA-256 hashed storage, key shown once at creation, revoke/delete support
+- **Settings Management** — Accordion-based settings page with lazy-loaded sections, per-setting inline save/reset, registry-based architecture
+- **Embedded Static Assets** — Bootstrap 5 CSS/JS, HTMX, Bootstrap Icons all embedded via `go:embed`
+- **Go Template Engine** — Custom `gin.HTMLRender` implementation with layout/partial composition
+
+#### New Middleware
+- **GUI Auth Middleware** (`internal/middleware/gui_auth.go`) — Session-based authentication for GUI routes
+- **CSRF Middleware** (`internal/middleware/csrf.go`) — CSRF token validation for GUI mutations
+- **Admin Auth Middleware** (`internal/middleware/admin_auth.go`) — Database-backed API key authentication for `/admin/*` routes
+- **App API Key Middleware** (`internal/middleware/app_api_key.go`) — Per-application API key validation (available for future use)
+- **Security Headers Middleware** (`internal/middleware/security_headers.go`) — X-Frame-Options, CSP, HSTS, Permissions-Policy, and more
+- **Generic Rate Limit Middleware** (`internal/middleware/rate_limit.go`) — Configurable per-route rate limiting with Redis + in-memory fallback
+
+#### New Models & Migrations
+- **AdminAccount Model** (`pkg/models/admin_account.go`) — Admin user accounts with bcrypt password hash
+- **SystemSetting Model** (`pkg/models/system_setting.go`) — Key-value settings with DB override support
+- **ApiKey Model** (`pkg/models/api_key.go`) — Admin and per-app API keys with SHA-256 hash, prefix/suffix display
+- **Database Migrations** for admin accounts, system settings, and API keys tables
+
+#### New API Endpoints (GUI)
+- `GET /gui/login` — Login page
+- `POST /gui/login` — Authenticate admin
+- `POST /gui/logout` — End admin session
+- `GET /gui/dashboard` — Dashboard with stats
+- `GET/POST/PUT/DELETE /gui/tenants/*` — Tenant CRUD
+- `GET/POST/PUT/DELETE /gui/apps/*` — Application CRUD
+- `GET/POST/PUT/DELETE /gui/oauth/*` — OAuth config CRUD with toggle
+- `GET /gui/users/*` — User list, detail, search, toggle active
+- `GET /gui/logs/*` — Activity log viewer with filters
+- `GET/POST/PUT/DELETE /gui/api-keys/*` — API key management
+- `GET/PUT/DELETE /gui/settings/*` — Settings management
+
+### Changed
+
+#### Security Hardening (Story 13)
+- **JWT Secret Validation** — `log.Fatalf` if `JWT_SECRET` is empty or less than 32 bytes; lazy initialization via `sync.Once`
+- **JWT Token Type Claim** — Added `type` field to JWT claims (`"access"` or `"refresh"`); auth middleware rejects refresh tokens used as access tokens; backward compatible with legacy tokens
+- **Password Hashing** — bcrypt cost increased from default (10) to 12 for all password operations
+- **CSRF Comparison** — Changed from `==` to `crypto/subtle.ConstantTimeCompare` to prevent timing attacks
+- **Cookie Security** — Admin session cookies now use `SameSite=Strict` via `http.SetCookie`
+- **CORS Production Safety** — Localhost origins removed from CORS allowlist in release mode; warning logged if `FRONTEND_URL` is empty
+- **Password Max Length** — Added `max=128` validation to all 7 password fields across 6 DTOs to prevent bcrypt DoS
+- **Error Message Sanitization** — Replaced 6 instances of `err.Error()` leaking internal details in social handler with generic messages
+- **Debug Print Removal** — Removed 9 `fmt.Print`/`fmt.Println` debug statements from user, email, and 2FA services
+- **SQL Injection Fix** — Fixed `INTERVAL '? days'` (non-parameterized) to `INTERVAL '1 day' * ?` in log cleanup
+- **Rate Limiting** — Applied rate limits to 6 public endpoints: `/register` (3/min), `/login` (5/min + lockout), `/refresh-token` (10/min), `/forgot-password` (3/min), `/reset-password` (5/min), `/2fa/login-verify` (5/min + lockout)
+- **Security Headers** — Added global middleware: X-Frame-Options (DENY), X-Content-Type-Options (nosniff), Referrer-Policy, CSP (route-aware: strict for API, relaxed for GUI), HSTS (conditional on TLS)
+
+#### Architecture
+- **Shared Constants** — Moved session/context keys, cookie helpers, and interfaces to `web/context_keys.go` to resolve import cycles
+- **SessionValidator Interface** — `web.SessionValidator` implemented by `AccountService` for middleware decoupling
+- **ApiKeyValidator Interface** — `web.ApiKeyValidator` implemented by admin `Repository` for middleware decoupling
+
+#### Testing & Documentation (Story 14)
+- **JWT Test Fix** — Replaced `init()` with `sync.Once` lazy initialization to fix test ordering issues
+- **New Test Suites** — Rate limiter (17 tests), security headers (6 tests), DTO validation (17 tests), CSRF comparison (10 tests), error types (5 tests), API key utilities (6 tests)
+- **Swagger Updates** — Added `@Failure 429` annotations to all 6 rate-limited endpoints; regenerated swagger docs
+
+### Fixed
+- **JWT init() ordering** — `init()` in `pkg/jwt/jwt.go` called `log.Fatalf` before `TestMain` could configure the secret, killing all test suites; replaced with lazy `sync.Once` initialization
+
+### Security
+- 14 security findings addressed across all severity levels (Critical, High, Medium, Low)
+- Generic rate limiting with in-memory fallback protects against brute-force even when Redis is unavailable
+- Security headers protect against clickjacking, MIME sniffing, and XSS
+
+---
+
+## [1.0.0-alpha.3] - 2026-01-19
+
+### Pre-Release Breaking Changes — Multi-Tenancy Support
+
+This milestone introduced **multi-tenancy** architecture, enabling the API to serve multiple tenants and applications. These changes affect API clients upgrading from earlier pre-release builds.
 
 #### Required API Changes
 
 **All API requests now require the `X-App-ID` header:**
 
 ```bash
-# Before (v1.x)
+# Before (alpha.1 / alpha.2)
 curl -X POST /auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","password":"secret"}'
 
-# After (v2.x)
+# After (alpha.3+)
 curl -X POST /auth/register \
   -H "Content-Type: application/json" \
   -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
@@ -137,7 +227,7 @@ curl -X POST /auth/register \
 
 ### Migration Guide
 
-#### For Existing Installations (Upgrading from v1.x)
+#### For Existing Installations (Upgrading from alpha.1/alpha.2)
 
 **⚠️ CRITICAL: Backup your database before proceeding!**
 
@@ -251,13 +341,13 @@ curl -X POST /auth/register \
 - Solution: Check database constraints. Rollback and restore from backup.
 
 **Need Help?**
-- See: [BREAKING_CHANGES.md](BREAKING_CHANGES.md) for detailed migration guide
+- See: [Pre-Release Migration Reference](docs/BREAKING_CHANGES.md) for detailed migration guide
 - See: `migrations/20260105_add_multi_tenancy.md` for technical details
 - Open GitHub issue with "migration-help" label
 
 ---
 
-## [1.1.0] - 2024-12-04
+## [1.0.0-alpha.2] - 2024-12-04
 
 ### Added
 
@@ -332,8 +422,8 @@ curl -X POST /auth/register \
 
 #### Comprehensive Migration System
 - **[MIGRATIONS.md](docs/migrations/MIGRATIONS.md)**: User-friendly migration guide with step-by-step instructions
-- **[BREAKING_CHANGES.md](BREAKING_CHANGES.md)**: Breaking changes tracker with version history
-- **[UPGRADE_GUIDE.md](UPGRADE_GUIDE.md)**: Detailed version upgrade instructions with rollback procedures
+- **[BREAKING_CHANGES.md](docs/BREAKING_CHANGES.md)**: Breaking changes tracker with version history
+- **[UPGRADE_GUIDE.md](docs/migrations/UPGRADE_GUIDE.md)**: Detailed version upgrade instructions with rollback procedures
 - **[migrations/README.md](migrations/README.md)**: Developer-focused migration guide with best practices
 - **[migrations/TEMPLATE.md](migrations/TEMPLATE.md)**: Standardized template for creating new migrations
 - **[migrations/MIGRATIONS_LOG.md](migrations/MIGRATIONS_LOG.md)**: Historical log of all applied migrations
@@ -501,7 +591,7 @@ LOG_CLEANUP_INTERVAL=24h
 
 ---
 
-## [1.0.0] - 2024-01-03
+## [1.0.0-alpha.1] - 2024-01-03
 
 ### Features
 - User registration and authentication

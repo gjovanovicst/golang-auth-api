@@ -41,7 +41,7 @@ func main() {
 	var app models.Application
 	if err := db.First(&app, "id = ?", appID).Error; err != nil {
 		log.Println("Default app not found, creating default tenant and app...")
-		
+
 		tenantID := uuid.MustParse(appIDString)
 		tenant := models.Tenant{
 			ID:   tenantID,
@@ -87,7 +87,7 @@ func main() {
 		// Upsert logic
 		var existing models.OAuthProviderConfig
 		result := db.Where("app_id = ? AND provider = ?", appID, p.Name).First(&existing)
-		
+
 		if result.Error == nil {
 			// Update
 			existing.ClientID = clientID

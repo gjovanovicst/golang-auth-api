@@ -56,7 +56,13 @@ func MigrateDatabase() {
 		&models.User{},
 		&models.SocialAccount{},
 		&models.ActivityLog{},
-		&models.SchemaMigration{}, // Migration tracking table
+		&models.SchemaMigration{},   // Migration tracking table
+		&models.AdminAccount{},      // Admin GUI accounts
+		&models.ApiKey{},            // API keys (admin + per-app)
+		&models.SystemSetting{},     // System settings (DB-backed config)
+		&models.EmailServerConfig{}, // Per-app SMTP configuration
+		&models.EmailType{},         // Email type registry
+		&models.EmailTemplate{},     // Email templates (per-app and global)
 	)
 
 	if err != nil {

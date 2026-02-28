@@ -1,0 +1,101 @@
+{{define "email_server_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Configs}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Application</th>
+                        <th>Config Name</th>
+                        <th>SMTP Host</th>
+                        <th>Port</th>
+                        <th>From Address</th>
+                        <th class="text-center">TLS</th>
+                        <th class="text-center">Default</th>
+                        <th class="text-center">Active</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Configs}}
+                    <tr>
+                        <td class="ps-3">
+                            {{if .IsGlobal}}
+                            <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-globe me-1"></i>Global / System</span>
+                            {{else}}
+                            <span class="fw-semibold">{{.AppName}}</span>
+                            <br>
+                            <small class="text-muted">{{.TenantName}}</small>
+                            {{end}}
+                        </td>
+                        <td>
+                            <span class="fw-semibold">{{.Name}}</span>
+                        </td>
+                        <td>
+                            <span class="font-monospace">{{.SMTPHost}}</span>
+                        </td>
+                        <td>{{.SMTPPort}}</td>
+                        <td>
+                            <small>{{.FromAddress}}</small>
+                            {{if .FromName}}<br><small class="text-muted">{{.FromName}}</small>{{end}}
+                        </td>
+                        <td class="text-center">
+                            {{if .UseTLS}}
+                            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-lock-fill me-1"></i>Yes</span>
+                            {{else}}
+                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-unlock me-1"></i>No</span>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            {{if .IsDefault}}
+                            <span class="badge bg-primary bg-opacity-10 text-primary"><i class="bi bi-star-fill me-1"></i>Default</span>
+                            {{else}}
+                            <span class="text-muted">&mdash;</span>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            {{if .IsActive}}
+                            <span class="badge bg-success bg-opacity-10 text-success">Active</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">Inactive</span>
+                            {{end}}
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-success btn-sm me-1"
+                                    onclick="openTestEmailModal('{{.ID}}', '{{.AppID}}')"
+                                    title="Send Test Email">
+                                <i class="bi bi-send"></i>
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/email-servers/{{.ID}}/edit"
+                                    hx-target="#email-server-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/email-servers/{{.ID}}/delete?app_name={{.AppName}}&config_name={{.Name}}"
+                                    hx-target="#delete-email-server-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteEmailServerModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-envelope-at fs-1"></i>
+            <p class="mt-2 mb-0">No SMTP configurations found.</p>
+            <p class="small">Add a Global/System config as a fallback, or per-application configs for specific apps.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

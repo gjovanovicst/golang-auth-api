@@ -1,0 +1,88 @@
+{{define "oauth"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}OAuth Config{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-key me-2"></i>OAuth Config
+    </h4>
+    <div class="d-flex align-items-center gap-3">
+        <!-- Application filter dropdown -->
+        <div class="d-flex align-items-center gap-2">
+            <label for="appFilter" class="form-label mb-0 small text-muted text-nowrap">Filter by App:</label>
+            <select class="form-select form-select-sm" id="appFilter" style="min-width: 220px;"
+                    name="app_id">
+                <option value="">All Applications</option>
+                {{range .Data}}
+                <option value="{{.ID}}">{{.Name}} ({{.TenantName}})</option>
+                {{end}}
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm"
+                hx-get="/gui/oauth/new"
+                hx-target="#oauth-form-container"
+                hx-swap="innerHTML">
+            <i class="bi bi-plus-lg me-1"></i>Create Config
+        </button>
+    </div>
+</div>
+
+<!-- Form container (populated by HTMX when creating/editing) -->
+<div id="oauth-form-container" class="mb-3"></div>
+
+<!-- OAuth config table (loaded via HTMX) -->
+<div id="oauth-table"
+     hx-get="/gui/oauth/list?page=1"
+     hx-trigger="load, oauthListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading OAuth configurations...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteOAuthModal" tabindex="-1" aria-labelledby="deleteOAuthModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteOAuthModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete OAuth Config
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-oauth-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close delete modal after successful deletion
+    document.body.addEventListener('oauthDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteOAuthModal'));
+        if (modal) modal.hide();
+    });
+
+    // When app filter changes, reload the list with filter
+    document.getElementById('appFilter').addEventListener('change', function() {
+        var appID = this.value;
+        var url = '/gui/oauth/list?page=1';
+        if (appID) {
+            url += '&app_id=' + appID;
+        }
+        htmx.ajax('GET', url, {target: '#oauth-table', swap: 'innerHTML'});
+    });
+</script>
+{{end}}

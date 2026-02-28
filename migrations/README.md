@@ -119,9 +119,9 @@ psql -U postgres -d auth_db_test -c "\d table_name"
 ### Step 5: Update Documentation
 
 - [ ] Add to [MIGRATIONS_LOG.md](MIGRATIONS_LOG.md)
-- [ ] Update [../MIGRATIONS.md](../MIGRATIONS.md) if needed
-- [ ] Update [../BREAKING_CHANGES.md](../BREAKING_CHANGES.md) if breaking
-- [ ] Update [../UPGRADE_GUIDE.md](../UPGRADE_GUIDE.md)
+- [ ] Update [MIGRATIONS.md](../docs/migrations/MIGRATIONS.md) if needed
+- [ ] Update [BREAKING_CHANGES.md](../docs/BREAKING_CHANGES.md) if breaking
+- [ ] Update [UPGRADE_GUIDE.md](../docs/migrations/UPGRADE_GUIDE.md)
 - [ ] Update [../CHANGELOG.md](../CHANGELOG.md)
 
 ### Step 6: Create PR
@@ -460,9 +460,9 @@ ALTER TABLE table ADD CONSTRAINT ...;
 
 ## See Also
 
-- [../MIGRATIONS.md](../MIGRATIONS.md) - User migration guide
-- [../BREAKING_CHANGES.md](../BREAKING_CHANGES.md) - Breaking changes tracker
-- [../UPGRADE_GUIDE.md](../UPGRADE_GUIDE.md) - Version upgrade guide
+- [MIGRATIONS.md](../docs/migrations/MIGRATIONS.md) - User migration guide
+- [BREAKING_CHANGES.md](../docs/BREAKING_CHANGES.md) - Breaking changes tracker
+- [UPGRADE_GUIDE.md](../docs/migrations/UPGRADE_GUIDE.md) - Version upgrade guide
 - [TEMPLATE.md](TEMPLATE.md) - Migration template
 - [MIGRATIONS_LOG.md](MIGRATIONS_LOG.md) - Applied migrations log
 - [../CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines

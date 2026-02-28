@@ -28,6 +28,7 @@ func NewHandler(s *Service) *Handler {
 // @Success 201 {object}  dto.UserResponse
 // @Failure 400 {object}  dto.ErrorResponse
 // @Failure 409 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
 // @Failure 500 {object}  dto.ErrorResponse
 // @Router /register [post]
 func (h *Handler) Register(c *gin.Context) {
@@ -58,7 +59,7 @@ func (h *Handler) Register(c *gin.Context) {
 
 	// Log registration activity
 	ipAddress, userAgent := util.GetClientInfo(c)
-	log.LogRegister(userID, ipAddress, userAgent, req.Email)
+	log.LogRegister(appID, userID, ipAddress, userAgent, req.Email)
 
 	c.JSON(http.StatusCreated, dto.MessageResponse{Message: "User registered successfully. Please check your email for verification."})
 }
@@ -70,9 +71,10 @@ func (h *Handler) Register(c *gin.Context) {
 // @Produce json
 // @Param   login  body      dto.LoginRequest  true  "User Login Data"
 // @Success 200 {object}  dto.LoginResponse
-// @Success 202 {object}  dto.TwoFARequiredResponse
+// @Success 202 {object}  dto.TwoFARequiredResponse "2FA verification or setup required"
 // @Failure 400 {object}  dto.ErrorResponse
 // @Failure 401 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
 // @Failure 500 {object}  dto.ErrorResponse
 // @Router /login [post]
 func (h *Handler) Login(c *gin.Context) {
@@ -110,8 +112,18 @@ func (h *Handler) Login(c *gin.Context) {
 		details := map[string]interface{}{
 			"requires_2fa": true,
 		}
-		log.LogLogin(loginResult.UserID, ipAddress, userAgent, details)
+		log.LogLogin(appID, loginResult.UserID, ipAddress, userAgent, details)
 		c.JSON(http.StatusAccepted, loginResult.TwoFAResponse)
+		return
+	}
+
+	// Check if 2FA setup is mandatory for this app
+	if loginResult.RequiresTwoFASetup {
+		details := map[string]interface{}{
+			"requires_2fa_setup": true,
+		}
+		log.LogLogin(appID, loginResult.UserID, ipAddress, userAgent, details)
+		c.JSON(http.StatusAccepted, loginResult.TwoFASetupResponse)
 		return
 	}
 
@@ -119,7 +131,7 @@ func (h *Handler) Login(c *gin.Context) {
 	details := map[string]interface{}{
 		"requires_2fa": false,
 	}
-	log.LogLogin(loginResult.UserID, ipAddress, userAgent, details)
+	log.LogLogin(appID, loginResult.UserID, ipAddress, userAgent, details)
 
 	// Standard login response
 	c.JSON(http.StatusOK, dto.LoginResponse{
@@ -137,6 +149,7 @@ func (h *Handler) Login(c *gin.Context) {
 // @Success 200 {object}  dto.LoginResponse
 // @Failure 400 {object}  dto.ErrorResponse
 // @Failure 401 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
 // @Failure 500 {object}  dto.ErrorResponse
 // @Router /refresh-token [post]
 func (h *Handler) RefreshToken(c *gin.Context) {
@@ -156,7 +169,10 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID)
 	if parseErr == nil {
-		log.LogTokenRefresh(userUUID, ipAddress, userAgent)
+		appIDVal, appIDExists := c.Get("app_id")
+		if appIDExists {
+			log.LogTokenRefresh(appIDVal.(uuid.UUID), userUUID, ipAddress, userAgent)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -173,6 +189,7 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 // @Param   email  body      dto.ForgotPasswordRequest  true  "User Email"
 // @Success 200 {object}  dto.MessageResponse
 // @Failure 400 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
 // @Failure 500 {object}  dto.ErrorResponse
 // @Router /forgot-password [post]
 func (h *Handler) ForgotPassword(c *gin.Context) {
@@ -214,6 +231,7 @@ func (h *Handler) ForgotPassword(c *gin.Context) {
 // @Success 200 {object}  dto.MessageResponse
 // @Failure 400 {object}  dto.ErrorResponse
 // @Failure 401 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
 // @Failure 500 {object}  dto.ErrorResponse
 // @Router /reset-password [post]
 func (h *Handler) ResetPassword(c *gin.Context) {
@@ -244,7 +262,7 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 
 	// Log password reset completion
 	ipAddress, userAgent := util.GetClientInfo(c)
-	log.LogPasswordReset(userID, ipAddress, userAgent)
+	log.LogPasswordReset(appID, userID, ipAddress, userAgent)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password has been reset successfully."})
 }
@@ -281,7 +299,7 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 
 	// Log email verification
 	ipAddress, userAgent := util.GetClientInfo(c)
-	log.LogEmailVerify(userID, ipAddress, userAgent)
+	log.LogEmailVerify(appID, userID, ipAddress, userAgent)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Email verified successfully!"})
 }
@@ -311,7 +329,10 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	// Log profile access (now controlled by configuration and anomaly detection)
 	// This will only log if enabled in config or if an anomaly is detected
 	ipAddress, userAgent := util.GetClientInfo(c)
-	log.LogProfileAccess(user.ID, ipAddress, userAgent)
+	appIDVal, appIDExists := c.Get("app_id")
+	if appIDExists {
+		log.LogProfileAccess(appIDVal.(uuid.UUID), user.ID, ipAddress, userAgent)
+	}
 
 	// Convert social accounts to DTO
 	socialAccounts := make([]dto.SocialAccountResponse, len(user.SocialAccounts))
@@ -397,7 +418,7 @@ func (h *Handler) Logout(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID.(string))
 	if parseErr == nil {
-		log.LogLogout(userUUID, ipAddress, userAgent)
+		log.LogLogout(appID, userUUID, ipAddress, userAgent)
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Successfully logged out"})
@@ -487,7 +508,10 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 	details := map[string]interface{}{
 		"updated_fields": req,
 	}
-	log.LogProfileUpdate(user.ID, ipAddress, userAgent, details)
+	appIDVal, appIDExists := c.Get("app_id")
+	if appIDExists {
+		log.LogProfileUpdate(appIDVal.(uuid.UUID), user.ID, ipAddress, userAgent, details)
+	}
 
 	// Convert social accounts to DTO
 	socialAccounts := make([]dto.SocialAccountResponse, len(user.SocialAccounts))
@@ -575,7 +599,7 @@ func (h *Handler) UpdateEmail(c *gin.Context) {
 		details := map[string]interface{}{
 			"new_email": req.Email,
 		}
-		log.LogEmailChange(userUUID, ipAddress, userAgent, details)
+		log.LogEmailChange(appID, userUUID, ipAddress, userAgent, details)
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Email updated successfully. Please check your new email for verification."})
@@ -628,7 +652,7 @@ func (h *Handler) UpdatePassword(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID.(string))
 	if parseErr == nil {
-		log.LogPasswordChange(userUUID, ipAddress, userAgent)
+		log.LogPasswordChange(appID, userUUID, ipAddress, userAgent)
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Password updated successfully. All sessions have been logged out for security."})
@@ -668,9 +692,6 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 	// Log account deletion before actually deleting
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID.(string))
-	if parseErr == nil {
-		log.LogAccountDeletion(userUUID, ipAddress, userAgent)
-	}
 
 	appIDVal, exists := c.Get("app_id")
 	if !exists {
@@ -678,6 +699,10 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 		return
 	}
 	appID := appIDVal.(uuid.UUID)
+
+	if parseErr == nil {
+		log.LogAccountDeletion(appID, userUUID, ipAddress, userAgent)
+	}
 
 	if err := h.Service.DeleteUserAccount(appID, userID.(string), req); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})

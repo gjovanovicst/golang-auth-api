@@ -1,0 +1,91 @@
+{{define "app_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .IsEdit}}
+            <i class="bi bi-pencil me-2"></i>Edit Application
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Create Application
+            {{end}}
+        </h6>
+        <form {{if .IsEdit}}
+                hx-put="/gui/applications/{{.ID}}"
+              {{else}}
+                hx-post="/gui/applications"
+              {{end}}
+              hx-target="#app-form-container"
+              hx-swap="innerHTML">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label for="appTenant" class="form-label small text-muted">Tenant</label>
+                    <select class="form-select" id="appTenant" name="tenant_id" {{if .IsEdit}}disabled{{end}} required>
+                        {{if not .IsEdit}}
+                        <option value="">Select a tenant...</option>
+                        {{end}}
+                        {{range .Tenants}}
+                        <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.TenantID}}selected{{end}}>{{.Name}}</option>
+                        {{end}}
+                    </select>
+                    {{if .IsEdit}}
+                    <input type="hidden" name="tenant_id" value="{{.TenantID}}">
+                    {{end}}
+                </div>
+                <div class="col-md-4">
+                    <label for="appName" class="form-label small text-muted">Application Name</label>
+                    <input type="text" class="form-control" id="appName" name="name"
+                           value="{{.Name}}" placeholder="Enter application name" required autofocus>
+                </div>
+                <div class="col-md-4">
+                    <label for="appDescription" class="form-label small text-muted">Description</label>
+                    <input type="text" class="form-control" id="appDescription" name="description"
+                           value="{{.Description}}" placeholder="Optional description">
+                </div>
+            </div>
+
+            <!-- Two-Factor Authentication Settings -->
+            <div class="border rounded p-3 mt-3 bg-light bg-opacity-50">
+                <h6 class="fw-semibold mb-3"><i class="bi bi-shield-lock me-2"></i>Two-Factor Authentication</h6>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="appTwoFAIssuerName" class="form-label small text-muted">Authenticator Issuer Name</label>
+                        <input type="text" class="form-control" id="appTwoFAIssuerName" name="two_fa_issuer_name"
+                               value="{{.TwoFAIssuerName}}" placeholder="Shown in authenticator apps">
+                        <div class="form-text">Custom name displayed in Google Authenticator, Authy, etc. Falls back to application name if empty.</div>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" id="appTwoFAEnabled"
+                                   name="two_fa_enabled" {{if .TwoFAEnabled}}checked{{end}}>
+                            <label class="form-check-label" for="appTwoFAEnabled">
+                                <span class="small text-muted">Enable 2FA</span>
+                            </label>
+                            <div class="form-text">Allow users to set up two-factor authentication.</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" id="appTwoFARequired"
+                                   name="two_fa_required" {{if .TwoFARequired}}checked{{end}}>
+                            <label class="form-check-label" for="appTwoFARequired">
+                                <span class="small text-muted">Require 2FA</span>
+                            </label>
+                            <div class="form-text">Force all users to set up 2FA on login.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update{{else}}Create{{end}}
+                </button>
+                <button type="button" class="btn btn-outline-secondary"
+                        hx-get="/gui/applications/form-cancel"
+                        hx-target="#app-form-container"
+                        hx-swap="innerHTML">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

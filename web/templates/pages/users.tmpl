@@ -1,0 +1,83 @@
+{{define "users"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Users{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-people me-2"></i>Users
+    </h4>
+    <div class="d-flex align-items-center gap-3">
+        <!-- Search input -->
+        <div class="d-flex align-items-center gap-2">
+            <label for="userSearch" class="form-label mb-0 small text-muted text-nowrap">Search:</label>
+            <input type="text" class="form-control form-control-sm" id="userSearch"
+                   placeholder="Email or name..." style="min-width: 180px;">
+        </div>
+        <!-- Application filter dropdown -->
+        <div class="d-flex align-items-center gap-2">
+            <label for="appFilter" class="form-label mb-0 small text-muted text-nowrap">Filter by App:</label>
+            <select class="form-select form-select-sm" id="appFilter" name="app_id" style="min-width: 220px;">
+                <option value="">All Applications</option>
+                {{range .Data}}
+                <option value="{{.ID}}">{{.Name}} ({{.TenantName}})</option>
+                {{end}}
+            </select>
+        </div>
+    </div>
+</div>
+
+<!-- User detail panel (populated by HTMX when viewing a user) -->
+<div id="user-detail-container" class="mb-3"></div>
+
+<!-- User table (loaded via HTMX) -->
+<div id="user-table"
+     hx-get="/gui/users/list?page=1"
+     hx-trigger="load, userListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading users...</p>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Build the list URL with current filter/search state
+    function getUserListURL(page) {
+        var url = '/gui/users/list?page=' + (page || 1);
+        var appID = document.getElementById('appFilter').value;
+        var search = document.getElementById('userSearch').value.trim();
+        if (appID) url += '&app_id=' + appID;
+        if (search) url += '&search=' + encodeURIComponent(search);
+        return url;
+    }
+
+    // When app filter changes, reload the list with filter
+    document.getElementById('appFilter').addEventListener('change', function() {
+        htmx.ajax('GET', getUserListURL(1), {target: '#user-table', swap: 'innerHTML'});
+    });
+
+    // Debounced search on keyup
+    var searchTimeout = null;
+    document.getElementById('userSearch').addEventListener('keyup', function() {
+        if (searchTimeout) clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(function() {
+            htmx.ajax('GET', getUserListURL(1), {target: '#user-table', swap: 'innerHTML'});
+        }, 300);
+    });
+
+    // Close detail panel event
+    document.body.addEventListener('userDetailClosed', function() {
+        document.getElementById('user-detail-container').innerHTML = '';
+    });
+</script>
+{{end}}

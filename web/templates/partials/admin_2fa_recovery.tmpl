@@ -1,0 +1,106 @@
+{{define "admin_2fa_recovery"}}
+<div class="card border-0 shadow-sm border-success">
+    <div class="card-header bg-success-subtle border-bottom">
+        <h6 class="mb-0 fw-semibold text-success">
+            {{if .Data.Regenerated}}
+            <i class="bi bi-arrow-repeat me-2"></i>Recovery Codes Regenerated
+            {{else if .Data.Switched}}
+            <i class="bi bi-arrow-left-right me-2"></i>2FA Method Switched
+            {{else}}
+            <i class="bi bi-check-circle me-2"></i>Two-Factor Authentication Enabled
+            {{end}}
+        </h6>
+    </div>
+    <div class="card-body">
+        {{if .Data.Switched}}
+        <div class="alert alert-info py-2 small mb-3">
+            {{if eq .Data.Method "totp"}}
+            <i class="bi bi-phone me-1"></i> Switched to authenticator app (TOTP).
+            {{else}}
+            <i class="bi bi-envelope me-1"></i> Switched to email-based 2FA.
+            {{end}}
+        </div>
+        {{else if not .Data.Regenerated}}
+        <div class="alert alert-info py-2 small mb-3">
+            {{if eq .Data.Method "totp"}}
+            <i class="bi bi-phone me-1"></i> Authenticator app (TOTP) has been enabled.
+            {{else}}
+            <i class="bi bi-envelope me-1"></i> Email-based 2FA has been enabled.
+            {{end}}
+        </div>
+        {{end}}
+
+        <div class="alert alert-warning py-2 small mb-3">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            <strong>Save these recovery codes now!</strong> They will not be shown again.
+            Each code can only be used once. Store them in a safe place.
+        </div>
+
+        <div class="bg-light rounded p-3 mb-3">
+            <div class="row row-cols-2 g-2">
+                {{range .Data.RecoveryCodes}}
+                <div class="col">
+                    <code class="d-block text-center py-1 bg-white rounded border small">{{.}}</code>
+                </div>
+                {{end}}
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-primary btn-sm flex-grow-1"
+                    onclick="copyRecoveryCodes()">
+                <i class="bi bi-clipboard me-1"></i>Copy All
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm flex-grow-1"
+                    onclick="downloadRecoveryCodes()">
+                <i class="bi bi-download me-1"></i>Download
+            </button>
+        </div>
+
+        <hr>
+
+        <button type="button" class="btn btn-primary btn-sm w-100"
+                hx-get="/gui/my-account/2fa/status" hx-target="#twofa-section" hx-swap="innerHTML"
+                onclick="document.getElementById('twofa-setup-area').innerHTML = '';">
+            <i class="bi bi-check-lg me-1"></i>Done — I've Saved My Codes
+        </button>
+    </div>
+</div>
+
+<script>
+    function copyRecoveryCodes() {
+        var codes = [];
+        document.querySelectorAll('#twofa-setup-area code').forEach(function(el) {
+            codes.push(el.textContent.trim());
+        });
+        navigator.clipboard.writeText(codes.join('\n')).then(function() {
+            var btn = event.target.closest('button');
+            var original = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-check me-1"></i>Copied!';
+            setTimeout(function() { btn.innerHTML = original; }, 2000);
+        });
+    }
+
+    function downloadRecoveryCodes() {
+        var codes = [];
+        document.querySelectorAll('#twofa-setup-area code').forEach(function(el) {
+            codes.push(el.textContent.trim());
+        });
+        var text = 'Auth API Admin - Recovery Codes\n';
+        text += '================================\n\n';
+        text += 'Each code can only be used once.\n';
+        text += 'Store these in a safe place.\n\n';
+        codes.forEach(function(code, i) {
+            text += (i + 1) + '. ' + code + '\n';
+        });
+        text += '\nGenerated: ' + new Date().toISOString() + '\n';
+
+        var blob = new Blob([text], { type: 'text/plain' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'auth-api-recovery-codes.txt';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }
+</script>
+{{end}}

@@ -5,24 +5,34 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"log"
+	"math/big"
+	"strings"
 	"time"
 
+	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/user"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
+	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/skip2/go-qrcode"
 	"github.com/spf13/viper"
+	"gorm.io/gorm"
 )
 
 type Service struct {
-	UserRepo *user.Repository
+	UserRepo     *user.Repository
+	DB           *gorm.DB
+	EmailService *emailpkg.Service
 }
 
-func NewService(userRepo *user.Repository) *Service {
+func NewService(userRepo *user.Repository, db *gorm.DB, emailService *emailpkg.Service) *Service {
 	return &Service{
-		UserRepo: userRepo,
+		UserRepo:     userRepo,
+		DB:           db,
+		EmailService: emailService,
 	}
 }
 
@@ -34,6 +44,16 @@ type TwoFASetupResponse struct {
 
 // Generate2FASecret generates a new TOTP secret for a user
 func (s *Service) Generate2FASecret(appID uuid.UUID, userID string) (*TwoFASetupResponse, *errors.AppError) {
+	// Fetch app settings for 2FA gate check and issuer resolution
+	var app models.Application
+	appFound := false
+	if err := s.DB.Select("name, two_fa_issuer_name, two_fa_enabled").First(&app, "id = ?", appID).Error; err == nil {
+		appFound = true
+		if !app.TwoFAEnabled {
+			return nil, errors.NewAppError(errors.ErrForbidden, "2FA is not available for this application")
+		}
+	}
+
 	user, err := s.UserRepo.GetUserByID(userID)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrNotFound, "User not found")
@@ -47,10 +67,20 @@ func (s *Service) Generate2FASecret(appID uuid.UUID, userID string) (*TwoFASetup
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to store temporary secret")
 	}
 
-	// Create provisioning URI
-	issuer := viper.GetString("APP_NAME")
+	// Resolve issuer name: TwoFAIssuerName > app name > global APP_NAME > default
+	var issuer string
+	if appFound {
+		if app.TwoFAIssuerName != "" {
+			issuer = app.TwoFAIssuerName
+		} else if app.Name != "" {
+			issuer = app.Name
+		}
+	}
 	if issuer == "" {
-		issuer = "Auth API"
+		issuer = viper.GetString("APP_NAME")
+		if issuer == "" {
+			issuer = "Auth API"
+		}
 	}
 
 	provisioningURI := fmt.Sprintf("otpauth://totp/%s:%s?secret=%s&issuer=%s",
@@ -69,29 +99,43 @@ func (s *Service) Generate2FASecret(appID uuid.UUID, userID string) (*TwoFASetup
 	}, nil
 }
 
+// checkTwoFAEnabled verifies that 2FA is enabled for the given application.
+// Returns nil if 2FA is allowed, or an error if the feature is disabled.
+func (s *Service) checkTwoFAEnabled(appID uuid.UUID) *errors.AppError {
+	var app models.Application
+	if err := s.DB.Select("two_fa_enabled").First(&app, "id = ?", appID).Error; err == nil && !app.TwoFAEnabled {
+		return errors.NewAppError(errors.ErrForbidden, "2FA is not available for this application")
+	}
+	return nil
+}
+
 // VerifySetup verifies the initial 2FA setup with a TOTP code
 func (s *Service) VerifySetup(appID uuid.UUID, userID, totpCode string) *errors.AppError {
+	if appErr := s.checkTwoFAEnabled(appID); appErr != nil {
+		return appErr
+	}
+
 	// Get the temporary secret from Redis
 	secret, err := redis.GetTempTwoFASecret(appID.String(), userID)
 	if err != nil {
-		fmt.Printf("Failed to get temp 2FA secret for user %s: %v\n", userID, err)
+		log.Printf("Failed to get temp 2FA secret for user %s: %v", userID, err)
 		return errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired setup session")
 	}
 
-	fmt.Printf("DEBUG: Validating TOTP code %s for user %s with secret length %d\n", totpCode, userID, len(secret))
-
 	// Verify the TOTP code
 	if !totp.Validate(totpCode, secret) {
-		fmt.Printf("TOTP validation failed for user %s with code %s and secret %s\n", userID, totpCode, secret)
 		return errors.NewAppError(errors.ErrUnauthorized, "Invalid TOTP code")
 	}
 
-	fmt.Printf("TOTP validation successful for user %s\n", userID)
 	return nil
 }
 
 // Enable2FA enables 2FA for a user after successful verification
 func (s *Service) Enable2FA(appID uuid.UUID, userID string) ([]string, *errors.AppError) {
+	if appErr := s.checkTwoFAEnabled(appID); appErr != nil {
+		return nil, appErr
+	}
+
 	// Get the temporary secret from Redis
 	secret, err := redis.GetTempTwoFASecret(appID.String(), userID)
 	if err != nil {
@@ -103,14 +147,14 @@ func (s *Service) Enable2FA(appID uuid.UUID, userID string) ([]string, *errors.A
 	recoveryCodesJSON, _ := json.Marshal(recoveryCodes)
 
 	// Update user in database
-	if err := s.UserRepo.Enable2FA(userID, secret, string(recoveryCodesJSON)); err != nil {
+	if err := s.UserRepo.Enable2FAWithMethod(userID, secret, string(recoveryCodesJSON), emailpkg.TwoFAMethodTOTP); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to enable 2FA")
 	}
 
 	// Remove temporary secret from Redis
 	if err := redis.DeleteTempTwoFASecret(appID.String(), userID); err != nil {
 		// Log the error but don't fail the entire operation since 2FA was already enabled
-		fmt.Printf("Warning: Failed to delete temporary 2FA secret for user %s: %v\n", userID, err)
+		log.Printf("Warning: Failed to delete temporary 2FA secret for user %s: %v", userID, err)
 	}
 
 	return recoveryCodes, nil
@@ -202,6 +246,153 @@ func (s *Service) GenerateNewRecoveryCodes(userID string) ([]string, *errors.App
 	return recoveryCodes, nil
 }
 
+// ============================================================================
+// Email 2FA methods
+// ============================================================================
+
+// EnableEmail2FA enables email-based 2FA for a user (no TOTP secret needed).
+// Recovery codes are still generated for account recovery.
+func (s *Service) EnableEmail2FA(appID uuid.UUID, userID string) ([]string, *errors.AppError) {
+	if appErr := s.checkTwoFAEnabled(appID); appErr != nil {
+		return nil, appErr
+	}
+
+	// Verify that this application allows email 2FA
+	if !s.isEmail2FAAllowed(appID) {
+		return nil, errors.NewAppError(errors.ErrForbidden, "Email 2FA is not available for this application")
+	}
+
+	// Generate recovery codes
+	recoveryCodes := generateRecoveryCodes(8)
+	recoveryCodesJSON, _ := json.Marshal(recoveryCodes)
+
+	// Enable 2FA with email method — no TOTP secret needed
+	if err := s.UserRepo.Enable2FAWithMethod(userID, "", string(recoveryCodesJSON), emailpkg.TwoFAMethodEmail); err != nil {
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to enable email 2FA")
+	}
+
+	return recoveryCodes, nil
+}
+
+// GenerateEmail2FACode generates a 6-digit code, stores it in Redis, and sends it via email.
+// This is called during login when the user has email 2FA enabled.
+func (s *Service) GenerateEmail2FACode(appID uuid.UUID, userID string) *errors.AppError {
+	usr, err := s.UserRepo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+
+	if !usr.TwoFAEnabled || usr.TwoFAMethod != emailpkg.TwoFAMethodEmail {
+		return errors.NewAppError(errors.ErrBadRequest, "Email 2FA is not enabled for this user")
+	}
+
+	// Generate a 6-digit code
+	code := generate6DigitCode()
+
+	// Store code in Redis with 5-minute expiration
+	if err := redis.Set2FAEmailCode(appID.String(), userID, code); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to store 2FA code")
+	}
+
+	// Send the code via email
+	if s.EmailService != nil {
+		if err := s.EmailService.Send2FACodeEmail(appID, usr.Email, code, &usr.ID); err != nil {
+			log.Printf("Error sending 2FA email to %s: %v", usr.Email, err)
+			return errors.NewAppError(errors.ErrInternal, "Failed to send 2FA code email")
+		}
+	} else {
+		log.Printf("[DEV MODE] 2FA email code for user %s: %s", userID, code)
+	}
+
+	return nil
+}
+
+// VerifyEmail2FACode verifies a 6-digit email 2FA code from Redis.
+func (s *Service) VerifyEmail2FACode(appID uuid.UUID, userID, code string) *errors.AppError {
+	storedCode, err := redis.Get2FAEmailCode(appID.String(), userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired 2FA code")
+	}
+
+	if storedCode != code {
+		return errors.NewAppError(errors.ErrUnauthorized, "Invalid 2FA code")
+	}
+
+	// Delete the code after successful verification (one-time use)
+	if err := redis.Delete2FAEmailCode(appID.String(), userID); err != nil {
+		log.Printf("Warning: Failed to delete 2FA email code for user %s: %v", userID, err)
+	}
+
+	return nil
+}
+
+// ResendEmail2FACode resends a new 2FA code (generates a fresh one).
+func (s *Service) ResendEmail2FACode(appID uuid.UUID, userID string) *errors.AppError {
+	return s.GenerateEmail2FACode(appID, userID)
+}
+
+// GetAvailableMethods returns the 2FA methods available for an application.
+func (s *Service) GetAvailableMethods(appID uuid.UUID) []string {
+	var app models.Application
+	if err := s.DB.Select("two_fa_methods, two_fa_enabled, email_2fa_enabled").First(&app, "id = ?", appID).Error; err != nil {
+		return []string{emailpkg.TwoFAMethodTOTP} // default
+	}
+
+	if !app.TwoFAEnabled {
+		return nil
+	}
+
+	methods := strings.Split(app.TwoFAMethods, ",")
+	var result []string
+	for _, m := range methods {
+		m = strings.TrimSpace(m)
+		if m == emailpkg.TwoFAMethodEmail && !app.Email2FAEnabled {
+			continue
+		}
+		if m != "" {
+			result = append(result, m)
+		}
+	}
+	if len(result) == 0 {
+		return []string{emailpkg.TwoFAMethodTOTP}
+	}
+	return result
+}
+
+// isEmail2FAAllowed checks if the application allows email-based 2FA.
+func (s *Service) isEmail2FAAllowed(appID uuid.UUID) bool {
+	var app models.Application
+	if err := s.DB.Select("email_2fa_enabled, two_fa_methods").First(&app, "id = ?", appID).Error; err != nil {
+		return false
+	}
+	if !app.Email2FAEnabled {
+		return false
+	}
+	methods := strings.Split(app.TwoFAMethods, ",")
+	for _, m := range methods {
+		if strings.TrimSpace(m) == emailpkg.TwoFAMethodEmail {
+			return true
+		}
+	}
+	return false
+}
+
+// GetUserTwoFAMethod returns the 2FA method for a user.
+func (s *Service) GetUserTwoFAMethod(userID string) (string, *errors.AppError) {
+	usr, err := s.UserRepo.GetUserByID(userID)
+	if err != nil {
+		return "", errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+	if !usr.TwoFAEnabled {
+		return "", errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user")
+	}
+	method := usr.TwoFAMethod
+	if method == "" {
+		method = emailpkg.TwoFAMethodTOTP // backward compat: existing users default to TOTP
+	}
+	return method, nil
+}
+
 // generateSecretKey generates a random base32 encoded secret key
 func generateSecretKey() string {
 	secret := make([]byte, 32)
@@ -211,6 +402,16 @@ func generateSecretKey() string {
 		panic(fmt.Sprintf("Failed to generate secure random bytes: %v", err))
 	}
 	return base32.StdEncoding.EncodeToString(secret)
+}
+
+// generate6DigitCode generates a cryptographically secure 6-digit numeric code.
+func generate6DigitCode() string {
+	max := big.NewInt(1000000) // 0-999999
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to generate secure random number for 2FA code: %v", err))
+	}
+	return fmt.Sprintf("%06d", n.Int64())
 }
 
 // generateRecoveryCodes generates recovery codes

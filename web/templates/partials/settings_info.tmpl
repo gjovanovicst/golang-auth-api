@@ -1,0 +1,86 @@
+{{define "settings_info"}}
+<div class="card border-0 shadow-sm mb-4 system-info-card">
+    <div class="card-header bg-transparent border-bottom-0 py-3">
+        <div class="d-flex align-items-center justify-content-between">
+            <h6 class="mb-0 fw-semibold">
+                <i class="bi bi-info-circle me-2 text-primary"></i>System Information
+            </h6>
+            <button class="btn btn-outline-secondary btn-sm"
+                    hx-get="/gui/settings/info"
+                    hx-target="#system-info-container"
+                    hx-swap="innerHTML"
+                    title="Refresh">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+        </div>
+    </div>
+    <div class="card-body pt-0">
+        <div class="row">
+            <!-- Runtime -->
+            <div class="col-md-4">
+                <h6 class="text-muted small text-uppercase fw-bold mb-2">Runtime</h6>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Go Version</span>
+                    <span class="small fw-medium">{{.GoVersion}}</span>
+                </div>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">OS / Arch</span>
+                    <span class="small fw-medium">{{.GOOS}}/{{.GOARCH}}</span>
+                </div>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">CPUs</span>
+                    <span class="small fw-medium">{{.NumCPU}}</span>
+                </div>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Uptime</span>
+                    <span class="small fw-medium">{{.Uptime}}</span>
+                </div>
+            </div>
+            <!-- Database -->
+            <div class="col-md-4">
+                <h6 class="text-muted small text-uppercase fw-bold mb-2">Database</h6>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Host</span>
+                    <span class="small fw-medium">{{.DBHost}}:{{.DBPort}}</span>
+                </div>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Database</span>
+                    <span class="small fw-medium">{{.DBName}}</span>
+                </div>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Status</span>
+                    {{if eq .DBStatus "Connected"}}
+                    <span class="badge bg-success-subtle text-success">Connected</span>
+                    {{else}}
+                    <span class="badge bg-danger-subtle text-danger">{{.DBStatus}}</span>
+                    {{end}}
+                </div>
+            </div>
+            <!-- Redis & Server -->
+            <div class="col-md-4">
+                <h6 class="text-muted small text-uppercase fw-bold mb-2">Redis & Server</h6>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Redis</span>
+                    <span class="small fw-medium">{{.RedisAddr}}</span>
+                </div>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Redis Status</span>
+                    {{if eq .RedisStatus "Connected"}}
+                    <span class="badge bg-success-subtle text-success">Connected</span>
+                    {{else}}
+                    <span class="badge bg-danger-subtle text-danger">{{.RedisStatus}}</span>
+                    {{end}}
+                </div>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Server Port</span>
+                    <span class="small fw-medium">{{.ServerPort}}</span>
+                </div>
+                <div class="info-item d-flex justify-content-between">
+                    <span class="text-muted small">Gin Mode</span>
+                    <span class="small fw-medium">{{.GinMode}}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}

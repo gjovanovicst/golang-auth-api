@@ -57,7 +57,7 @@ jobs:
 
       - name: Run unit tests
         env:
-          JWT_SECRET: testsecret
+          JWT_SECRET: test-jwt-secret-that-is-at-least-32-bytes-long!
           ACCESS_TOKEN_EXPIRATION_MINUTES: 15
           REFRESH_TOKEN_EXPIRATION_HOURS: 720
           DB_HOST: localhost

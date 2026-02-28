@@ -14,13 +14,16 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// Enable viper to read from environment variables
+	// Allow CI env vars (e.g. REDIS_ADDR) to override defaults.
 	viper.AutomaticEnv()
 
-	// Setup test configuration with defaults (will be overridden by env vars if present)
-	viper.SetDefault("JWT_SECRET", "testsecret")
-	viper.SetDefault("ACCESS_TOKEN_EXPIRATION_MINUTES", 15)
-	viper.SetDefault("REFRESH_TOKEN_EXPIRATION_HOURS", 720)
+	// Use viper.Set for security-sensitive values so env vars cannot override them
+	// (prevents a short JWT_SECRET from CI breaking tests).
+	viper.Set("JWT_SECRET", "test-jwt-secret-that-is-at-least-32-bytes-long!")
+	viper.Set("ACCESS_TOKEN_EXPIRATION_MINUTES", 15)
+	viper.Set("REFRESH_TOKEN_EXPIRATION_HOURS", 720)
+
+	// Use SetDefault for Redis so CI env vars (REDIS_ADDR, etc.) take precedence.
 	viper.SetDefault("REDIS_ADDR", "localhost:6379")
 	viper.SetDefault("REDIS_PASSWORD", "")
 	viper.SetDefault("REDIS_DB", 1) // Use DB 1 for testing by default
@@ -374,6 +377,15 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 func TestAuthMiddlewareTokenWithoutBearer(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	// This test uses AuthMiddleware() which requires Redis for blacklist checks
+	if redis.Rdb == nil {
+		t.Skip("Redis not available for testing")
+	}
+	ctx := redis.Rdb.Context()
+	if _, err := redis.Rdb.Ping(ctx).Result(); err != nil {
+		t.Skip("Redis connection failed, skipping test")
+	}
+
 	// Generate a valid token
 	userID := "test-user-id"
 	token, err := jwt.GenerateAccessToken("test-app-id", userID)
@@ -475,6 +487,15 @@ func TestAuthorizeRoleWithoutUserID(t *testing.T) {
 
 func TestAuthMiddlewareAndAuthorizeRoleTogether(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
+	// This test uses AuthMiddleware() which requires Redis for blacklist checks
+	if redis.Rdb == nil {
+		t.Skip("Redis not available for testing")
+	}
+	ctx := redis.Rdb.Context()
+	if _, err := redis.Rdb.Ping(ctx).Result(); err != nil {
+		t.Skip("Redis connection failed, skipping test")
+	}
 
 	// Generate a valid token
 	userID := "test-user-id"

@@ -1,0 +1,63 @@
+{{define "dashboard_activity"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-white border-bottom d-flex align-items-center justify-content-between">
+        <h6 class="mb-0 fw-bold">
+            <i class="bi bi-clock-history me-2"></i>Recent Activity
+        </h6>
+        <span class="badge bg-secondary">Last 10 events</span>
+    </div>
+    <div class="card-body p-0">
+        {{if .}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Time</th>
+                        <th>Event</th>
+                        <th>Severity</th>
+                        <th>IP Address</th>
+                        <th class="pe-3">Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .}}
+                    <tr>
+                        <td class="ps-3 text-nowrap">
+                            <small class="text-muted" title="{{formatDateTimeFull .Timestamp}}">{{timeAgo .Timestamp}}</small>
+                        </td>
+                        <td>
+                            <span class="badge bg-primary bg-opacity-10 text-primary">{{.EventType}}</span>
+                        </td>
+                        <td>
+                            {{if eq .Severity "ERROR"}}
+                                <span class="badge bg-danger">ERROR</span>
+                            {{else if eq .Severity "WARNING"}}
+                                <span class="badge bg-warning text-dark">WARNING</span>
+                            {{else if eq .Severity "CRITICAL"}}
+                                <span class="badge bg-danger">CRITICAL</span>
+                            {{else}}
+                                <span class="badge bg-success bg-opacity-75">INFO</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <small class="text-muted font-monospace">{{if .IPAddress}}{{.IPAddress}}{{else}}-{{end}}</small>
+                        </td>
+                        <td class="pe-3">
+                            <small class="text-muted text-truncate d-inline-block" style="max-width: 200px;" title="{{printf "%s" .Details}}">
+                                {{if .Details}}{{printf "%s" .Details}}{{else}}-{{end}}
+                            </small>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="text-center py-4 text-muted">
+            <i class="bi bi-inbox fs-1"></i>
+            <p class="mt-2 mb-0">No recent activity logs found.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

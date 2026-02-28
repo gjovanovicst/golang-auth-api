@@ -1,0 +1,90 @@
+{{define "tenant_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Tenants}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        <th>Applications</th>
+                        <th>Created</th>
+                        <th>Updated</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Tenants}}
+                    <tr>
+                        <td class="ps-3">
+                            <span class="fw-semibold">{{.Name}}</span>
+                            <br>
+                            <small class="text-muted font-monospace">{{.ID}}</small>
+                        </td>
+                        <td>
+                            <span class="badge bg-info bg-opacity-10 text-info">{{.AppCount}} app{{if ne .AppCount 1}}s{{end}}</span>
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .UpdatedAt}}">{{timeAgo .UpdatedAt}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/tenants/{{.ID}}/edit"
+                                    hx-target="#tenant-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/tenants/{{.ID}}/delete"
+                                    hx-target="#delete-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteTenantModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {{if gt .TotalPages 1}}
+        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+            <small class="text-muted">
+                Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
+            </small>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item {{if le .Page 1}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/tenants/list?page={{sub .Page 1}}"
+                           hx-target="#tenant-table"
+                           hx-swap="innerHTML">Previous</a>
+                    </li>
+                    <li class="page-item {{if ge .Page .TotalPages}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/tenants/list?page={{add .Page 1}}"
+                           hx-target="#tenant-table"
+                           hx-swap="innerHTML">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        {{end}}
+
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-building fs-1"></i>
+            <p class="mt-2 mb-0">No tenants found. Create your first tenant to get started.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

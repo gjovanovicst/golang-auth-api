@@ -1,0 +1,116 @@
+{{define "oauth_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Configs}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Provider</th>
+                        <th>Application</th>
+                        <th>Client ID</th>
+                        <th>Redirect URL</th>
+                        <th class="text-center">Enabled</th>
+                        <th>Created</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Configs}}
+                    <tr>
+                        <td class="ps-3">
+                            {{if eq .Provider "google"}}
+                            <span class="badge bg-primary bg-opacity-10 text-primary"><i class="bi bi-google me-1"></i>Google</span>
+                            {{else if eq .Provider "facebook"}}
+                            <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-facebook me-1"></i>Facebook</span>
+                            {{else if eq .Provider "github"}}
+                            <span class="badge bg-dark bg-opacity-10 text-dark"><i class="bi bi-github me-1"></i>GitHub</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">{{.Provider}}</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <span class="fw-semibold">{{.AppName}}</span>
+                            <br>
+                            <small class="text-muted">{{.TenantName}}</small>
+                        </td>
+                        <td>
+                            <small class="font-monospace text-truncate d-inline-block" style="max-width: 180px;" title="{{.ClientID}}">{{.ClientID}}</small>
+                        </td>
+                        <td>
+                            <small class="text-truncate d-inline-block" style="max-width: 200px;" title="{{.RedirectURL}}">{{.RedirectURL}}</small>
+                        </td>
+                        <td class="text-center">
+                            <div id="toggle-{{.ID}}"
+                                 hx-put="/gui/oauth/{{.ID}}/toggle"
+                                 hx-target="#toggle-{{.ID}}"
+                                 hx-swap="outerHTML"
+                                 style="cursor: pointer;">
+                                {{if .IsEnabled}}
+                                <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle-fill me-1"></i>On</span>
+                                {{else}}
+                                <span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle-fill me-1"></i>Off</span>
+                                {{end}}
+                            </div>
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/oauth/{{.ID}}/edit"
+                                    hx-target="#oauth-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/oauth/{{.ID}}/delete"
+                                    hx-target="#delete-oauth-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteOAuthModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {{if gt .TotalPages 1}}
+        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+            <small class="text-muted">
+                Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
+            </small>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item {{if le .Page 1}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/oauth/list?page={{sub .Page 1}}{{if .AppID}}&app_id={{.AppID}}{{end}}"
+                           hx-target="#oauth-table"
+                           hx-swap="innerHTML">Previous</a>
+                    </li>
+                    <li class="page-item {{if ge .Page .TotalPages}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/oauth/list?page={{add .Page 1}}{{if .AppID}}&app_id={{.AppID}}{{end}}"
+                           hx-target="#oauth-table"
+                           hx-swap="innerHTML">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        {{end}}
+
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-key fs-1"></i>
+            <p class="mt-2 mb-0">No OAuth configurations found. Create your first config to get started.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

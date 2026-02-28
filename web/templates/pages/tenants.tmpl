@@ -1,0 +1,65 @@
+{{define "tenants"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Tenants{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-building me-2"></i>Tenants
+    </h4>
+    <button class="btn btn-primary btn-sm"
+            hx-get="/gui/tenants/new"
+            hx-target="#tenant-form-container"
+            hx-swap="innerHTML">
+        <i class="bi bi-plus-lg me-1"></i>Create Tenant
+    </button>
+</div>
+
+<!-- Form container (populated by HTMX when creating/editing) -->
+<div id="tenant-form-container" class="mb-3"></div>
+
+<!-- Tenant table (loaded via HTMX) -->
+<div id="tenant-table"
+     hx-get="/gui/tenants/list?page=1"
+     hx-trigger="load, tenantListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading tenants...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteTenantModal" tabindex="-1" aria-labelledby="deleteTenantModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteTenantModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Tenant
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close delete modal and refresh table after successful deletion
+    document.body.addEventListener('tenantDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteTenantModal'));
+        if (modal) modal.hide();
+    });
+</script>
+{{end}}

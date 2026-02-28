@@ -3,6 +3,7 @@ package social
 import (
 	"context"
 	"fmt"
+	stdlog "log"
 	"net/http"
 	"net/url"
 	"time"
@@ -103,7 +104,8 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 
 	googleConfig, err := h.getGoogleConfig(appID.String())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Google config: " + err.Error()})
+		stdlog.Printf("Failed to get Google OAuth config for app %s: %v", appID.String(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "OAuth configuration error"})
 		return
 	}
 
@@ -116,9 +118,9 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 	// Create secure state with redirect URI
 	state, err := CreateOAuthState(redirectURI, appID.String())
 	if err != nil {
+		stdlog.Printf("Invalid OAuth redirect URI for Google login: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid redirect URI",
-			"details": err.Error(),
+			"error": "Invalid redirect URI",
 		})
 		return
 	}
@@ -241,7 +243,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 
 	// Log social login activity
 	ipAddress, userAgent := util.GetClientInfo(c)
-	log.LogSocialLogin(userID, ipAddress, userAgent, "google")
+	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "google")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=google",
@@ -270,7 +272,8 @@ func (h *Handler) FacebookLogin(c *gin.Context) {
 
 	facebookConfig, err := h.getFacebookConfig(appID.String())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Facebook config: " + err.Error()})
+		stdlog.Printf("Failed to get Facebook OAuth config for app %s: %v", appID.String(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "OAuth configuration error"})
 		return
 	}
 
@@ -283,9 +286,9 @@ func (h *Handler) FacebookLogin(c *gin.Context) {
 	// Create secure state with redirect URI
 	state, err := CreateOAuthState(redirectURI, appID.String())
 	if err != nil {
+		stdlog.Printf("Invalid OAuth redirect URI for Facebook login: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid redirect URI",
-			"details": err.Error(),
+			"error": "Invalid redirect URI",
 		})
 		return
 	}
@@ -408,7 +411,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 
 	// Log social login activity
 	ipAddress, userAgent := util.GetClientInfo(c)
-	log.LogSocialLogin(userID, ipAddress, userAgent, "facebook")
+	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "facebook")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=facebook",
@@ -437,7 +440,8 @@ func (h *Handler) GithubLogin(c *gin.Context) {
 
 	githubConfig, err := h.getGithubConfig(appID.String())
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub config: " + err.Error()})
+		stdlog.Printf("Failed to get GitHub OAuth config for app %s: %v", appID.String(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "OAuth configuration error"})
 		return
 	}
 
@@ -450,9 +454,9 @@ func (h *Handler) GithubLogin(c *gin.Context) {
 	// Create secure state with redirect URI
 	state, err := CreateOAuthState(redirectURI, appID.String())
 	if err != nil {
+		stdlog.Printf("Invalid OAuth redirect URI for GitHub login: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "Invalid redirect URI",
-			"details": err.Error(),
+			"error": "Invalid redirect URI",
 		})
 		return
 	}
@@ -575,7 +579,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 
 	// Log social login activity
 	ipAddress, userAgent := util.GetClientInfo(c)
-	log.LogSocialLogin(userID, ipAddress, userAgent, "github")
+	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "github")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=github",

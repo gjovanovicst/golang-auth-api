@@ -1,0 +1,89 @@
+{{define "email_type_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Types}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Code</th>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Default Subject</th>
+                        <th class="text-center">Variables</th>
+                        <th class="text-center">System</th>
+                        <th class="text-center">Active</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Types}}
+                    <tr>
+                        <td class="ps-3">
+                            <span class="font-monospace small">{{.Code}}</span>
+                        </td>
+                        <td>
+                            <span class="fw-semibold">{{.Name}}</span>
+                        </td>
+                        <td>
+                            <small class="text-muted text-truncate d-inline-block" style="max-width: 250px;" title="{{.Description}}">{{.Description}}</small>
+                        </td>
+                        <td>
+                            <small class="text-truncate d-inline-block" style="max-width: 180px;" title="{{.DefaultSubject}}">{{.DefaultSubject}}</small>
+                        </td>
+                        <td class="text-center">
+                            {{if gt .VarCount 0}}
+                            <span class="badge bg-info bg-opacity-10 text-info">{{.VarCount}} vars</span>
+                            {{else}}
+                            <span class="text-muted small">-</span>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            {{if .IsSystem}}
+                            <span class="badge bg-primary bg-opacity-10 text-primary"><i class="bi bi-lock-fill me-1"></i>System</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">Custom</span>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            {{if .IsActive}}
+                            <span class="badge bg-success bg-opacity-10 text-success">Active</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">Inactive</span>
+                            {{end}}
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/email-types/{{.ID}}/edit"
+                                    hx-target="#email-type-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            {{if not .IsSystem}}
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/email-types/{{.ID}}/delete"
+                                    hx-target="#delete-email-type-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteEmailTypeModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            {{end}}
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-list-check fs-1"></i>
+            <p class="mt-2 mb-0">No email types found.</p>
+            <p class="small">Click "Add Email Type" to create a custom email type, or run the database migration to seed the system types.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

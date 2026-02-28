@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.0] - 2026-02-21
+> **Pre-release note:** All versions below are pre-release development milestones
+> (`1.0.0-alpha.N`). The first official public release will be `1.0.0`.
+
+## [Unreleased]
+
+_Changes planned for the upcoming `1.0.0` official release._
+
+## [1.0.0-alpha.4] - 2026-02-21
 
 ### Added
 
@@ -88,23 +95,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.0.0] - 2026-01-19
+## [1.0.0-alpha.3] - 2026-01-19
 
-### 🚨 BREAKING CHANGES - Multi-Tenancy Support
+### Pre-Release Breaking Changes — Multi-Tenancy Support
 
-This release introduces **multi-tenancy** architecture, enabling the API to serve multiple tenants and applications. **This is a major breaking change** that requires API client updates.
+This milestone introduced **multi-tenancy** architecture, enabling the API to serve multiple tenants and applications. These changes affect API clients upgrading from earlier pre-release builds.
 
 #### Required API Changes
 
 **All API requests now require the `X-App-ID` header:**
 
 ```bash
-# Before (v1.x)
+# Before (alpha.1 / alpha.2)
 curl -X POST /auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","password":"secret"}'
 
-# After (v2.x)
+# After (alpha.3+)
 curl -X POST /auth/register \
   -H "Content-Type: application/json" \
   -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
@@ -220,7 +227,7 @@ curl -X POST /auth/register \
 
 ### Migration Guide
 
-#### For Existing Installations (Upgrading from v1.x)
+#### For Existing Installations (Upgrading from alpha.1/alpha.2)
 
 **⚠️ CRITICAL: Backup your database before proceeding!**
 
@@ -334,13 +341,13 @@ curl -X POST /auth/register \
 - Solution: Check database constraints. Rollback and restore from backup.
 
 **Need Help?**
-- See: [BREAKING_CHANGES.md](BREAKING_CHANGES.md) for detailed migration guide
+- See: [Pre-Release Migration Reference](docs/BREAKING_CHANGES.md) for detailed migration guide
 - See: `migrations/20260105_add_multi_tenancy.md` for technical details
 - Open GitHub issue with "migration-help" label
 
 ---
 
-## [1.1.0] - 2024-12-04
+## [1.0.0-alpha.2] - 2024-12-04
 
 ### Added
 
@@ -415,8 +422,8 @@ curl -X POST /auth/register \
 
 #### Comprehensive Migration System
 - **[MIGRATIONS.md](docs/migrations/MIGRATIONS.md)**: User-friendly migration guide with step-by-step instructions
-- **[BREAKING_CHANGES.md](BREAKING_CHANGES.md)**: Breaking changes tracker with version history
-- **[UPGRADE_GUIDE.md](UPGRADE_GUIDE.md)**: Detailed version upgrade instructions with rollback procedures
+- **[BREAKING_CHANGES.md](docs/BREAKING_CHANGES.md)**: Breaking changes tracker with version history
+- **[UPGRADE_GUIDE.md](docs/migrations/UPGRADE_GUIDE.md)**: Detailed version upgrade instructions with rollback procedures
 - **[migrations/README.md](migrations/README.md)**: Developer-focused migration guide with best practices
 - **[migrations/TEMPLATE.md](migrations/TEMPLATE.md)**: Standardized template for creating new migrations
 - **[migrations/MIGRATIONS_LOG.md](migrations/MIGRATIONS_LOG.md)**: Historical log of all applied migrations
@@ -584,7 +591,7 @@ LOG_CLEANUP_INTERVAL=24h
 
 ---
 
-## [1.0.0] - 2024-01-03
+## [1.0.0-alpha.1] - 2024-01-03
 
 ### Features
 - User registration and authentication

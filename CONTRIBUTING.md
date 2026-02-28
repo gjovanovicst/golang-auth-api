@@ -81,8 +81,8 @@ Fill out the migration documentation file:
 
 - [ ] [migrations/MIGRATIONS_LOG.md](migrations/MIGRATIONS_LOG.md)
 - [ ] [MIGRATIONS.md](docs/migrations/MIGRATIONS.md) (if user-facing)
-- [ ] [BREAKING_CHANGES.md](BREAKING_CHANGES.md) (if breaking)
-- [ ] [UPGRADE_GUIDE.md](UPGRADE_GUIDE.md) (if version upgrade)
+- [ ] [BREAKING_CHANGES.md](docs/BREAKING_CHANGES.md) (if breaking)
+- [ ] [UPGRADE_GUIDE.md](docs/migrations/UPGRADE_GUIDE.md) (if version upgrade)
 - [ ] [CHANGELOG.md](CHANGELOG.md)
 
 ### Migration Checklist
@@ -103,23 +103,25 @@ Before submitting PR with migration:
 
 If your migration is breaking:
 
-1. **Document extensively** in [BREAKING_CHANGES.md](BREAKING_CHANGES.md)
+1. **Document extensively** in [BREAKING_CHANGES.md](docs/BREAKING_CHANGES.md)
 2. **Provide migration path** for users
 3. **Bump version appropriately** (major version for breaking changes)
-4. **Add to [UPGRADE_GUIDE.md](UPGRADE_GUIDE.md)** with step-by-step instructions
+4. **Add to [UPGRADE_GUIDE.md](docs/migrations/UPGRADE_GUIDE.md)** with step-by-step instructions
 5. **Consider deprecation first** instead of immediate removal
 
-**Semver Guidelines:**
-- **Major (2.0.0):** Breaking database or API changes
-- **Minor (1.1.0):** New features, backward compatible
-- **Patch (1.0.1):** Bug fixes, backward compatible
+**Versioning:**
+
+This project is in pre-release (`1.0.0-alpha.N`). After `1.0.0` is officially published, standard semver applies:
+- **Major (x.0.0):** Breaking database or API changes
+- **Minor (x.y.0):** New features, backward compatible
+- **Patch (x.y.z):** Bug fixes, backward compatible
 
 ### Resources
 
 - [migrations/README.md](migrations/README.md) - Detailed migration guide
 - [migrations/TEMPLATE.md](migrations/TEMPLATE.md) - Migration template
 - [MIGRATIONS.md](docs/migrations/MIGRATIONS.md) - User migration guide
-- [BREAKING_CHANGES.md](BREAKING_CHANGES.md) - Breaking changes tracker
+- [BREAKING_CHANGES.md](docs/BREAKING_CHANGES.md) - Breaking changes tracker
 
 ## Reporting Issues
 - Use the GitHub Issues tab.

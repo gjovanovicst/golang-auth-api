@@ -68,13 +68,14 @@
             }
         }
     </style>
-    {{block "head" .}}{{end}}
 </head>
 <body>
     <!-- Sidebar -->
-    <nav class="sidebar bg-dark d-flex flex-column">
+    <nav class="sidebar bg-dark d-flex flex-column" id="sidebar-nav">
         <div class="p-3">
-            <a href="/gui/" class="text-white text-decoration-none d-flex align-items-center">
+            <a href="/gui/" class="text-white text-decoration-none d-flex align-items-center sidebar-link"
+               data-page="dashboard"
+               hx-get="/gui/" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                 <i class="bi bi-shield-lock fs-4 me-2"></i>
                 <span class="fs-5 fw-semibold">Auth API</span>
             </a>
@@ -83,7 +84,9 @@
 
         <ul class="nav flex-column mt-2">
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "dashboard"}} active{{end}}" href="/gui/">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "dashboard"}} active{{end}}" href="/gui/"
+                   data-page="dashboard"
+                   hx-get="/gui/" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-speedometer2"></i> Dashboard
                 </a>
             </li>
@@ -92,22 +95,30 @@
         <div class="sidebar-heading">Management</div>
         <ul class="nav flex-column">
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "tenants"}} active{{end}}" href="/gui/tenants">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "tenants"}} active{{end}}" href="/gui/tenants"
+                   data-page="tenants"
+                   hx-get="/gui/tenants" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-building"></i> Tenants
                 </a>
             </li>
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "applications"}} active{{end}}" href="/gui/applications">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "applications"}} active{{end}}" href="/gui/applications"
+                   data-page="applications"
+                   hx-get="/gui/applications" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-app-indicator"></i> Applications
                 </a>
             </li>
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "users"}} active{{end}}" href="/gui/users">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "users"}} active{{end}}" href="/gui/users"
+                   data-page="users"
+                   hx-get="/gui/users" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-people"></i> Users
                 </a>
             </li>
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "oauth"}} active{{end}}" href="/gui/oauth">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "oauth"}} active{{end}}" href="/gui/oauth"
+                   data-page="oauth"
+                   hx-get="/gui/oauth" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-key"></i> OAuth Config
                 </a>
             </li>
@@ -116,17 +127,23 @@
         <div class="sidebar-heading">Email</div>
         <ul class="nav flex-column">
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "email-servers"}} active{{end}}" href="/gui/email-servers">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "email-servers"}} active{{end}}" href="/gui/email-servers"
+                   data-page="email-servers"
+                   hx-get="/gui/email-servers" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-hdd-network"></i> Email Servers
                 </a>
             </li>
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "email-templates"}} active{{end}}" href="/gui/email-templates">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "email-templates"}} active{{end}}" href="/gui/email-templates"
+                   data-page="email-templates"
+                   hx-get="/gui/email-templates" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-envelope-paper"></i> Email Templates
                 </a>
             </li>
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "email-types"}} active{{end}}" href="/gui/email-types">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "email-types"}} active{{end}}" href="/gui/email-types"
+                   data-page="email-types"
+                   hx-get="/gui/email-types" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-tags"></i> Email Types
                 </a>
             </li>
@@ -135,17 +152,23 @@
         <div class="sidebar-heading">System</div>
         <ul class="nav flex-column">
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "logs"}} active{{end}}" href="/gui/logs">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "logs"}} active{{end}}" href="/gui/logs"
+                   data-page="logs"
+                   hx-get="/gui/logs" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-journal-text"></i> Activity Logs
                 </a>
             </li>
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "api-keys"}} active{{end}}" href="/gui/api-keys">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "api-keys"}} active{{end}}" href="/gui/api-keys"
+                   data-page="api-keys"
+                   hx-get="/gui/api-keys" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-key-fill"></i> API Keys
                 </a>
             </li>
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "settings"}} active{{end}}" href="/gui/settings">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "settings"}} active{{end}}" href="/gui/settings"
+                   data-page="settings"
+                   hx-get="/gui/settings" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-gear"></i> Settings
                 </a>
             </li>
@@ -158,7 +181,9 @@
         <hr class="text-secondary mx-3 my-0">
         <ul class="nav flex-column my-1">
             <li class="nav-item">
-                <a class="nav-link{{if eq .ActivePage "my-account"}} active{{end}}" href="/gui/my-account">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "my-account"}} active{{end}}" href="/gui/my-account"
+                   data-page="my-account"
+                   hx-get="/gui/my-account" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                     <i class="bi bi-person-gear"></i> My Account
                 </a>
             </li>
@@ -176,7 +201,7 @@
     </nav>
 
     <!-- Main content -->
-    <div class="main-content">
+    <div class="main-content" id="main-content">
         <!-- Top navbar (mobile toggle + breadcrumb) -->
         <nav class="navbar navbar-light bg-white border-bottom px-3 d-md-none">
             <button class="btn btn-outline-dark btn-sm" onclick="document.querySelector('.sidebar').classList.toggle('show')">
@@ -185,22 +210,31 @@
             <span class="navbar-text fw-semibold">Auth API Admin</span>
         </nav>
 
-        <!-- Flash messages -->
-        <div class="container-fluid p-4">
-            {{if .FlashSuccess}}
-            <div class="alert alert-success alert-dismissible fade show" role="alert">
-                <i class="bi bi-check-circle me-2"></i>{{.FlashSuccess}}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-            {{end}}
-            {{if .FlashError}}
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <i class="bi bi-exclamation-triangle me-2"></i>{{.FlashError}}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-            {{end}}
+        <!-- Page content wrapper (HTMX swaps this on sidebar navigation) -->
+        <div id="page-content" data-active-page="{{.ActivePage}}">
+            <!-- Page-specific styles -->
+            {{block "head" .}}{{end}}
 
-            {{block "content" .}}{{end}}
+            <!-- Flash messages -->
+            <div class="container-fluid p-4">
+                {{if .FlashSuccess}}
+                <div class="alert alert-success alert-dismissible fade show" role="alert">
+                    <i class="bi bi-check-circle me-2"></i>{{.FlashSuccess}}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {{end}}
+                {{if .FlashError}}
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    <i class="bi bi-exclamation-triangle me-2"></i>{{.FlashError}}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {{end}}
+
+                {{block "content" .}}{{end}}
+            </div>
+
+            <!-- Page-specific scripts -->
+            {{block "scripts" .}}{{end}}
         </div>
     </div>
 
@@ -214,8 +248,76 @@
                 event.detail.headers['X-CSRF-Token'] = csrfMeta.content;
             }
         });
+
+        // Track current active page to detect navigation changes
+        var currentActivePage = (document.getElementById('page-content') || {}).getAttribute('data-active-page') || '';
+
+        function updateSidebarActiveState() {
+            var pageContent = document.getElementById('page-content');
+            if (!pageContent) return;
+
+            var activePage = pageContent.getAttribute('data-active-page') || '';
+
+            // Update sidebar active link
+            document.querySelectorAll('#sidebar-nav .sidebar-link').forEach(function(link) {
+                if (link.getAttribute('data-page') === activePage) {
+                    link.classList.add('active');
+                } else {
+                    link.classList.remove('active');
+                }
+            });
+
+            // Update page title
+            var titleMap = {
+                'dashboard': 'Dashboard',
+                'tenants': 'Tenants',
+                'applications': 'Applications',
+                'users': 'Users',
+                'oauth': 'OAuth Config',
+                'email-servers': 'Email Servers',
+                'email-templates': 'Email Templates',
+                'email-types': 'Email Types',
+                'logs': 'Activity Logs',
+                'api-keys': 'API Keys',
+                'settings': 'Settings',
+                'my-account': 'My Account'
+            };
+            if (activePage && titleMap[activePage]) {
+                document.title = titleMap[activePage] + ' - Auth API';
+            }
+
+            currentActivePage = activePage;
+        }
+
+        // After HTMX settles, check if the active page changed (sidebar navigation)
+        document.body.addEventListener('htmx:afterSettle', function(event) {
+            var pageContent = document.getElementById('page-content');
+            if (!pageContent) return;
+
+            var newActivePage = pageContent.getAttribute('data-active-page') || '';
+            if (newActivePage !== currentActivePage) {
+                updateSidebarActiveState();
+                window.scrollTo(0, 0);
+            }
+        });
+
+        // Handle browser back/forward buttons
+        var htmxNavigation = false;
+        document.body.addEventListener('htmx:pushedIntoHistory', function() {
+            htmxNavigation = true;
+        });
+        window.addEventListener('popstate', function(e) {
+            if (htmxNavigation && typeof htmx !== 'undefined') {
+                htmx.ajax('GET', window.location.pathname + window.location.search, {
+                    target: '#page-content',
+                    select: '#page-content',
+                    swap: 'outerHTML show:no-scroll'
+                }).then(function() {
+                    updateSidebarActiveState();
+                });
+            }
+        });
     </script>
-    {{block "scripts" .}}{{end}}
 </body>
 </html>
 {{end}}

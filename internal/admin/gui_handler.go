@@ -73,7 +73,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	// Validate input
 	if username == "" || password == "" {
 		data := web.TemplateData{
-			Error:    "Username and password are required.",
+			Error:    "Username or email and password are required.",
 			Username: username,
 			Redirect: redirect,
 		}
@@ -85,7 +85,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	account, err := h.AccountService.Authenticate(username, password)
 	if err != nil {
 		data := web.TemplateData{
-			Error:    "Invalid username or password.",
+			Error:    "Invalid username/email or password.",
 			Username: username,
 			Redirect: redirect,
 		}

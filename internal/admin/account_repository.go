@@ -31,6 +31,16 @@ func (r *AccountRepository) GetByUsername(username string) (*models.AdminAccount
 	return &account, nil
 }
 
+// GetByUsernameOrEmail retrieves an admin account by username or email.
+// This allows admins to log in using either their username or email address.
+func (r *AccountRepository) GetByUsernameOrEmail(identifier string) (*models.AdminAccount, error) {
+	var account models.AdminAccount
+	if err := r.DB.Where("username = ? OR email = ?", identifier, identifier).First(&account).Error; err != nil {
+		return nil, err
+	}
+	return &account, nil
+}
+
 // GetByID retrieves an admin account by ID
 func (r *AccountRepository) GetByID(id string) (*models.AdminAccount, error) {
 	var account models.AdminAccount

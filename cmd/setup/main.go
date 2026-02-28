@@ -28,6 +28,7 @@ func main() {
 	// Parse command-line flags for non-interactive mode
 	username := flag.String("username", "", "Admin username")
 	password := flag.String("password", "", "Admin password")
+	emailFlag := flag.String("email", "", "Admin email (optional)")
 	flag.Parse()
 
 	fmt.Println("===========================================")
@@ -79,16 +80,25 @@ func main() {
 	}
 
 	// Get credentials
-	var adminUsername, adminPassword string
+	var adminUsername, adminPassword, adminEmail string
 
 	if *username != "" && *password != "" {
 		// Non-interactive mode
 		adminUsername = *username
 		adminPassword = *password
+		adminEmail = *emailFlag
 	} else {
 		// Interactive mode
 		adminUsername = promptUsername()
 		adminPassword = promptPassword()
+		adminEmail = promptEmail()
+	}
+
+	// Validate email if provided
+	if adminEmail != "" {
+		if err := validateEmail(adminEmail); err != nil {
+			log.Fatalf("Invalid email: %v", err)
+		}
 	}
 
 	// Validate username
@@ -113,12 +123,21 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to hash password: %v", err)
 		}
-		if err := database.DB.Model(existing).Update("password_hash", string(hashedPassword)).Error; err != nil {
+		updates := map[string]interface{}{
+			"password_hash": string(hashedPassword),
+		}
+		if adminEmail != "" {
+			updates["email"] = adminEmail
+		}
+		if err := database.DB.Model(existing).Updates(updates).Error; err != nil {
 			log.Fatalf("Failed to update admin account: %v", err)
 		}
 		fmt.Println()
 		fmt.Println("===========================================")
-		fmt.Printf("  Admin account '%s' password updated!\n", adminUsername)
+		fmt.Printf("  Admin account '%s' updated!\n", adminUsername)
+		if adminEmail != "" {
+			fmt.Printf("  Email: %s\n", adminEmail)
+		}
 		fmt.Println("===========================================")
 		return
 	}
@@ -137,6 +156,7 @@ func main() {
 	// Create admin account
 	account := &models.AdminAccount{
 		Username:     adminUsername,
+		Email:        adminEmail,
 		PasswordHash: string(hashedPassword),
 	}
 
@@ -147,6 +167,9 @@ func main() {
 	fmt.Println()
 	fmt.Println("===========================================")
 	fmt.Printf("  Admin account '%s' created successfully!\n", adminUsername)
+	if adminEmail != "" {
+		fmt.Printf("  Email: %s\n", adminEmail)
+	}
 	fmt.Println("  You can now log in at /gui/login")
 	fmt.Println("===========================================")
 }
@@ -279,5 +302,45 @@ func validatePassword(password string) error {
 		return fmt.Errorf("password must contain at least one: %s", strings.Join(missing, ", "))
 	}
 
+	return nil
+}
+
+// promptEmail asks for an optional email address interactively
+func promptEmail() string {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Print("Enter admin email (optional, press Enter to skip): ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("Failed to read input: %v", err)
+		}
+		email := strings.TrimSpace(input)
+		if email == "" {
+			return ""
+		}
+		if err := validateEmail(email); err != nil {
+			fmt.Printf("  Error: %v\n", err)
+			continue
+		}
+		return email
+	}
+}
+
+// validateEmail validates a basic email format
+func validateEmail(email string) error {
+	if len(email) < 3 {
+		return fmt.Errorf("email must be at least 3 characters")
+	}
+	if len(email) > 254 {
+		return fmt.Errorf("email must be at most 254 characters")
+	}
+	atIdx := strings.Index(email, "@")
+	if atIdx < 1 {
+		return fmt.Errorf("email must contain '@' with a local part before it")
+	}
+	domain := email[atIdx+1:]
+	if len(domain) < 3 || !strings.Contains(domain, ".") {
+		return fmt.Errorf("email must have a valid domain (e.g. user@example.com)")
+	}
 	return nil
 }

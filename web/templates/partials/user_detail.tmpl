@@ -136,6 +136,7 @@
                         <th>Email</th>
                         <th>Name</th>
                         <th>Linked</th>
+                        <th class="text-center" style="width: 80px;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -155,6 +156,17 @@
                         <td><small>{{.Email}}</small></td>
                         <td><small>{{if .Name}}{{.Name}}{{else}}<span class="text-muted fst-italic">-</span>{{end}}</small></td>
                         <td><small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small></td>
+                        <td class="text-center">
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/users/social-accounts/{{.ID}}/unlink"
+                                    hx-target="#unlink-social-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#unlinkSocialModal"
+                                    title="Unlink">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
+                        </td>
                     </tr>
                     {{end}}
                 </tbody>

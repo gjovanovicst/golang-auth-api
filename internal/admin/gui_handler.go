@@ -3946,6 +3946,103 @@ func (h *GUIHandler) UserRoleFormCancel(c *gin.Context) {
 	c.String(http.StatusOK, "")
 }
 
+// SocialAccountUnlinkConfirm returns a confirmation dialog partial for unlinking a social account.
+// GET /gui/users/social-accounts/:id/unlink
+func (h *GUIHandler) SocialAccountUnlinkConfirm(c *gin.Context) {
+	id := c.Param("id")
+	sa, err := h.Repo.GetSocialAccountByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Social account not found.</div></div>`)
+		return
+	}
+
+	detail, err := h.Repo.GetUserDetailByID(sa.UserID.String())
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to load user details.</div></div>`)
+		return
+	}
+
+	count, err := h.Repo.CountSocialAccountsByUserID(sa.UserID.String())
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to check social accounts.</div></div>`)
+		return
+	}
+
+	isLockoutRisk := !detail.HasPassword && count == 1
+
+	type confirmData struct {
+		SocialAccountID string
+		Provider        string
+		Email           string
+		UserEmail       string
+		IsLockoutRisk   bool
+	}
+	c.HTML(http.StatusOK, "social_unlink_confirm", confirmData{
+		SocialAccountID: sa.ID.String(),
+		Provider:        sa.Provider,
+		Email:           sa.Email,
+		UserEmail:       detail.Email,
+		IsLockoutRisk:   isLockoutRisk,
+	})
+}
+
+// SocialAccountUnlink handles deleting (unlinking) a social account from a user.
+// DELETE /gui/users/social-accounts/:id
+func (h *GUIHandler) SocialAccountUnlink(c *gin.Context) {
+	id := c.Param("id")
+	sa, err := h.Repo.GetSocialAccountByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger">Social account not found.</div>`)
+		return
+	}
+
+	userID := sa.UserID.String()
+
+	// Lockout prevention: check if user has no password and this is their only social account
+	detail, err := h.Repo.GetUserDetailByID(userID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load user details.</div>`)
+		return
+	}
+
+	count, err := h.Repo.CountSocialAccountsByUserID(userID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to check social accounts.</div>`)
+		return
+	}
+
+	if !detail.HasPassword && count == 1 {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Cannot unlink the only social account when the user has no password set.</div>`)
+		return
+	}
+
+	if err := h.Repo.DeleteSocialAccount(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to unlink social account.</div>`)
+		return
+	}
+
+	// Trigger modal close via HX-Trigger
+	c.Header("HX-Trigger", "socialAccountUnlinked")
+
+	// Re-render the user detail with refreshed data
+	refreshed, err := h.Repo.GetUserDetailByID(userID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Social account unlinked but failed to refresh user details.</div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "user_detail", refreshed)
+}
+
 // parseVariablesFromForm parses variable rows from the dynamic form.
 // Variables are submitted as var_name[], var_description[], var_required[],
 // var_source[], and var_default_value[] arrays.

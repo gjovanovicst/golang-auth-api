@@ -522,6 +522,13 @@ definitions:
     required:
     - permission_ids
     type: object
+  dto.SocialAccountListResponse:
+    properties:
+      social_accounts:
+        items:
+          $ref: '#/definitions/dto.SocialAccountResponse'
+        type: array
+    type: object
   dto.SocialAccountResponse:
     properties:
       created_at:
@@ -624,6 +631,11 @@ definitions:
         type: string
     required:
     - code
+    type: object
+  dto.UnlinkSocialAccountResponse:
+    properties:
+      message:
+        type: string
     type: object
   dto.UpdateEmailRequest:
     properties:
@@ -2595,6 +2607,60 @@ paths:
       summary: Facebook OAuth2 Callback
       tags:
       - social
+  /auth/facebook/link:
+    get:
+      description: Initiates OAuth flow to link a Facebook account to the authenticated
+        user
+      parameters:
+      - description: Frontend callback URL
+        in: query
+        name: redirect_uri
+        type: string
+      produces:
+      - application/json
+      responses:
+        "307":
+          description: Redirect
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Link Facebook account
+      tags:
+      - social
+  /auth/facebook/link/callback:
+    get:
+      description: Handles callback from Facebook OAuth to link account to existing
+        user
+      parameters:
+      - description: State token
+        in: query
+        name: state
+        required: true
+        type: string
+      - description: Authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "302":
+          description: Redirect with error
+          schema:
+            type: string
+      summary: Facebook link callback
+      tags:
+      - social
   /auth/facebook/login:
     get:
       description: Redirects user to Facebook OAuth2 login page
@@ -2657,6 +2723,60 @@ paths:
       summary: GitHub OAuth2 Callback
       tags:
       - social
+  /auth/github/link:
+    get:
+      description: Initiates OAuth flow to link a GitHub account to the authenticated
+        user
+      parameters:
+      - description: Frontend callback URL
+        in: query
+        name: redirect_uri
+        type: string
+      produces:
+      - application/json
+      responses:
+        "307":
+          description: Redirect
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Link GitHub account
+      tags:
+      - social
+  /auth/github/link/callback:
+    get:
+      description: Handles callback from GitHub OAuth to link account to existing
+        user
+      parameters:
+      - description: State token
+        in: query
+        name: state
+        required: true
+        type: string
+      - description: Authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "302":
+          description: Redirect with error
+          schema:
+            type: string
+      summary: GitHub link callback
+      tags:
+      - social
   /auth/github/login:
     get:
       description: Redirects user to GitHub OAuth2 login page
@@ -2717,6 +2837,60 @@ paths:
               type: string
             type: object
       summary: Google OAuth2 Callback
+      tags:
+      - social
+  /auth/google/link:
+    get:
+      description: Initiates OAuth flow to link a Google account to the authenticated
+        user
+      parameters:
+      - description: Frontend callback URL
+        in: query
+        name: redirect_uri
+        type: string
+      produces:
+      - application/json
+      responses:
+        "307":
+          description: Redirect
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Link Google account
+      tags:
+      - social
+  /auth/google/link/callback:
+    get:
+      description: Handles callback from Google OAuth to link account to existing
+        user
+      parameters:
+      - description: State token
+        in: query
+        name: state
+        required: true
+        type: string
+      - description: Authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "302":
+          description: Redirect with error
+          schema:
+            type: string
+      summary: Google link callback
       tags:
       - social
   /auth/google/login:
@@ -3047,6 +3221,66 @@ paths:
       summary: Update user password
       tags:
       - User
+  /profile/social-accounts:
+    get:
+      description: Returns all social accounts linked to the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SocialAccountListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List linked social accounts
+      tags:
+      - social
+  /profile/social-accounts/{id}:
+    delete:
+      description: Removes a linked social account from the authenticated user's profile
+      parameters:
+      - description: Social account ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UnlinkSocialAccountResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Unlink a social account
+      tags:
+      - social
   /refresh-token:
     post:
       consumes:

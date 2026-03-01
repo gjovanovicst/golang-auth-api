@@ -15,24 +15,26 @@ import (
 
 // Event types constants for consistency
 const (
-	EventLogin             = "LOGIN"
-	EventLogout            = "LOGOUT"
-	EventRegister          = "REGISTER"
-	EventPasswordChange    = "PASSWORD_CHANGE"
-	EventPasswordReset     = "PASSWORD_RESET"
-	EventEmailVerify       = "EMAIL_VERIFY"
-	EventEmailChange       = "EMAIL_CHANGE"
-	Event2FAEnable         = "2FA_ENABLE"
-	Event2FADisable        = "2FA_DISABLE"
-	Event2FALogin          = "2FA_LOGIN"
-	EventTokenRefresh      = "TOKEN_REFRESH"
-	EventSocialLogin       = "SOCIAL_LOGIN"
-	EventProfileAccess     = "PROFILE_ACCESS"
-	EventProfileUpdate     = "PROFILE_UPDATE"
-	EventAccountDeletion   = "ACCOUNT_DELETION"
-	EventRecoveryCodeUsed  = "RECOVERY_CODE_USED"
-	EventRecoveryCodeGen   = "RECOVERY_CODE_GENERATE"
-	EventEmailVerifyResend = "EMAIL_VERIFY_RESEND"
+	EventLogin                 = "LOGIN"
+	EventLogout                = "LOGOUT"
+	EventRegister              = "REGISTER"
+	EventPasswordChange        = "PASSWORD_CHANGE"
+	EventPasswordReset         = "PASSWORD_RESET"
+	EventEmailVerify           = "EMAIL_VERIFY"
+	EventEmailChange           = "EMAIL_CHANGE"
+	Event2FAEnable             = "2FA_ENABLE"
+	Event2FADisable            = "2FA_DISABLE"
+	Event2FALogin              = "2FA_LOGIN"
+	EventTokenRefresh          = "TOKEN_REFRESH"
+	EventSocialLogin           = "SOCIAL_LOGIN"
+	EventSocialAccountLinked   = "SOCIAL_ACCOUNT_LINKED"
+	EventSocialAccountUnlinked = "SOCIAL_ACCOUNT_UNLINKED"
+	EventProfileAccess         = "PROFILE_ACCESS"
+	EventProfileUpdate         = "PROFILE_UPDATE"
+	EventAccountDeletion       = "ACCOUNT_DELETION"
+	EventRecoveryCodeUsed      = "RECOVERY_CODE_USED"
+	EventRecoveryCodeGen       = "RECOVERY_CODE_GENERATE"
+	EventEmailVerifyResend     = "EMAIL_VERIFY_RESEND"
 )
 
 // LogEntry represents a log entry to be processed
@@ -361,4 +363,20 @@ func LogProfileUpdate(appID, userID uuid.UUID, ipAddress, userAgent string, deta
 // LogAccountDeletion logs an account deletion event
 func LogAccountDeletion(appID, userID uuid.UUID, ipAddress, userAgent string) {
 	GetLogService().LogActivity(appID, userID, EventAccountDeletion, ipAddress, userAgent, nil)
+}
+
+// LogSocialAccountLinked logs when a social account is linked to a user's profile
+func LogSocialAccountLinked(appID, userID uuid.UUID, ipAddress, userAgent string, provider string) {
+	details := map[string]interface{}{
+		"provider": provider,
+	}
+	GetLogService().LogActivity(appID, userID, EventSocialAccountLinked, ipAddress, userAgent, details)
+}
+
+// LogSocialAccountUnlinked logs when a social account is unlinked from a user's profile
+func LogSocialAccountUnlinked(appID, userID uuid.UUID, ipAddress, userAgent string, socialAccountID string) {
+	details := map[string]interface{}{
+		"social_account_id": socialAccountID,
+	}
+	GetLogService().LogActivity(appID, userID, EventSocialAccountUnlinked, ipAddress, userAgent, details)
 }

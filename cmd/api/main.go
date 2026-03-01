@@ -173,6 +173,20 @@ func main() {
 		// GitHub OAuth2
 		auth.GET("/github/login", socialHandler.GithubLogin)
 		auth.GET("/github/callback", socialHandler.GithubCallback)
+
+		// Account linking callbacks (public — user ID embedded in OAuth state)
+		auth.GET("/google/link/callback", socialHandler.GoogleLinkCallback)
+		auth.GET("/facebook/link/callback", socialHandler.FacebookLinkCallback)
+		auth.GET("/github/link/callback", socialHandler.GithubLinkCallback)
+	}
+
+	// Account linking initiation routes (require JWT authentication)
+	authLink := r.Group("/auth")
+	authLink.Use(middleware.AuthMiddleware())
+	{
+		authLink.GET("/google/link", socialHandler.GoogleLink)
+		authLink.GET("/facebook/link", socialHandler.FacebookLink)
+		authLink.GET("/github/link", socialHandler.GithubLink)
 	}
 
 	// Protected routes (require JWT authentication)
@@ -185,6 +199,10 @@ func main() {
 		protected.DELETE("/profile", middleware.AuthorizePermission(rbacService, "user", "delete"), userHandler.DeleteAccount)
 		protected.PUT("/profile/email", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdateEmail)
 		protected.PUT("/profile/password", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdatePassword)
+
+		// Social account management routes
+		protected.GET("/profile/social-accounts", middleware.AuthorizePermission(rbacService, "user", "read"), socialHandler.ListSocialAccounts)
+		protected.DELETE("/profile/social-accounts/:id", middleware.AuthorizePermission(rbacService, "user", "write"), socialHandler.UnlinkSocialAccount)
 
 		// Auth routes (no extra permission needed — auth is inherent)
 		protected.GET("/auth/validate", userHandler.ValidateToken)
@@ -346,6 +364,8 @@ func main() {
 			guiAuth.GET("/users/list", guiHandler.UserList)
 			guiAuth.GET("/users/:id", guiHandler.UserDetail)
 			guiAuth.PUT("/users/:id/toggle", guiHandler.UserToggleActive)
+			guiAuth.GET("/users/social-accounts/:id/unlink", guiHandler.SocialAccountUnlinkConfirm)
+			guiAuth.DELETE("/users/social-accounts/:id", guiHandler.SocialAccountUnlink)
 
 			// Activity logs viewer
 			guiAuth.GET("/logs", guiHandler.LogsPage)

@@ -49,3 +49,15 @@ func (r *Repository) UpdateSocialAccountTokens(id string, accessToken, refreshTo
 func (r *Repository) DeleteSocialAccount(id string) error {
 	return r.DB.Delete(&models.SocialAccount{}, "id = ?", id).Error
 }
+
+func (r *Repository) GetSocialAccountByID(id string) (*models.SocialAccount, error) {
+	var socialAccount models.SocialAccount
+	err := r.DB.Where("id = ?", id).First(&socialAccount).Error
+	return &socialAccount, err
+}
+
+func (r *Repository) CountSocialAccountsByUserID(userID string) (int64, error) {
+	var count int64
+	err := r.DB.Model(&models.SocialAccount{}).Where("user_id = ?", userID).Count(&count).Error
+	return count, err
+}

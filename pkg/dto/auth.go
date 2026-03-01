@@ -159,3 +159,19 @@ type DeleteAccountRequest struct {
 	Password        string `json:"password" validate:"required,max=128" example:"password123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
 	ConfirmDeletion bool   `json:"confirm_deletion" validate:"required,eq=true" example:"true"`
 }
+
+// SocialAccountListResponse represents the response for listing linked social accounts
+type SocialAccountListResponse struct {
+	SocialAccounts []SocialAccountResponse `json:"social_accounts"`
+}
+
+// LinkSocialAccountResponse represents the response when a social account is linked
+type LinkSocialAccountResponse struct {
+	Message string                `json:"message"`
+	Account SocialAccountResponse `json:"account"`
+}
+
+// UnlinkSocialAccountResponse represents the response when a social account is unlinked
+type UnlinkSocialAccountResponse struct {
+	Message string `json:"message"`
+}

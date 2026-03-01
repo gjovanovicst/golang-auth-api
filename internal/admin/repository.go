@@ -838,3 +838,30 @@ func (r *Repository) UpdateApiKeyLastUsed(id uuid.UUID) {
 	// Fire-and-forget update; errors are non-critical
 	r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Update("last_used_at", time.Now())
 }
+
+// ============================================================
+// Social Account Operations (Admin GUI - unlink support)
+// ============================================================
+
+// GetSocialAccountByID returns a single social account by primary key.
+func (r *Repository) GetSocialAccountByID(id string) (*models.SocialAccount, error) {
+	var sa models.SocialAccount
+	if err := r.DB.First(&sa, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &sa, nil
+}
+
+// DeleteSocialAccount permanently removes a social account by ID.
+func (r *Repository) DeleteSocialAccount(id string) error {
+	return r.DB.Where("id = ?", id).Delete(&models.SocialAccount{}).Error
+}
+
+// CountSocialAccountsByUserID returns the number of social accounts linked to a user.
+func (r *Repository) CountSocialAccountsByUserID(userID string) (int64, error) {
+	var count int64
+	if err := r.DB.Model(&models.SocialAccount{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}

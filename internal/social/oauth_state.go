@@ -18,6 +18,8 @@ type OAuthState struct {
 	AppID       string    `json:"app_id"`
 	Nonce       string    `json:"nonce"`
 	Timestamp   time.Time `json:"timestamp"`
+	UserID      string    `json:"user_id,omitempty"` // Set when linking a social account to an authenticated user
+	Flow        string    `json:"flow,omitempty"`    // "login" (default) or "link"
 }
 
 // generateRandomString generates a cryptographically secure random string
@@ -138,4 +140,39 @@ func GetDefaultRedirectURI() string {
 		defaultURI = "http://localhost:5173/auth/callback"
 	}
 	return defaultURI
+}
+
+// CreateOAuthLinkState creates a secure state parameter for the account linking flow.
+// It embeds the authenticated user's ID so the link callback can associate the provider.
+func CreateOAuthLinkState(redirectURI string, appID string, userID string) (string, error) {
+	// Validate redirect URI
+	if !IsAllowedRedirectURI(redirectURI) {
+		return "", fmt.Errorf("redirect URI not allowed: %s", redirectURI)
+	}
+
+	// Generate a random nonce
+	nonce, err := generateRandomString(16)
+	if err != nil {
+		return "", err
+	}
+
+	// Create state object with link flow and user ID
+	state := OAuthState{
+		RedirectURI: redirectURI,
+		AppID:       appID,
+		Nonce:       nonce,
+		Timestamp:   time.Now(),
+		UserID:      userID,
+		Flow:        "link",
+	}
+
+	// Encode state as JSON
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return "", err
+	}
+
+	// Base64 encode the state
+	encodedState := base64.URLEncoding.EncodeToString(stateJSON)
+	return encodedState, nil
 }

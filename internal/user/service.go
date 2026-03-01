@@ -22,14 +22,36 @@ import (
 // security (matches the admin account bcrypt cost in cmd/setup).
 const bcryptCost = 12
 
+// RoleLookupFunc is a function that returns role names for a user in an app.
+// Used to populate JWT claims with roles without importing the rbac package directly.
+type RoleLookupFunc func(appID, userID string) ([]string, error)
+
+// AssignDefaultRoleFunc is called after user registration to assign the default role.
+type AssignDefaultRoleFunc func(appID, userID string) error
+
 type Service struct {
-	Repo         *Repository
-	EmailService *emailpkg.Service
-	DB           *gorm.DB
+	Repo              *Repository
+	EmailService      *emailpkg.Service
+	DB                *gorm.DB
+	LookupRoles       RoleLookupFunc        // Optional: if nil, tokens are generated without roles
+	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no default role is assigned on registration
 }
 
 func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
 	return &Service{Repo: r, EmailService: es, DB: db}
+}
+
+// getUserRoles fetches roles for JWT embedding. Returns nil on error (non-fatal).
+func (s *Service) getUserRoles(appID, userID string) []string {
+	if s.LookupRoles == nil {
+		return nil
+	}
+	roles, err := s.LookupRoles(appID, userID)
+	if err != nil {
+		log.Printf("Warning: failed to lookup roles for user %s in app %s: %v", userID, appID, err)
+		return nil
+	}
+	return roles
 }
 
 // LoginResult represents the result of a login attempt
@@ -65,6 +87,13 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 
 	if err := s.Repo.CreateUser(user); err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create user")
+	}
+
+	// Assign default 'member' role to the new user (non-fatal if it fails)
+	if s.AssignDefaultRole != nil {
+		if err := s.AssignDefaultRole(appID.String(), user.ID.String()); err != nil {
+			log.Printf("Warning: failed to assign default role to user %s: %v", user.ID.String(), err)
+		}
 	}
 
 	// Generate email verification token and send email
@@ -144,12 +173,13 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 	if err := s.DB.Select("two_fa_required").First(&app, "id = ?", appID).Error; err == nil && app.TwoFARequired {
 		// User doesn't have 2FA set up, but the app requires it.
 		// Issue tokens so the user can authenticate to /2fa/generate, but flag the response.
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
+		roles := s.getUserRoles(appID.String(), user.ID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String(), roles)
 		if err != nil {
 			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
 
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String(), roles)
 		if err != nil {
 			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
@@ -172,12 +202,13 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 	}
 
 	// Generate JWTs for standard login
-	accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
+	roles := s.getUserRoles(appID.String(), user.ID.String())
+	accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String(), roles)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
 
-	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
+	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String(), roles)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
@@ -212,12 +243,13 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, string,
 		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Refresh token revoked or invalid")
 	}
 
-	// Generate new access and refresh tokens
-	newAccessToken, err := jwt.GenerateAccessToken(claims.AppID, claims.UserID)
+	// Generate new access and refresh tokens (re-fetch roles for freshness)
+	roles := s.getUserRoles(claims.AppID, claims.UserID)
+	newAccessToken, err := jwt.GenerateAccessToken(claims.AppID, claims.UserID, roles)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new access token")
 	}
-	newRefreshToken, err := jwt.GenerateRefreshToken(claims.AppID, claims.UserID)
+	newRefreshToken, err := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, roles)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new refresh token")
 	}

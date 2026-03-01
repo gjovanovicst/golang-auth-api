@@ -20,7 +20,7 @@ func TestGenerateAccessToken(t *testing.T) {
 	appID := "00000000-0000-0000-0000-000000000001"
 	userID := "test-user-id"
 
-	token, err := GenerateAccessToken(appID, userID)
+	token, err := GenerateAccessToken(appID, userID, nil)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -53,7 +53,7 @@ func TestGenerateRefreshToken(t *testing.T) {
 	appID := "00000000-0000-0000-0000-000000000001"
 	userID := "test-user-id"
 
-	token, err := GenerateRefreshToken(appID, userID)
+	token, err := GenerateRefreshToken(appID, userID, nil)
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -87,7 +87,7 @@ func TestParseTokenValid(t *testing.T) {
 	userID := "test-user-id"
 
 	// Generate a token first
-	token, err := GenerateAccessToken(appID, userID)
+	token, err := GenerateAccessToken(appID, userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate token: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestParseTokenExpired(t *testing.T) {
 
 	appID := "00000000-0000-0000-0000-000000000001"
 	userID := "test-user-id"
-	token, err := GenerateAccessToken(appID, userID)
+	token, err := GenerateAccessToken(appID, userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate token: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestParseTokenExpired(t *testing.T) {
 func TestGenerateTokenWithEmptyUserID(t *testing.T) {
 	appID := "00000000-0000-0000-0000-000000000001"
 	// Our implementation allows empty user IDs, so this should succeed
-	token, err := GenerateAccessToken(appID, "")
+	token, err := GenerateAccessToken(appID, "", nil)
 	if err != nil {
 		t.Fatalf("Expected no error generating token with empty user ID, got %v", err)
 	}
@@ -178,12 +178,12 @@ func TestTokenTypeDifferentiation(t *testing.T) {
 	appID := "00000000-0000-0000-0000-000000000001"
 	userID := "test-user-id"
 
-	accessToken, err := GenerateAccessToken(appID, userID)
+	accessToken, err := GenerateAccessToken(appID, userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate access token: %v", err)
 	}
 
-	refreshToken, err := GenerateRefreshToken(appID, userID)
+	refreshToken, err := GenerateRefreshToken(appID, userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate refresh token: %v", err)
 	}

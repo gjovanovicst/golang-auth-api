@@ -2,6 +2,7 @@ package twofa
 
 import (
 	"fmt"
+	stdlog "log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -15,12 +16,29 @@ import (
 	"github.com/google/uuid"
 )
 
+// RoleLookupFunc is a function that returns role names for a user in an app.
+type RoleLookupFunc func(appID, userID string) ([]string, error)
+
 type Handler struct {
-	Service *Service
+	Service     *Service
+	LookupRoles RoleLookupFunc // Optional: if nil, tokens are generated without roles
 }
 
 func NewHandler(s *Service) *Handler {
 	return &Handler{Service: s}
+}
+
+// getUserRoles fetches roles for JWT embedding. Returns nil on error (non-fatal).
+func (h *Handler) getUserRoles(appID, userID string) []string {
+	if h.LookupRoles == nil {
+		return nil
+	}
+	roles, err := h.LookupRoles(appID, userID)
+	if err != nil {
+		stdlog.Printf("Warning: failed to lookup roles for user %s in app %s: %v", userID, appID, err)
+		return nil
+	}
+	return roles
 }
 
 // @Summary Generate 2FA setup
@@ -281,7 +299,8 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	}
 
 	// Generate final tokens
-	accessToken, refreshToken, err := generateTokensForUser(appID.String(), userID)
+	roles := h.getUserRoles(appID.String(), userID)
+	accessToken, refreshToken, err := generateTokensForUser(appID.String(), userID, roles)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to generate tokens"})
 		return
@@ -488,13 +507,13 @@ func getUserIDFromTempSession(appID, tempToken string) (string, error) {
 }
 
 // generateTokensForUser generates access and refresh tokens for a user
-func generateTokensForUser(appID string, userID string) (string, string, error) {
-	accessToken, err := jwt.GenerateAccessToken(appID, userID)
+func generateTokensForUser(appID string, userID string, roles []string) (string, string, error) {
+	accessToken, err := jwt.GenerateAccessToken(appID, userID, roles)
 	if err != nil {
 		return "", "", err
 	}
 
-	refreshToken, err := jwt.GenerateRefreshToken(appID, userID)
+	refreshToken, err := jwt.GenerateRefreshToken(appID, userID, roles)
 	if err != nil {
 		return "", "", err
 	}

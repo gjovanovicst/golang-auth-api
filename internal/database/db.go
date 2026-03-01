@@ -63,6 +63,9 @@ func MigrateDatabase() {
 		&models.EmailServerConfig{}, // Per-app SMTP configuration
 		&models.EmailType{},         // Email type registry
 		&models.EmailTemplate{},     // Email templates (per-app and global)
+		&models.Role{},              // RBAC roles (per-app)
+		&models.Permission{},        // RBAC permissions (global)
+		&models.UserRole{},          // RBAC user-role assignments
 	)
 
 	if err != nil {

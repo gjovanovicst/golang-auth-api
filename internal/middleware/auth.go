@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 )
@@ -67,29 +68,81 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 
 		c.Set("userID", claims.UserID)
+		c.Set("appID", claims.AppID)
+		c.Set("roles", claims.Roles)
 		c.Next()
 	}
 }
 
-// AuthorizeRole checks if the user has the required role
-func AuthorizeRole(requiredRole string) gin.HandlerFunc {
+// AuthorizeRole checks if the authenticated user has at least one of the required roles.
+// It first checks JWT claims (fast path), then falls back to the RBAC service (Redis/DB).
+// If rbacService is nil, only JWT claims are checked.
+func AuthorizeRole(rbacService *rbac.Service, requiredRoles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Assuming userID is already set by AuthMiddleware
-		_, exists := c.Get("userID")
+		userID, exists := c.Get("userID")
 		if !exists {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in context"})
 			return
 		}
 
-		// TODO: Fetch user roles from database or claims
-		// For demonstration, let's assume a simple check
-		// if userHasRole(userID.(string), requiredRole) {
-		// 	c.Next()
-		// } else {
-		// 	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Forbidden"})
-		// }
+		appID, _ := c.Get("appID")
 
-		// For now, just proceed if authenticated
+		// Fast path: check roles from JWT claims
+		if rolesVal, ok := c.Get("roles"); ok && rolesVal != nil {
+			if jwtRoles, ok := rolesVal.([]string); ok && len(jwtRoles) > 0 {
+				for _, required := range requiredRoles {
+					for _, role := range jwtRoles {
+						if role == required {
+							c.Next()
+							return
+						}
+					}
+				}
+			}
+		}
+
+		// Fallback: check RBAC service (Redis cache → DB)
+		if rbacService != nil && appID != nil {
+			hasRole, err := rbacService.HasRole(appID.(string), userID.(string), requiredRoles...)
+			if err == nil && hasRole {
+				c.Next()
+				return
+			}
+		}
+
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Insufficient role permissions"})
+	}
+}
+
+// AuthorizePermission checks if the authenticated user has a specific permission
+// (resource:action format, e.g. "user:read", "log:delete").
+// Always uses the RBAC service for resolution (Redis cache → DB).
+func AuthorizePermission(rbacService *rbac.Service, resource, action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := c.Get("userID")
+		if !exists {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in context"})
+			return
+		}
+
+		appID, _ := c.Get("appID")
+
+		if rbacService == nil || appID == nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Authorization service not available"})
+			return
+		}
+
+		hasPerm, err := rbacService.HasPermission(appID.(string), userID.(string), resource, action)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Authorization check failed"})
+			return
+		}
+
+		if !hasPerm {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+			return
+		}
+
 		c.Next()
 	}
 }

@@ -1,0 +1,19 @@
+{{define "role_delete_confirm"}}
+<div class="modal-body">
+    <p>Are you sure you want to delete the role <strong>{{.Name}}</strong>?</p>
+    <p class="text-danger small mb-0">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        This will also remove this role from all users who currently have it assigned. This action cannot be undone.
+    </p>
+</div>
+<div class="modal-footer border-0">
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+    <button type="button" class="btn btn-danger btn-sm"
+            hx-delete="/gui/roles/{{.ID}}"
+            hx-target="#role-table"
+            hx-swap="innerHTML"
+            hx-headers='{"HX-Trigger-After-Swap": "roleDeleted"}'>
+        <i class="bi bi-trash me-1"></i>Delete Role
+    </button>
+</div>
+{{end}}

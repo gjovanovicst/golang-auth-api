@@ -1,0 +1,96 @@
+{{define "user_role_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            <i class="bi bi-plus-lg me-2"></i>Assign Role to User
+        </h6>
+        <form hx-post="/gui/user-roles"
+              hx-target="#user-role-form-container"
+              hx-swap="innerHTML">
+            <input type="hidden" id="urUserID" name="user_id" value="">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label for="urAppID" class="form-label small text-muted">Application</label>
+                    <select class="form-select" id="urAppID" name="app_id" required
+                            hx-get="/gui/user-roles/roles-for-app"
+                            hx-target="#urRoleSelect"
+                            hx-swap="innerHTML"
+                            hx-trigger="change"
+                            onchange="clearUserSelection();">
+                        <option value="">-- Select App --</option>
+                        {{range .Apps}}
+                        <option value="{{.ID}}">{{.Name}}</option>
+                        {{end}}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">User</label>
+                    <div class="position-relative">
+                        <!-- Selected user display (hidden until a user is picked) -->
+                        <div id="urSelectedUser" class="form-control d-none align-items-center justify-content-between" style="background:#f8f9fa; cursor:default;">
+                            <span id="urSelectedLabel" class="small text-truncate"></span>
+                            <button type="button" class="btn-close btn-close-sm ms-2" style="font-size:.6rem" onclick="clearUserSelection();" title="Clear"></button>
+                        </div>
+                        <!-- Search input (shown by default) -->
+                        <input type="text" class="form-control" id="urUserSearch"
+                               placeholder="Search by email or name..."
+                               autocomplete="off"
+                               hx-get="/gui/user-roles/search-users"
+                               hx-target="#urUserResults"
+                               hx-swap="innerHTML"
+                               hx-trigger="keyup changed delay:300ms"
+                               hx-include="#urAppID"
+                               name="q">
+                        <!-- Dropdown results -->
+                        <div id="urUserResults" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; max-height:250px; overflow-y:auto;"></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label for="urRoleID" class="form-label small text-muted">Role</label>
+                    <select class="form-select" id="urRoleSelect" name="role_id" required>
+                        <option value="">-- Select App first --</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>Assign
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary"
+                            hx-get="/gui/user-roles/form-cancel"
+                            hx-target="#user-role-form-container"
+                            hx-swap="innerHTML">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+function selectUser(id, email) {
+    document.getElementById('urUserID').value = id;
+    document.getElementById('urSelectedLabel').textContent = email;
+    document.getElementById('urSelectedUser').classList.remove('d-none');
+    document.getElementById('urSelectedUser').classList.add('d-flex');
+    document.getElementById('urUserSearch').classList.add('d-none');
+    document.getElementById('urUserResults').innerHTML = '';
+}
+function clearUserSelection() {
+    document.getElementById('urUserID').value = '';
+    document.getElementById('urSelectedLabel').textContent = '';
+    document.getElementById('urSelectedUser').classList.add('d-none');
+    document.getElementById('urSelectedUser').classList.remove('d-flex');
+    document.getElementById('urUserSearch').classList.remove('d-none');
+    document.getElementById('urUserSearch').value = '';
+    document.getElementById('urUserResults').innerHTML = '';
+}
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    var container = document.getElementById('urUserResults');
+    var search = document.getElementById('urUserSearch');
+    if (container && search && !container.contains(e.target) && e.target !== search) {
+        container.innerHTML = '';
+    }
+});
+</script>
+{{end}}

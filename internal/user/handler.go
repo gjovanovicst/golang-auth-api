@@ -353,6 +353,14 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		}
 	}
 
+	// Get user roles from context (set by AuthMiddleware from JWT claims)
+	var userRoles []string
+	if rolesVal, rolesExist := c.Get("roles"); rolesExist {
+		if r, ok := rolesVal.([]string); ok {
+			userRoles = r
+		}
+	}
+
 	// Return user profile without sensitive information
 	c.JSON(http.StatusOK, dto.UserResponse{
 		ID:             user.ID.String(),
@@ -364,6 +372,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		ProfilePicture: user.ProfilePicture,
 		Locale:         user.Locale,
 		TwoFAEnabled:   user.TwoFAEnabled,
+		Roles:          userRoles,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		SocialAccounts: socialAccounts,
@@ -532,6 +541,14 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		}
 	}
 
+	// Get user roles from context (set by AuthMiddleware from JWT claims)
+	var profileRoles []string
+	if rolesVal, rolesExist := c.Get("roles"); rolesExist {
+		if r, ok := rolesVal.([]string); ok {
+			profileRoles = r
+		}
+	}
+
 	c.JSON(http.StatusOK, dto.UserResponse{
 		ID:             user.ID.String(),
 		Email:          user.Email,
@@ -542,6 +559,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		ProfilePicture: user.ProfilePicture,
 		Locale:         user.Locale,
 		TwoFAEnabled:   user.TwoFAEnabled,
+		Roles:          profileRoles,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		SocialAccounts: socialAccounts,

@@ -16,12 +16,37 @@ import (
 )
 
 type Service struct {
-	UserRepo   *user.Repository
-	SocialRepo *Repository
+	UserRepo          *user.Repository
+	SocialRepo        *Repository
+	LookupRoles       user.RoleLookupFunc        // Optional: if nil, tokens are generated without roles
+	AssignDefaultRole user.AssignDefaultRoleFunc // Optional: if nil, no default role on social signup
 }
 
 func NewService(ur *user.Repository, sr *Repository) *Service {
 	return &Service{UserRepo: ur, SocialRepo: sr}
+}
+
+// getUserRoles fetches roles for JWT embedding. Returns nil on error (non-fatal).
+func (s *Service) getUserRoles(appID, userID string) []string {
+	if s.LookupRoles == nil {
+		return nil
+	}
+	roles, err := s.LookupRoles(appID, userID)
+	if err != nil {
+		log.Printf("Warning: failed to lookup roles for user %s in app %s: %v", userID, appID, err)
+		return nil
+	}
+	return roles
+}
+
+// assignDefaultRole assigns the default role to a newly created social user (non-fatal).
+func (s *Service) assignDefaultRole(appID, userID string) {
+	if s.AssignDefaultRole == nil {
+		return
+	}
+	if err := s.AssignDefaultRole(appID, userID); err != nil {
+		log.Printf("Warning: failed to assign default role to social user %s in app %s: %v", userID, appID, err)
+	}
 }
 
 func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string) (string, string, uuid.UUID, *errors.AppError) {
@@ -107,11 +132,12 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 		}
 
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String())
+		roles := s.getUserRoles(appID.String(), socialAccount.UserID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
@@ -170,11 +196,12 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
 		}
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
+		roles := s.getUserRoles(appID.String(), user.ID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
@@ -201,6 +228,9 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
 	}
 
+	// Assign default 'member' role to new social user
+	s.assignDefaultRole(appID.String(), newUser.ID.String())
+
 	rawDataJSON, _ := json.Marshal(googleUser)
 	newSocialAccount := &models.SocialAccount{
 		AppID:          appID,
@@ -222,11 +252,12 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 	}
 
 	// Authenticate new user
-	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String())
+	roles := s.getUserRoles(appID.String(), newUser.ID.String())
+	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String(), roles)
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String())
+	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String(), roles)
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
@@ -323,11 +354,12 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 		}
 
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String())
+		roles := s.getUserRoles(appID.String(), socialAccount.UserID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
@@ -386,11 +418,12 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
 		}
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
+		roles := s.getUserRoles(appID.String(), user.ID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
@@ -416,6 +449,9 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
 	}
 
+	// Assign default 'member' role to new social user
+	s.assignDefaultRole(appID.String(), newUser.ID.String())
+
 	rawDataJSON, _ := json.Marshal(facebookUser)
 	newSocialAccount := &models.SocialAccount{
 		AppID:          appID,
@@ -437,11 +473,12 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 	}
 
 	// Authenticate new user
-	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String())
+	roles := s.getUserRoles(appID.String(), newUser.ID.String())
+	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String(), roles)
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String())
+	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String(), roles)
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
@@ -569,11 +606,12 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		}
 
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String())
+		roles := s.getUserRoles(appID.String(), socialAccount.UserID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), socialAccount.UserID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), socialAccount.UserID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
@@ -621,11 +659,12 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
 		}
 		// Authenticate existing user
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
+		roles := s.getUserRoles(appID.String(), user.ID.String())
+		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 		}
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
+		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String(), roles)
 		if err != nil {
 			return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 		}
@@ -648,6 +687,9 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
 	}
 
+	// Assign default 'member' role to new social user
+	s.assignDefaultRole(appID.String(), newUser.ID.String())
+
 	rawDataJSON, _ := json.Marshal(githubUser)
 	newSocialAccount := &models.SocialAccount{
 		AppID:          appID,
@@ -667,11 +709,12 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 	}
 
 	// Authenticate new user
-	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String())
+	roles := s.getUserRoles(appID.String(), newUser.ID.String())
+	accessToken, err := jwt.GenerateAccessToken(appID.String(), newUser.ID.String(), roles)
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String())
+	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), newUser.ID.String(), roles)
 	if err != nil {
 		return "", "", uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}

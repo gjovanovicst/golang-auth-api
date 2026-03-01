@@ -41,6 +41,16 @@ definitions:
       updated_at:
         type: string
     type: object
+  dto.AssignRoleRequest:
+    properties:
+      role_id:
+        type: string
+      user_id:
+        type: string
+    required:
+    - role_id
+    - user_id
+    type: object
   dto.CreateAppRequest:
     properties:
       description:
@@ -73,6 +83,30 @@ definitions:
         type: array
     required:
     - code
+    - name
+    type: object
+  dto.CreatePermissionRequest:
+    properties:
+      action:
+        type: string
+      description:
+        type: string
+      resource:
+        type: string
+    required:
+    - action
+    - resource
+    type: object
+  dto.CreateRoleRequest:
+    properties:
+      app_id:
+        type: string
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - app_id
     - name
     type: object
   dto.CreateTenantRequest:
@@ -383,6 +417,17 @@ definitions:
       total_records:
         type: integer
     type: object
+  dto.PermissionResponse:
+    properties:
+      action:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      resource:
+        type: string
+    type: object
   dto.RefreshTokenRequest:
     properties:
       refresh_token:
@@ -417,6 +462,27 @@ definitions:
     - new_password
     - token
     type: object
+  dto.RoleResponse:
+    properties:
+      app_id:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_system:
+        type: boolean
+      name:
+        type: string
+      permissions:
+        items:
+          $ref: '#/definitions/dto.PermissionResponse'
+        type: array
+      updated_at:
+        type: string
+    type: object
   dto.SendEmailRequest:
     properties:
       to_email:
@@ -439,6 +505,15 @@ definitions:
         type: string
       type_code:
         type: string
+    type: object
+  dto.SetRolePermissionsRequest:
+    properties:
+      permission_ids:
+        items:
+          type: string
+        type: array
+    required:
+    - permission_ids
     type: object
   dto.SocialAccountResponse:
     properties:
@@ -615,6 +690,15 @@ definitions:
         example: https://example.com/avatar.jpg
         type: string
     type: object
+  dto.UpdateRoleRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
   dto.UpsertOAuthConfigRequest:
     properties:
       client_id:
@@ -653,6 +737,10 @@ definitions:
         type: string
       profile_picture:
         type: string
+      roles:
+        items:
+          type: string
+        type: array
       social_accounts:
         items:
           $ref: '#/definitions/dto.SocialAccountResponse'
@@ -663,6 +751,17 @@ definitions:
         description: '"totp" or "email"'
         type: string
       updated_at:
+        type: string
+    type: object
+  dto.UserRolesResponse:
+    properties:
+      app_id:
+        type: string
+      roles:
+        items:
+          $ref: '#/definitions/dto.RoleResponse'
+        type: array
+      user_id:
         type: string
     type: object
   twofa.TwoFASetupResponse:
@@ -1977,6 +2076,410 @@ paths:
       summary: List well-known email template variables
       tags:
       - Admin - Email
+  /admin/rbac/permissions:
+    get:
+      description: Retrieve all available permissions in the system
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List all permissions
+      tags:
+      - Admin - RBAC
+    post:
+      consumes:
+      - application/json
+      description: Create a new custom permission (resource:action pair)
+      parameters:
+      - description: Permission Data
+        in: body
+        name: permission
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreatePermissionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.PermissionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create a permission
+      tags:
+      - Admin - RBAC
+  /admin/rbac/roles:
+    get:
+      description: Retrieve all roles (including permissions) for a specific application
+      parameters:
+      - description: Application ID
+        in: query
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List roles for an application
+      tags:
+      - Admin - RBAC
+    post:
+      consumes:
+      - application/json
+      description: Create a custom role for an application
+      parameters:
+      - description: Role Data
+        in: body
+        name: role
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.RoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create a new role
+      tags:
+      - Admin - RBAC
+  /admin/rbac/roles/{id}:
+    delete:
+      description: Delete a custom role (system roles cannot be deleted)
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete a role
+      tags:
+      - Admin - RBAC
+    get:
+      description: Retrieve a specific role with its permissions
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.RoleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get role by ID
+      tags:
+      - Admin - RBAC
+    put:
+      consumes:
+      - application/json
+      description: Update a role's name and description (system roles cannot be renamed)
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Role Update Data
+        in: body
+        name: role
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Update a role
+      tags:
+      - Admin - RBAC
+  /admin/rbac/roles/{id}/permissions:
+    put:
+      consumes:
+      - application/json
+      description: Replace all permissions for a role with the specified permission
+        IDs
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Permission IDs
+        in: body
+        name: permissions
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SetRolePermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Set role permissions
+      tags:
+      - Admin - RBAC
+  /admin/rbac/user-roles:
+    delete:
+      consumes:
+      - application/json
+      description: Remove a role assignment from a user within an application
+      parameters:
+      - description: Application ID
+        in: query
+        name: app_id
+        required: true
+        type: string
+      - description: User ID
+        in: query
+        name: user_id
+        required: true
+        type: string
+      - description: Role ID
+        in: query
+        name: role_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Revoke a role from a user
+      tags:
+      - Admin - RBAC
+    get:
+      description: Retrieve all user-role assignments for a specific application with
+        pagination
+      parameters:
+      - description: Application ID
+        in: query
+        name: app_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List user-role assignments
+      tags:
+      - Admin - RBAC
+    post:
+      consumes:
+      - application/json
+      description: Assign a role to a user within an application
+      parameters:
+      - description: Application ID
+        in: query
+        name: app_id
+        required: true
+        type: string
+      - description: Assignment Data
+        in: body
+        name: assignment
+        required: true
+        schema:
+          $ref: '#/definitions/dto.AssignRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Assign a role to a user
+      tags:
+      - Admin - RBAC
+  /admin/rbac/user-roles/user:
+    get:
+      description: Retrieve all roles assigned to a specific user in an application
+      parameters:
+      - description: Application ID
+        in: query
+        name: app_id
+        required: true
+        type: string
+      - description: User ID
+        in: query
+        name: user_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UserRolesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get user's roles
+      tags:
+      - Admin - RBAC
   /admin/tenants:
     get:
       consumes:

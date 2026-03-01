@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/email"
+	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/gjovanovicst/auth_api/web"
@@ -27,16 +28,18 @@ type GUIHandler struct {
 	Repo             *Repository
 	SettingsService  *SettingsService
 	EmailService     *email.Service
+	RBACService      *rbac.Service
 }
 
 // NewGUIHandler creates a new GUIHandler
-func NewGUIHandler(accountService *AccountService, dashboardService *DashboardService, repo *Repository, settingsService *SettingsService, emailService *email.Service) *GUIHandler {
+func NewGUIHandler(accountService *AccountService, dashboardService *DashboardService, repo *Repository, settingsService *SettingsService, emailService *email.Service, rbacService *rbac.Service) *GUIHandler {
 	return &GUIHandler{
 		AccountService:   accountService,
 		DashboardService: dashboardService,
 		Repo:             repo,
 		SettingsService:  settingsService,
 		EmailService:     emailService,
+		RBACService:      rbacService,
 	}
 }
 
@@ -524,6 +527,9 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
 	}
+
+	// Seed default RBAC roles for the new application (non-fatal on error)
+	_ = h.Repo.SeedDefaultRolesForApp(app.ID)
 
 	c.Header("HX-Trigger", "appListRefresh")
 	c.String(http.StatusOK,
@@ -3302,6 +3308,642 @@ func (h *GUIHandler) MyAccount2FARegenerateCodes(c *gin.Context) {
 // base64Encode is a helper to encode bytes to base64 for inline images.
 func base64Encode(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
+}
+
+// ============================================================
+// RBAC — Roles Management
+// ============================================================
+
+// RolesPage renders the roles management page.
+// GET /gui/roles
+func (h *GUIHandler) RolesPage(c *gin.Context) {
+	apps, err := h.RBACService.Repo.ListAllApps()
+	if err != nil {
+		apps = nil
+	}
+
+	data := web.TemplateData{
+		ActivePage:    "roles",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+		Data:          apps,
+	}
+	c.HTML(http.StatusOK, "roles", data)
+}
+
+// RoleList returns the role table HTML fragment for HTMX.
+// GET /gui/roles/list?app_id=X
+func (h *GUIHandler) RoleList(c *gin.Context) {
+	appID := c.Query("app_id")
+	if appID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-warning">Please select an application.</div>`)
+		return
+	}
+
+	roles, err := h.RBACService.GetRolesByAppID(appID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load roles.</div>`)
+		return
+	}
+
+	type roleItem struct {
+		ID              string
+		Name            string
+		Description     string
+		IsSystem        bool
+		PermissionCount int
+		CreatedAt       time.Time
+	}
+
+	items := make([]roleItem, 0, len(roles))
+	for _, r := range roles {
+		items = append(items, roleItem{
+			ID:              r.ID.String(),
+			Name:            r.Name,
+			Description:     r.Description,
+			IsSystem:        r.IsSystem,
+			PermissionCount: len(r.Permissions),
+			CreatedAt:       r.CreatedAt,
+		})
+	}
+
+	type roleListData struct {
+		Roles []roleItem
+	}
+
+	c.HTML(http.StatusOK, "role_list", roleListData{Roles: items})
+}
+
+// RoleCreateForm returns the empty create form HTML fragment for HTMX.
+// GET /gui/roles/new
+func (h *GUIHandler) RoleCreateForm(c *gin.Context) {
+	type formData struct {
+		ID          string
+		AppID       string
+		Name        string
+		Description string
+	}
+	// Try to read app_id from query string (set by JS reading the filter dropdown)
+	appID := c.Query("app_id")
+	c.HTML(http.StatusOK, "role_form", formData{AppID: appID})
+}
+
+// RoleCreate handles creating a new role.
+// POST /gui/roles
+func (h *GUIHandler) RoleCreate(c *gin.Context) {
+	appID := strings.TrimSpace(c.PostForm("app_id"))
+	name := strings.TrimSpace(c.PostForm("name"))
+	description := strings.TrimSpace(c.PostForm("description"))
+
+	if appID == "" || name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Application and role name are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if _, err := h.RBACService.CreateRole(appID, name, description); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create role. It may already exist.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Role created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// RoleEditForm returns the pre-filled edit form HTML fragment for HTMX.
+// GET /gui/roles/:id/edit
+func (h *GUIHandler) RoleEditForm(c *gin.Context) {
+	id := c.Param("id")
+	role, err := h.RBACService.GetRoleByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Role not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	type formData struct {
+		ID          string
+		AppID       string
+		Name        string
+		Description string
+	}
+	c.HTML(http.StatusOK, "role_form", formData{
+		ID:          role.ID.String(),
+		Name:        role.Name,
+		Description: role.Description,
+	})
+}
+
+// RoleUpdate handles updating a role.
+// PUT /gui/roles/:id
+func (h *GUIHandler) RoleUpdate(c *gin.Context) {
+	id := c.Param("id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	description := strings.TrimSpace(c.PostForm("description"))
+
+	if name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Role name is required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if err := h.RBACService.UpdateRole(id, name, description); err != nil {
+		c.String(http.StatusInternalServerError,
+			fmt.Sprintf(`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update role: %s<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`, err.Error()))
+		return
+	}
+
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Role updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// RoleDeleteConfirm returns the delete confirmation modal body for HTMX.
+// GET /gui/roles/:id/delete
+func (h *GUIHandler) RoleDeleteConfirm(c *gin.Context) {
+	id := c.Param("id")
+	role, err := h.RBACService.GetRoleByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Role not found.</div></div>`)
+		return
+	}
+
+	type deleteData struct {
+		ID   string
+		Name string
+	}
+	c.HTML(http.StatusOK, "role_delete_confirm", deleteData{
+		ID:   role.ID.String(),
+		Name: role.Name,
+	})
+}
+
+// RoleDelete handles deleting a role and returns a refreshed role list.
+// DELETE /gui/roles/:id
+func (h *GUIHandler) RoleDelete(c *gin.Context) {
+	id := c.Param("id")
+
+	// Get the role first to know the app ID for refreshing the list
+	role, err := h.RBACService.GetRoleByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger">Role not found.</div>`)
+		return
+	}
+	appID := role.AppID.String()
+
+	if err := h.RBACService.DeleteRole(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			fmt.Sprintf(`<div class="alert alert-danger">Failed to delete role: %s</div>`, err.Error()))
+		return
+	}
+
+	c.Header("HX-Trigger", "roleDeleted")
+
+	// Re-fetch and render the updated role list
+	roles, err := h.RBACService.GetRolesByAppID(appID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Role deleted but failed to refresh list.</div>`)
+		return
+	}
+
+	type roleItem struct {
+		ID              string
+		Name            string
+		Description     string
+		IsSystem        bool
+		PermissionCount int
+		CreatedAt       time.Time
+	}
+
+	items := make([]roleItem, 0, len(roles))
+	for _, r := range roles {
+		items = append(items, roleItem{
+			ID:              r.ID.String(),
+			Name:            r.Name,
+			Description:     r.Description,
+			IsSystem:        r.IsSystem,
+			PermissionCount: len(r.Permissions),
+			CreatedAt:       r.CreatedAt,
+		})
+	}
+
+	type roleListData struct {
+		Roles []roleItem
+	}
+
+	c.HTML(http.StatusOK, "role_list", roleListData{Roles: items})
+}
+
+// RoleFormCancel clears the role form container.
+// GET /gui/roles/form-cancel
+func (h *GUIHandler) RoleFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// RolePermissions returns the permissions checkbox modal body for HTMX.
+// GET /gui/roles/:id/permissions
+func (h *GUIHandler) RolePermissions(c *gin.Context) {
+	roleID := c.Param("id")
+
+	role, err := h.RBACService.GetRoleByID(roleID)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Role not found.</div></div>`)
+		return
+	}
+
+	allPermissions, err := h.RBACService.GetAllPermissions()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to load permissions.</div></div>`)
+		return
+	}
+
+	// Build a set of currently assigned permission IDs
+	assigned := make(map[string]bool)
+	for _, p := range role.Permissions {
+		assigned[p.ID.String()] = true
+	}
+
+	type permItem struct {
+		ID          string
+		Resource    string
+		Action      string
+		Description string
+		Checked     bool
+	}
+
+	items := make([]permItem, 0, len(allPermissions))
+	for _, p := range allPermissions {
+		items = append(items, permItem{
+			ID:          p.ID.String(),
+			Resource:    p.Resource,
+			Action:      p.Action,
+			Description: p.Description,
+			Checked:     assigned[p.ID.String()],
+		})
+	}
+
+	type permData struct {
+		RoleID      string
+		RoleName    string
+		Permissions []permItem
+	}
+
+	c.HTML(http.StatusOK, "role_permissions", permData{
+		RoleID:      role.ID.String(),
+		RoleName:    role.Name,
+		Permissions: items,
+	})
+}
+
+// RolePermissionsUpdate saves the selected permissions for a role.
+// PUT /gui/roles/:id/permissions
+func (h *GUIHandler) RolePermissionsUpdate(c *gin.Context) {
+	roleID := c.Param("id")
+	permissionIDs := c.PostFormArray("permission_ids")
+
+	if err := h.RBACService.SetRolePermissions(roleID, permissionIDs); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to save permissions.</div></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "permissionsSaved")
+	c.String(http.StatusOK,
+		`<div class="modal-body"><div class="alert alert-success">Permissions saved successfully.</div></div><div class="modal-footer border-0"><button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button></div>`)
+}
+
+// ============================================================
+// RBAC — Permissions Management
+// ============================================================
+
+// PermissionsPage renders the permissions management page.
+// GET /gui/permissions
+func (h *GUIHandler) PermissionsPage(c *gin.Context) {
+	data := web.TemplateData{
+		ActivePage:    "permissions",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+	}
+	c.HTML(http.StatusOK, "permissions", data)
+}
+
+// PermissionList returns the permission table HTML fragment for HTMX.
+// GET /gui/permissions/list
+func (h *GUIHandler) PermissionList(c *gin.Context) {
+	permissions, err := h.RBACService.GetAllPermissions()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load permissions.</div>`)
+		return
+	}
+
+	type permListData struct {
+		Permissions []models.Permission
+	}
+
+	c.HTML(http.StatusOK, "permission_list", permListData{Permissions: permissions})
+}
+
+// PermissionCreateForm returns the empty create form HTML fragment for HTMX.
+// GET /gui/permissions/new
+func (h *GUIHandler) PermissionCreateForm(c *gin.Context) {
+	type formData struct {
+		Resource    string
+		Action      string
+		Description string
+	}
+	c.HTML(http.StatusOK, "permission_form", formData{})
+}
+
+// PermissionCreate handles creating a new permission.
+// POST /gui/permissions
+func (h *GUIHandler) PermissionCreate(c *gin.Context) {
+	resource := strings.TrimSpace(c.PostForm("resource"))
+	action := strings.TrimSpace(c.PostForm("action"))
+	description := strings.TrimSpace(c.PostForm("description"))
+
+	if resource == "" || action == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Resource and action are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if _, err := h.RBACService.CreatePermission(resource, action, description); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create permission. It may already exist.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "permissionListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Permission created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// PermissionFormCancel clears the permission form container.
+// GET /gui/permissions/form-cancel
+func (h *GUIHandler) PermissionFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// ============================================================
+// RBAC — User Roles Management
+// ============================================================
+
+// UserRolesPage renders the user-roles management page.
+// GET /gui/user-roles
+func (h *GUIHandler) UserRolesPage(c *gin.Context) {
+	apps, err := h.RBACService.Repo.ListAllApps()
+	if err != nil {
+		apps = nil
+	}
+
+	data := web.TemplateData{
+		ActivePage:    "user-roles",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+		Data:          apps,
+	}
+	c.HTML(http.StatusOK, "user_roles", data)
+}
+
+// UserRoleList returns the user-role table HTML fragment for HTMX.
+// GET /gui/user-roles/list?app_id=X&page=N
+func (h *GUIHandler) UserRoleList(c *gin.Context) {
+	appID := c.Query("app_id")
+	if appID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-warning">Please select an application.</div>`)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize := 20
+
+	items, total, err := h.RBACService.Repo.GetUsersWithRoleInApp(appID, page, pageSize)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load user roles.</div>`)
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+
+	type userRoleListData struct {
+		Items      []rbac.UserRoleListItem
+		AppID      string
+		Page       int
+		TotalPages int
+		Total      int64
+	}
+
+	c.HTML(http.StatusOK, "user_role_list", userRoleListData{
+		Items:      items,
+		AppID:      appID,
+		Page:       page,
+		TotalPages: totalPages,
+		Total:      total,
+	})
+}
+
+// UserRoleCreateForm returns the assign role form HTML fragment for HTMX.
+// GET /gui/user-roles/new
+func (h *GUIHandler) UserRoleCreateForm(c *gin.Context) {
+	apps, err := h.RBACService.Repo.ListAllApps()
+	if err != nil {
+		apps = nil
+	}
+
+	type formData struct {
+		Apps []models.Application
+	}
+	c.HTML(http.StatusOK, "user_role_form", formData{Apps: apps})
+}
+
+// UserRoleCreate handles assigning a role to a user.
+// POST /gui/user-roles
+func (h *GUIHandler) UserRoleCreate(c *gin.Context) {
+	appID := strings.TrimSpace(c.PostForm("app_id"))
+	userID := strings.TrimSpace(c.PostForm("user_id"))
+	roleID := strings.TrimSpace(c.PostForm("role_id"))
+
+	if appID == "" || userID == "" || roleID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Application, user ID, and role are all required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if err := h.RBACService.AssignRoleToUser(userID, roleID, appID, nil); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to assign role. The user may already have this role.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Role assigned successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// UserRoleRolesForApp returns HTML <option> elements for the roles in an app.
+// GET /gui/user-roles/roles-for-app?app_id=X
+func (h *GUIHandler) UserRoleRolesForApp(c *gin.Context) {
+	appID := c.Query("app_id")
+	if appID == "" {
+		c.String(http.StatusOK, `<option value="">-- Select App first --</option>`)
+		return
+	}
+
+	roles, err := h.RBACService.GetRolesByAppID(appID)
+	if err != nil {
+		c.String(http.StatusOK, `<option value="">-- Error loading roles --</option>`)
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`<option value="">-- Select Role --</option>`)
+	for _, r := range roles {
+		sb.WriteString(fmt.Sprintf(`<option value="%s">%s</option>`, r.ID.String(), r.Name))
+	}
+	c.String(http.StatusOK, sb.String())
+}
+
+// UserRoleSearchUsers returns a list of matching users as clickable HTML items.
+// GET /gui/user-roles/search-users?app_id=X&q=term
+func (h *GUIHandler) UserRoleSearchUsers(c *gin.Context) {
+	appID := c.Query("app_id")
+	q := strings.TrimSpace(c.Query("q"))
+
+	if appID == "" {
+		c.String(http.StatusOK, `<div class="list-group-item text-muted small">Select an application first.</div>`)
+		return
+	}
+	if len(q) < 2 {
+		c.String(http.StatusOK, `<div class="list-group-item text-muted small">Type at least 2 characters to search.</div>`)
+		return
+	}
+
+	users, _, err := h.Repo.ListUsersWithDetails(1, 10, appID, q)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="list-group-item text-danger small">Error searching users.</div>`)
+		return
+	}
+
+	if len(users) == 0 {
+		c.String(http.StatusOK, `<div class="list-group-item text-muted small">No users found.</div>`)
+		return
+	}
+
+	var sb strings.Builder
+	for _, u := range users {
+		name := u.Email
+		if u.Name != "" {
+			name = u.Name + " &mdash; " + u.Email
+		}
+		sb.WriteString(fmt.Sprintf(
+			`<a href="#" class="list-group-item list-group-item-action py-2 px-3" onclick="selectUser('%s','%s'); return false;">
+				<div class="fw-semibold small">%s</div>
+				<div class="text-muted font-monospace" style="font-size:.7rem">%s</div>
+			</a>`,
+			u.ID.String(), escapeHTML(u.Email), name, u.ID.String(),
+		))
+	}
+	c.String(http.StatusOK, sb.String())
+}
+
+// escapeHTML is a minimal HTML entity escaper for dynamic string insertion.
+func escapeHTML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, `"`, "&quot;")
+	s = strings.ReplaceAll(s, "'", "&#39;")
+	return s
+}
+
+// UserRoleRevokeConfirm returns the revoke confirmation modal body for HTMX.
+// GET /gui/user-roles/revoke?user_id=X&role_id=X&app_id=X&user_email=X&role_name=X
+func (h *GUIHandler) UserRoleRevokeConfirm(c *gin.Context) {
+	type revokeData struct {
+		UserID    string
+		RoleID    string
+		AppID     string
+		UserEmail string
+		RoleName  string
+	}
+	c.HTML(http.StatusOK, "user_role_revoke_confirm", revokeData{
+		UserID:    c.Query("user_id"),
+		RoleID:    c.Query("role_id"),
+		AppID:     c.Query("app_id"),
+		UserEmail: c.Query("user_email"),
+		RoleName:  c.Query("role_name"),
+	})
+}
+
+// UserRoleRevoke handles revoking a role from a user and returns a refreshed list.
+// DELETE /gui/user-roles?user_id=X&role_id=X&app_id=X
+func (h *GUIHandler) UserRoleRevoke(c *gin.Context) {
+	userID := c.Query("user_id")
+	roleID := c.Query("role_id")
+	appID := c.Query("app_id")
+
+	if userID == "" || roleID == "" || appID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Missing required parameters.</div>`)
+		return
+	}
+
+	if err := h.RBACService.RevokeRoleFromUser(userID, roleID, appID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to revoke role.</div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "roleRevoked")
+
+	// Re-fetch and render the updated user-role list
+	page := 1
+	pageSize := 20
+	items, total, err := h.RBACService.Repo.GetUsersWithRoleInApp(appID, page, pageSize)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Role revoked but failed to refresh list.</div>`)
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+
+	type userRoleListData struct {
+		Items      []rbac.UserRoleListItem
+		AppID      string
+		Page       int
+		TotalPages int
+		Total      int64
+	}
+
+	c.HTML(http.StatusOK, "user_role_list", userRoleListData{
+		Items:      items,
+		AppID:      appID,
+		Page:       page,
+		TotalPages: totalPages,
+		Total:      total,
+	})
+}
+
+// UserRoleFormCancel clears the user-role form container.
+// GET /gui/user-roles/form-cancel
+func (h *GUIHandler) UserRoleFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
 }
 
 // parseVariablesFromForm parses variable rows from the dynamic form.

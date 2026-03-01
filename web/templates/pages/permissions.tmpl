@@ -1,0 +1,37 @@
+{{define "permissions"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Permissions{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-lock me-2"></i>Permissions
+    </h4>
+    <button class="btn btn-primary btn-sm"
+            hx-get="/gui/permissions/new"
+            hx-target="#permission-form-container"
+            hx-swap="innerHTML">
+        <i class="bi bi-plus-lg me-1"></i>Create Permission
+    </button>
+</div>
+
+<!-- Form container (populated by HTMX when creating) -->
+<div id="permission-form-container" class="mb-3"></div>
+
+<!-- Permission table (loaded via HTMX) -->
+<div id="permission-table"
+     hx-get="/gui/permissions/list"
+     hx-trigger="load, permissionListRefresh from:body"
+     hx-swap="innerHTML">
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading permissions...</p>
+        </div>
+    </div>
+</div>
+{{end}}

@@ -1,0 +1,102 @@
+{{define "roles"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Roles{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-shield-check me-2"></i>Roles
+    </h4>
+    <button class="btn btn-primary btn-sm"
+            hx-get="/gui/roles/new"
+            hx-target="#role-form-container"
+            hx-swap="innerHTML">
+        <i class="bi bi-plus-lg me-1"></i>Create Role
+    </button>
+</div>
+
+<!-- App filter -->
+{{if .Data}}
+<div class="mb-3">
+    <select class="form-select form-select-sm w-auto" id="role-app-filter"
+            hx-get="/gui/roles/list"
+            hx-target="#role-table"
+            hx-swap="innerHTML"
+            hx-trigger="change"
+            name="app_id"
+            hx-include="this">
+        <option value="">-- Select Application --</option>
+        {{range .Data}}
+        <option value="{{.ID}}">{{.Name}}</option>
+        {{end}}
+    </select>
+</div>
+{{end}}
+
+<!-- Form container (populated by HTMX when creating/editing) -->
+<div id="role-form-container" class="mb-3"></div>
+
+<!-- Role table (loaded via HTMX) -->
+<div id="role-table">
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-5 text-muted">
+            <i class="bi bi-shield-check fs-1"></i>
+            <p class="mt-2 mb-0">Select an application to view its roles.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteRoleModal" tabindex="-1" aria-labelledby="deleteRoleModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteRoleModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Role
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Permissions modal -->
+<div class="modal fade" id="permissionsModal" tabindex="-1" aria-labelledby="permissionsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="permissionsModalLabel">
+                    <i class="bi bi-lock me-2"></i>Role Permissions
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="permissions-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    document.body.addEventListener('roleDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteRoleModal'));
+        if (modal) modal.hide();
+    });
+    document.body.addEventListener('permissionsSaved', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('permissionsModal'));
+        if (modal) modal.hide();
+        // Refresh the role list
+        var appFilter = document.getElementById('role-app-filter');
+        if (appFilter && appFilter.value) {
+            htmx.ajax('GET', '/gui/roles/list?app_id=' + appFilter.value, {target: '#role-table', swap: 'innerHTML'});
+        }
+    });
+</script>
+{{end}}

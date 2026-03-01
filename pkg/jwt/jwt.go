@@ -48,20 +48,22 @@ func loadSecret() {
 
 // Claims struct that will be embedded in JWT
 type Claims struct {
-	UserID    string `json:"user_id"`
-	AppID     string `json:"app_id"`
-	TokenType string `json:"token_type,omitempty"` // "access" or "refresh"; empty for legacy tokens
+	UserID    string   `json:"user_id"`
+	AppID     string   `json:"app_id"`
+	TokenType string   `json:"token_type,omitempty"` // "access" or "refresh"; empty for legacy tokens
+	Roles     []string `json:"roles,omitempty"`      // User's role names in the application
 	jwt.RegisteredClaims
 }
 
 // GenerateAccessToken generates a new access token
-func GenerateAccessToken(appID, userID string) (string, error) {
+func GenerateAccessToken(appID, userID string, roles []string) (string, error) {
 	loadSecret()
 	expirationTime := time.Now().Add(time.Minute * time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")))
 	claims := &Claims{
 		UserID:    userID,
 		AppID:     appID,
 		TokenType: TokenTypeAccess,
+		Roles:     roles,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -72,13 +74,14 @@ func GenerateAccessToken(appID, userID string) (string, error) {
 }
 
 // GenerateRefreshToken generates a new refresh token
-func GenerateRefreshToken(appID, userID string) (string, error) {
+func GenerateRefreshToken(appID, userID string, roles []string) (string, error) {
 	loadSecret()
 	expirationTime := time.Now().Add(time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS")))
 	claims := &Claims{
 		UserID:    userID,
 		AppID:     appID,
 		TokenType: TokenTypeRefresh,
+		Roles:     roles,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

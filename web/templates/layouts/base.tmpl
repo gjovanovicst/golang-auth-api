@@ -124,6 +124,31 @@
             </li>
         </ul>
 
+        <div class="sidebar-heading">Security</div>
+        <ul class="nav flex-column">
+            <li class="nav-item">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "roles"}} active{{end}}" href="/gui/roles"
+                   data-page="roles"
+                   hx-get="/gui/roles" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
+                    <i class="bi bi-shield-check"></i> Roles
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "permissions"}} active{{end}}" href="/gui/permissions"
+                   data-page="permissions"
+                   hx-get="/gui/permissions" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
+                    <i class="bi bi-lock"></i> Permissions
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link sidebar-link{{if eq .ActivePage "user-roles"}} active{{end}}" href="/gui/user-roles"
+                   data-page="user-roles"
+                   hx-get="/gui/user-roles" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
+                    <i class="bi bi-person-badge"></i> User Roles
+                </a>
+            </li>
+        </ul>
+
         <div class="sidebar-heading">Email</div>
         <ul class="nav flex-column">
             <li class="nav-item">
@@ -274,6 +299,9 @@
                 'applications': 'Applications',
                 'users': 'Users',
                 'oauth': 'OAuth Config',
+                'roles': 'Roles',
+                'permissions': 'Permissions',
+                'user-roles': 'User Roles',
                 'email-servers': 'Email Servers',
                 'email-templates': 'Email Templates',
                 'email-types': 'Email Types',

@@ -14,6 +14,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/email"
 	logService "github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/middleware"
+	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/social"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
@@ -96,13 +97,21 @@ func main() {
 	logRepo := logService.NewRepository(database.DB)
 	emailRepo := email.NewRepository(database.DB)
 	emailService := email.NewService(emailRepo, database.DB)
+	rbacRepo := rbac.NewRepository(database.DB)
+	rbacService := rbac.NewService(rbacRepo)
+	rbacHandler := rbac.NewHandler(rbacService)
 	userService := user.NewService(userRepo, emailService, database.DB)
+	userService.LookupRoles = rbacService.GetUserRoleNames
+	userService.AssignDefaultRole = rbacService.AssignDefaultRole
 	socialService := social.NewService(userRepo, socialRepo)
+	socialService.LookupRoles = rbacService.GetUserRoleNames
+	socialService.AssignDefaultRole = rbacService.AssignDefaultRole
 	twofaService := twofa.NewService(userRepo, database.DB, emailService)
 	logQueryService := logService.NewQueryService(logRepo)
 	userHandler := user.NewHandler(userService)
 	socialHandler := social.NewHandler(socialService)
 	twofaHandler := twofa.NewHandler(twofaService)
+	twofaHandler.LookupRoles = rbacService.GetUserRoleNames
 	logHandler := logService.NewHandler(logQueryService)
 	adminRepo := admin.NewRepository(database.DB)
 	adminHandler := admin.NewHandler(adminRepo, emailService)
@@ -113,7 +122,7 @@ func main() {
 	dashboardService := admin.NewDashboardService(database.DB)
 	settingsRepo := admin.NewSettingsRepository(database.DB)
 	settingsService := admin.NewSettingsService(settingsRepo)
-	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService)
+	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService, rbacService)
 
 	// Setup Gin Router
 	r := gin.Default()
@@ -169,30 +178,30 @@ func main() {
 	protected := r.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
-		// User profile routes
-		protected.GET("/profile", userHandler.GetProfile)
-		protected.PUT("/profile", userHandler.UpdateProfile)
-		protected.DELETE("/profile", userHandler.DeleteAccount)
-		protected.PUT("/profile/email", userHandler.UpdateEmail)
-		protected.PUT("/profile/password", userHandler.UpdatePassword)
+		// User profile routes (require user:read / user:write / user:delete)
+		protected.GET("/profile", middleware.AuthorizePermission(rbacService, "user", "read"), userHandler.GetProfile)
+		protected.PUT("/profile", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdateProfile)
+		protected.DELETE("/profile", middleware.AuthorizePermission(rbacService, "user", "delete"), userHandler.DeleteAccount)
+		protected.PUT("/profile/email", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdateEmail)
+		protected.PUT("/profile/password", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdatePassword)
 
-		// Auth routes
+		// Auth routes (no extra permission needed — auth is inherent)
 		protected.GET("/auth/validate", userHandler.ValidateToken)
 		protected.POST("/logout", userHandler.Logout)
 
-		// 2FA management routes
-		protected.POST("/2fa/generate", twofaHandler.Generate2FA)
-		protected.POST("/2fa/verify-setup", twofaHandler.VerifySetup)
-		protected.POST("/2fa/enable", twofaHandler.Enable2FA)
-		protected.POST("/2fa/disable", twofaHandler.Disable2FA)
-		protected.POST("/2fa/recovery-codes", twofaHandler.GenerateRecoveryCodes)
+		// 2FA management routes (require settings:write — managing own security settings)
+		protected.POST("/2fa/generate", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.Generate2FA)
+		protected.POST("/2fa/verify-setup", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.VerifySetup)
+		protected.POST("/2fa/enable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.Enable2FA)
+		protected.POST("/2fa/disable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.Disable2FA)
+		protected.POST("/2fa/recovery-codes", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.GenerateRecoveryCodes)
 		// Email 2FA routes
-		protected.POST("/2fa/email/enable", twofaHandler.EnableEmail2FA)
+		protected.POST("/2fa/email/enable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.EnableEmail2FA)
 
-		// Activity log routes
-		protected.GET("/activity-logs", logHandler.GetUserActivityLogs)
-		protected.GET("/activity-logs/event-types", logHandler.GetEventTypes)
-		protected.GET("/activity-logs/:id", logHandler.GetActivityLogByID)
+		// Activity log routes (require log:read)
+		protected.GET("/activity-logs", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetUserActivityLogs)
+		protected.GET("/activity-logs/event-types", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetEventTypes)
+		protected.GET("/activity-logs/:id", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetActivityLogByID)
 	}
 
 	// Admin routes (protected by Admin API Key)
@@ -238,6 +247,20 @@ func main() {
 		adminRoutes.PUT("/email-types/:id", adminHandler.UpdateEmailType)
 		adminRoutes.DELETE("/email-types/:id", adminHandler.DeleteEmailType)
 		adminRoutes.POST("/apps/:id/send-email", adminHandler.SendCustomEmail)
+
+		// RBAC Management
+		adminRoutes.GET("/rbac/roles", rbacHandler.ListRoles)
+		adminRoutes.GET("/rbac/roles/:id", rbacHandler.GetRole)
+		adminRoutes.POST("/rbac/roles", rbacHandler.CreateRole)
+		adminRoutes.PUT("/rbac/roles/:id", rbacHandler.UpdateRole)
+		adminRoutes.DELETE("/rbac/roles/:id", rbacHandler.DeleteRole)
+		adminRoutes.PUT("/rbac/roles/:id/permissions", rbacHandler.SetRolePermissions)
+		adminRoutes.GET("/rbac/permissions", rbacHandler.ListPermissions)
+		adminRoutes.POST("/rbac/permissions", rbacHandler.CreatePermission)
+		adminRoutes.GET("/rbac/user-roles", rbacHandler.ListUserRoles)
+		adminRoutes.POST("/rbac/user-roles", rbacHandler.AssignRole)
+		adminRoutes.DELETE("/rbac/user-roles", rbacHandler.RevokeRole)
+		adminRoutes.GET("/rbac/user-roles/user", rbacHandler.GetUserRoles)
 	}
 
 	// App API routes (protected by per-application API key)
@@ -382,6 +405,37 @@ func main() {
 			guiAuth.PUT("/email-types/:id", guiHandler.EmailTypeUpdate)
 			guiAuth.GET("/email-types/:id/delete", guiHandler.EmailTypeDeleteConfirm)
 			guiAuth.DELETE("/email-types/:id", guiHandler.EmailTypeDelete)
+
+			// Roles management
+			guiAuth.GET("/roles", guiHandler.RolesPage)
+			guiAuth.GET("/roles/list", guiHandler.RoleList)
+			guiAuth.GET("/roles/new", guiHandler.RoleCreateForm)
+			guiAuth.POST("/roles", guiHandler.RoleCreate)
+			guiAuth.GET("/roles/form-cancel", guiHandler.RoleFormCancel)
+			guiAuth.GET("/roles/:id/edit", guiHandler.RoleEditForm)
+			guiAuth.PUT("/roles/:id", guiHandler.RoleUpdate)
+			guiAuth.GET("/roles/:id/delete", guiHandler.RoleDeleteConfirm)
+			guiAuth.DELETE("/roles/:id", guiHandler.RoleDelete)
+			guiAuth.GET("/roles/:id/permissions", guiHandler.RolePermissions)
+			guiAuth.PUT("/roles/:id/permissions", guiHandler.RolePermissionsUpdate)
+
+			// Permissions management
+			guiAuth.GET("/permissions", guiHandler.PermissionsPage)
+			guiAuth.GET("/permissions/list", guiHandler.PermissionList)
+			guiAuth.GET("/permissions/new", guiHandler.PermissionCreateForm)
+			guiAuth.POST("/permissions", guiHandler.PermissionCreate)
+			guiAuth.GET("/permissions/form-cancel", guiHandler.PermissionFormCancel)
+
+			// User roles management
+			guiAuth.GET("/user-roles", guiHandler.UserRolesPage)
+			guiAuth.GET("/user-roles/list", guiHandler.UserRoleList)
+			guiAuth.GET("/user-roles/new", guiHandler.UserRoleCreateForm)
+			guiAuth.POST("/user-roles", guiHandler.UserRoleCreate)
+			guiAuth.GET("/user-roles/roles-for-app", guiHandler.UserRoleRolesForApp)
+			guiAuth.GET("/user-roles/search-users", guiHandler.UserRoleSearchUsers)
+			guiAuth.GET("/user-roles/revoke", guiHandler.UserRoleRevokeConfirm)
+			guiAuth.DELETE("/user-roles", guiHandler.UserRoleRevoke)
+			guiAuth.GET("/user-roles/form-cancel", guiHandler.UserRoleFormCancel)
 
 			// My Account & 2FA management
 			guiAuth.GET("/my-account", guiHandler.MyAccountPage)

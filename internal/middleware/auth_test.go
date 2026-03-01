@@ -58,7 +58,7 @@ func TestAuthMiddlewareValidTokenNoRedis(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestAuthMiddlewareRedisUnavailable(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestAuthMiddlewareBlacklistedToken(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestAuthMiddlewareUserTokensBlacklisted(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id-" + time.Now().Format("20060102150405") // Unique userID for this test
-	token, err := jwt.GenerateAccessToken("test-app-id", userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestAuthMiddlewareTokenWithoutBearer(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -447,13 +447,15 @@ func TestAuthorizeRoleWithValidUser(t *testing.T) {
 
 	router := gin.New()
 
-	// Middleware that sets userID in context (simulating AuthMiddleware)
+	// Middleware that sets userID, appID, and roles in context (simulating AuthMiddleware)
 	router.Use(func(c *gin.Context) {
 		c.Set("userID", "test-user-id")
+		c.Set("appID", "test-app-id")
+		c.Set("roles", []string{"admin", "member"})
 		c.Next()
 	})
 
-	router.Use(AuthorizeRole("admin"))
+	router.Use(AuthorizeRole(nil, "admin"))
 	router.GET("/admin", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "admin access granted"})
 	})
@@ -463,7 +465,34 @@ func TestAuthorizeRoleWithValidUser(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("Expected status code 200, got %d", w.Code)
+		t.Fatalf("Expected status code 200, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthorizeRoleWithoutRequiredRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+
+	// User has "member" role but requires "admin"
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "test-user-id")
+		c.Set("appID", "test-app-id")
+		c.Set("roles", []string{"member"})
+		c.Next()
+	})
+
+	router.Use(AuthorizeRole(nil, "admin"))
+	router.GET("/admin", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"message": "admin access granted"})
+	})
+
+	req, _ := http.NewRequest("GET", "/admin", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("Expected status code 403, got %d. Body: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -471,7 +500,7 @@ func TestAuthorizeRoleWithoutUserID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.Use(AuthorizeRole("admin"))
+	router.Use(AuthorizeRole(nil, "admin"))
 	router.GET("/admin", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "admin access granted"})
 	})
@@ -497,16 +526,16 @@ func TestAuthMiddlewareAndAuthorizeRoleTogether(t *testing.T) {
 		t.Skip("Redis connection failed, skipping test")
 	}
 
-	// Generate a valid token
+	// Generate a valid token with "admin" role
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, []string{"admin"})
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
 
 	router := gin.New()
 	router.Use(AuthMiddleware())
-	router.Use(AuthorizeRole("admin"))
+	router.Use(AuthorizeRole(nil, "admin"))
 	router.GET("/admin", func(c *gin.Context) {
 		// Verify userID is still accessible
 		contextUserID, exists := c.Get("userID")

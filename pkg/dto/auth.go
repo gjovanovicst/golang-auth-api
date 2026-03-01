@@ -112,6 +112,7 @@ type UserResponse struct {
 	Locale         string                  `json:"locale,omitempty"`
 	TwoFAEnabled   bool                    `json:"two_fa_enabled"`
 	TwoFAMethod    string                  `json:"two_fa_method,omitempty"` // "totp" or "email"
+	Roles          []string                `json:"roles,omitempty"`
 	CreatedAt      string                  `json:"created_at"`
 	UpdatedAt      string                  `json:"updated_at"`
 	SocialAccounts []SocialAccountResponse `json:"social_accounts,omitempty"`

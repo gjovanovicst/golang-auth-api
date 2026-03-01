@@ -1,0 +1,76 @@
+{{define "user_roles"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}User Roles{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-person-badge me-2"></i>User Roles
+    </h4>
+    <button class="btn btn-primary btn-sm"
+            hx-get="/gui/user-roles/new"
+            hx-target="#user-role-form-container"
+            hx-swap="innerHTML">
+        <i class="bi bi-plus-lg me-1"></i>Assign Role
+    </button>
+</div>
+
+<!-- App filter -->
+{{if .Data}}
+<div class="mb-3">
+    <select class="form-select form-select-sm w-auto" id="user-role-app-filter"
+            hx-get="/gui/user-roles/list"
+            hx-target="#user-role-table"
+            hx-swap="innerHTML"
+            hx-trigger="change"
+            name="app_id"
+            hx-include="this">
+        <option value="">-- Select Application --</option>
+        {{range .Data}}
+        <option value="{{.ID}}">{{.Name}}</option>
+        {{end}}
+    </select>
+</div>
+{{end}}
+
+<!-- Form container (populated by HTMX when assigning) -->
+<div id="user-role-form-container" class="mb-3"></div>
+
+<!-- User-role table (loaded via HTMX) -->
+<div id="user-role-table">
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-5 text-muted">
+            <i class="bi bi-person-badge fs-1"></i>
+            <p class="mt-2 mb-0">Select an application to view user role assignments.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Revoke confirmation modal -->
+<div class="modal fade" id="revokeRoleModal" tabindex="-1" aria-labelledby="revokeRoleModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="revokeRoleModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Revoke Role
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="revoke-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    document.body.addEventListener('roleRevoked', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('revokeRoleModal'));
+        if (modal) modal.hide();
+    });
+</script>
+{{end}}

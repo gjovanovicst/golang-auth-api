@@ -95,6 +95,90 @@ func (r *Repository) CreateApp(app *models.Application) error {
 	return r.DB.Create(app).Error
 }
 
+// SeedDefaultRolesForApp creates the default system roles (admin, member, viewer) for an application
+// and assigns them the standard permissions. Should be called after creating a new application.
+func (r *Repository) SeedDefaultRolesForApp(appID uuid.UUID) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		// Load all permissions
+		var permissions []models.Permission
+		if err := tx.Find(&permissions).Error; err != nil {
+			return err
+		}
+		if len(permissions) == 0 {
+			return nil // No permissions seeded yet, skip
+		}
+
+		// Build permission lookup by "resource:action"
+		permByKey := make(map[string]models.Permission)
+		for _, p := range permissions {
+			permByKey[p.Resource+":"+p.Action] = p
+		}
+
+		// Define default roles and their permission keys
+		type roleDef struct {
+			Name        string
+			Description string
+			PermKeys    []string // nil means ALL permissions
+		}
+
+		roleDefs := []roleDef{
+			{
+				Name:        "admin",
+				Description: "Full access to all resources within the application",
+				PermKeys:    nil, // all
+			},
+			{
+				Name:        "member",
+				Description: "Standard user with read and limited write access",
+				PermKeys:    []string{"user:read", "user:write", "log:read", "role:read"},
+			},
+			{
+				Name:        "viewer",
+				Description: "Read-only access to resources",
+				PermKeys:    []string{"user:read", "log:read", "role:read"},
+			},
+		}
+
+		for _, rd := range roleDefs {
+			// Check if role already exists for this app
+			var existing models.Role
+			if err := tx.Where("app_id = ? AND name = ?", appID, rd.Name).First(&existing).Error; err == nil {
+				continue // Already exists, skip
+			}
+
+			role := models.Role{
+				AppID:       appID,
+				Name:        rd.Name,
+				Description: rd.Description,
+				IsSystem:    true,
+			}
+			if err := tx.Create(&role).Error; err != nil {
+				return err
+			}
+
+			// Assign permissions
+			var permsToAssign []models.Permission
+			if rd.PermKeys == nil {
+				permsToAssign = permissions // all
+			} else {
+				for _, key := range rd.PermKeys {
+					if p, ok := permByKey[key]; ok {
+						permsToAssign = append(permsToAssign, p)
+					}
+				}
+			}
+
+			if len(permsToAssign) > 0 {
+				if err := tx.Model(&role).Association("Permissions").Replace(permsToAssign); err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
 func (r *Repository) GetAppByID(id string) (*models.Application, error) {
 	var app models.Application
 	if err := r.DB.Preload("OAuthProviderConfigs").First(&app, "id = ?", id).Error; err != nil {

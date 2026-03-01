@@ -339,6 +339,43 @@ func (s *Service) VerifyEmail(appID uuid.UUID, token string) (uuid.UUID, *errors
 	return userUUID, nil
 }
 
+// ResendVerificationEmail resends the email verification link for a user.
+// Returns nil even if the user is not found or already verified (to prevent email enumeration).
+func (s *Service) ResendVerificationEmail(appID uuid.UUID, email string) *errors.AppError {
+	user, err := s.Repo.GetUserByEmail(appID.String(), email)
+	if err != nil {
+		// User not found — return nil to prevent email enumeration
+		return nil
+	}
+
+	if user.EmailVerified {
+		// Already verified — return nil to prevent email enumeration
+		return nil
+	}
+
+	userID := user.ID.String()
+
+	// Invalidate any existing verification token for this user
+	oldToken, err := redis.GetEmailVerificationTokenByUserID(appID.String(), userID)
+	if err == nil && oldToken != "" {
+		if delErr := redis.DeleteEmailVerificationToken(appID.String(), oldToken); delErr != nil {
+			log.Printf("Warning: Failed to delete old email verification token from Redis: %v\n", delErr)
+		}
+	}
+
+	// Generate and store new verification token
+	verificationToken := uuid.New().String()
+	if err := redis.SetEmailVerificationToken(appID.String(), userID, verificationToken, 24*time.Hour); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to store verification token")
+	}
+
+	if err := s.EmailService.SendVerificationEmail(appID, user.Email, verificationToken, &user.ID); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
+	}
+
+	return nil
+}
+
 func (s *Service) ConfirmPasswordReset(appID uuid.UUID, token, newPassword string) (uuid.UUID, *errors.AppError) {
 	// Validate reset token from Redis
 	userID, err := redis.GetPasswordResetToken(appID.String(), token)

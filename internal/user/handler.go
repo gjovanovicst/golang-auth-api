@@ -304,6 +304,45 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Email verified successfully!"})
 }
 
+// @Summary Resend email verification
+// @Description Resend verification email to user. Returns a generic success message regardless of whether the email exists or is already verified (to prevent email enumeration).
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param   request  body      dto.ResendVerificationRequest  true  "Email address"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /resend-verification [post]
+func (h *Handler) ResendVerification(c *gin.Context) {
+	var req dto.ResendVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.ResendVerificationEmail(appID, req.Email); err != nil {
+		c.JSON(err.Code, gin.H{"error": err.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "If an account with that email exists and is not yet verified, a verification email has been sent."})
+}
+
 // @Summary Get user profile
 // @Description Retrieve authenticated user's profile information
 // @Tags User

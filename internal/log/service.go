@@ -15,23 +15,24 @@ import (
 
 // Event types constants for consistency
 const (
-	EventLogin            = "LOGIN"
-	EventLogout           = "LOGOUT"
-	EventRegister         = "REGISTER"
-	EventPasswordChange   = "PASSWORD_CHANGE"
-	EventPasswordReset    = "PASSWORD_RESET"
-	EventEmailVerify      = "EMAIL_VERIFY"
-	EventEmailChange      = "EMAIL_CHANGE"
-	Event2FAEnable        = "2FA_ENABLE"
-	Event2FADisable       = "2FA_DISABLE"
-	Event2FALogin         = "2FA_LOGIN"
-	EventTokenRefresh     = "TOKEN_REFRESH"
-	EventSocialLogin      = "SOCIAL_LOGIN"
-	EventProfileAccess    = "PROFILE_ACCESS"
-	EventProfileUpdate    = "PROFILE_UPDATE"
-	EventAccountDeletion  = "ACCOUNT_DELETION"
-	EventRecoveryCodeUsed = "RECOVERY_CODE_USED"
-	EventRecoveryCodeGen  = "RECOVERY_CODE_GENERATE"
+	EventLogin             = "LOGIN"
+	EventLogout            = "LOGOUT"
+	EventRegister          = "REGISTER"
+	EventPasswordChange    = "PASSWORD_CHANGE"
+	EventPasswordReset     = "PASSWORD_RESET"
+	EventEmailVerify       = "EMAIL_VERIFY"
+	EventEmailChange       = "EMAIL_CHANGE"
+	Event2FAEnable         = "2FA_ENABLE"
+	Event2FADisable        = "2FA_DISABLE"
+	Event2FALogin          = "2FA_LOGIN"
+	EventTokenRefresh      = "TOKEN_REFRESH"
+	EventSocialLogin       = "SOCIAL_LOGIN"
+	EventProfileAccess     = "PROFILE_ACCESS"
+	EventProfileUpdate     = "PROFILE_UPDATE"
+	EventAccountDeletion   = "ACCOUNT_DELETION"
+	EventRecoveryCodeUsed  = "RECOVERY_CODE_USED"
+	EventRecoveryCodeGen   = "RECOVERY_CODE_GENERATE"
+	EventEmailVerifyResend = "EMAIL_VERIFY_RESEND"
 )
 
 // LogEntry represents a log entry to be processed
@@ -294,6 +295,11 @@ func LogPasswordReset(appID, userID uuid.UUID, ipAddress, userAgent string) {
 // LogEmailVerify logs an email verification event
 func LogEmailVerify(appID, userID uuid.UUID, ipAddress, userAgent string) {
 	GetLogService().LogActivity(appID, userID, EventEmailVerify, ipAddress, userAgent, nil)
+}
+
+// LogEmailVerifyResend logs a resend verification email event
+func LogEmailVerifyResend(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventEmailVerifyResend, ipAddress, userAgent, nil)
 }
 
 // Log2FAEnable logs a 2FA enable event

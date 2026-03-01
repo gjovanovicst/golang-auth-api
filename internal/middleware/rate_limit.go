@@ -363,6 +363,15 @@ func APIForgotPasswordRateLimit() gin.HandlerFunc {
 	})
 }
 
+// APIResendVerificationRateLimit — 3 requests/min per IP
+func APIResendVerificationRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "api:resend-verification",
+		MaxAttempts: 3,
+		Window:      60 * time.Second,
+	})
+}
+
 // APIRefreshTokenRateLimit — 10 requests/min per IP
 func APIRefreshTokenRateLimit() gin.HandlerFunc {
 	return RateLimitMiddleware(RateLimitConfig{

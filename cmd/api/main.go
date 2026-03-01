@@ -150,6 +150,7 @@ func main() {
 		public.POST("/forgot-password", middleware.APIForgotPasswordRateLimit(), userHandler.ForgotPassword)
 		public.POST("/reset-password", middleware.APIResetPasswordRateLimit(), userHandler.ResetPassword)
 		public.GET("/verify-email", userHandler.VerifyEmail)
+		public.POST("/resend-verification", middleware.APIResendVerificationRateLimit(), userHandler.ResendVerification)
 		// 2FA login verification (public because it needs temp token)
 		public.POST("/2fa/login-verify", middleware.API2FAVerifyRateLimit(), twofaHandler.VerifyLogin)
 		// 2FA email code resend (public because it needs temp token during login)

@@ -28,6 +28,11 @@ type ForgotPasswordRequest struct {
 	Email string `json:"email" validate:"required,email"`
 }
 
+// ResendVerificationRequest represents the request payload for resending email verification
+type ResendVerificationRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
 // ResetPasswordRequest represents the request payload for password reset
 type ResetPasswordRequest struct {
 	Token       string `json:"token" validate:"required"` // #nosec G101 -- This is a DTO field, not a hardcoded credential

@@ -71,10 +71,16 @@ func IsRefreshTokenRevoked(appID, userID, token string) (bool, error) {
 	return val != token, nil // If value doesn't match, it means a new token was issued, old one is implicitly revoked
 }
 
-// SetEmailVerificationToken stores an email verification token
+// SetEmailVerificationToken stores an email verification token and a reverse lookup key (userID → token).
+// The reverse lookup allows invalidating old tokens when a new one is issued.
 func SetEmailVerificationToken(appID, userID, token string, expiration time.Duration) error {
 	key := fmt.Sprintf("app:%s:email_verify:%s", appID, token)
-	return Rdb.Set(ctx, key, userID, expiration).Err()
+	if err := Rdb.Set(ctx, key, userID, expiration).Err(); err != nil {
+		return err
+	}
+	// Store reverse lookup: userID → token (so we can find and invalidate old tokens)
+	reverseKey := fmt.Sprintf("app:%s:email_verify_user:%s", appID, userID)
+	return Rdb.Set(ctx, reverseKey, token, expiration).Err()
 }
 
 // GetEmailVerificationToken retrieves an email verification token
@@ -83,9 +89,21 @@ func GetEmailVerificationToken(appID, token string) (string, error) {
 	return Rdb.Get(ctx, key).Result()
 }
 
-// DeleteEmailVerificationToken deletes an email verification token
+// GetEmailVerificationTokenByUserID retrieves the current verification token for a user (reverse lookup).
+func GetEmailVerificationTokenByUserID(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:email_verify_user:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteEmailVerificationToken deletes an email verification token and its reverse lookup key.
 func DeleteEmailVerificationToken(appID, token string) error {
 	key := fmt.Sprintf("app:%s:email_verify:%s", appID, token)
+	// Look up the userID so we can also clean up the reverse key
+	userID, err := Rdb.Get(ctx, key).Result()
+	if err == nil && userID != "" {
+		reverseKey := fmt.Sprintf("app:%s:email_verify_user:%s", appID, userID)
+		Rdb.Del(ctx, reverseKey) // Best-effort cleanup
+	}
 	return Rdb.Del(ctx, key).Err()
 }
 

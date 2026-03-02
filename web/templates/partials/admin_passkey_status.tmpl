@@ -1,0 +1,75 @@
+{{define "admin_passkey_status"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-transparent border-bottom d-flex align-items-center justify-content-between">
+        <h6 class="mb-0 fw-semibold"><i class="bi bi-fingerprint me-2"></i>Passkeys (WebAuthn)</h6>
+        {{if .Data.Passkeys}}
+        <span class="badge bg-primary">{{len .Data.Passkeys}} registered</span>
+        {{else}}
+        <span class="badge bg-secondary">None</span>
+        {{end}}
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Passkeys let you sign in securely using your device's biometrics, PIN, or security key instead of a password.
+        </p>
+
+        {{if .Data.Passkeys}}
+        <div class="table-responsive mb-3">
+            <table class="table table-sm table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Name</th>
+                        <th>Registered</th>
+                        <th>Last Used</th>
+                        <th class="text-center" style="width: 120px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Data.Passkeys}}
+                    <tr>
+                        <td>
+                            <i class="bi bi-key me-1 text-primary"></i>
+                            <span class="passkey-name-display" data-id="{{.ID}}">
+                                {{if .Name}}{{.Name}}{{else}}<span class="text-muted fst-italic">Unnamed passkey</span>{{end}}
+                            </span>
+                        </td>
+                        <td><small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small></td>
+                        <td>
+                            {{if .LastUsedAt}}
+                            <small class="text-muted" title="{{formatDateTimeFull (deref .LastUsedAt)}}">{{timeAgo (deref .LastUsedAt)}}</small>
+                            {{else}}
+                            <small class="text-muted fst-italic">Never</small>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            <button class="btn btn-outline-secondary btn-sm me-1"
+                                    onclick="renamePasskey('{{.ID}}', this)"
+                                    title="Rename">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-delete="/gui/my-account/passkeys/{{.ID}}"
+                                    hx-target="#passkey-section"
+                                    hx-swap="innerHTML"
+                                    hx-confirm="Delete this passkey? You will no longer be able to use it to sign in."
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{end}}
+
+        <!-- Register new passkey button -->
+        <button type="button" class="btn btn-primary btn-sm w-100" id="register-passkey-btn" onclick="registerPasskey()">
+            <i class="bi bi-plus-circle me-1"></i>Register New Passkey
+        </button>
+
+        <!-- Status message area -->
+        <div id="passkey-status-msg" class="mt-2"></div>
+    </div>
+</div>
+{{end}}

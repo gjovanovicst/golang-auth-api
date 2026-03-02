@@ -23,16 +23,6 @@ func jsonBody(w *httptest.ResponseRecorder) string {
 	return body["error"]
 }
 
-// setupGuardRouter creates a Gin router with AppRouteGuardMiddleware and
-// a test handler on the given route pattern.
-func setupGuardRouter(pattern string) *gin.Engine {
-	r := gin.New()
-	r.GET(pattern, AppRouteGuardMiddleware(), func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-	return r
-}
-
 func TestAppRouteGuard_MatchingIDs(t *testing.T) {
 	appID := uuid.New()
 	r := gin.New()

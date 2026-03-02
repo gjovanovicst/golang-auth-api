@@ -315,6 +315,45 @@ func ClearRateLimitKeys(keyPrefix, identifier string) error {
 	return Rdb.Del(ctx, attemptsKey, lockoutKey).Err()
 }
 
+// WebAuthn Challenge Functions
+
+// SetWebAuthnRegistrationChallenge stores a WebAuthn registration challenge session in Redis.
+func SetWebAuthnRegistrationChallenge(appID, userID, sessionJSON string, expiration time.Duration) error {
+	key := fmt.Sprintf("app:%s:webauthn_reg:%s", appID, userID)
+	return Rdb.Set(ctx, key, sessionJSON, expiration).Err()
+}
+
+// GetWebAuthnRegistrationChallenge retrieves a WebAuthn registration challenge session from Redis.
+func GetWebAuthnRegistrationChallenge(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:webauthn_reg:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteWebAuthnRegistrationChallenge removes a WebAuthn registration challenge session from Redis.
+func DeleteWebAuthnRegistrationChallenge(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:webauthn_reg:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// SetWebAuthnLoginChallenge stores a WebAuthn login/assertion challenge session in Redis.
+// The identifier can be a userID (for 2FA) or a sessionID (for passwordless).
+func SetWebAuthnLoginChallenge(appID, identifier, sessionJSON string, expiration time.Duration) error {
+	key := fmt.Sprintf("app:%s:webauthn_login:%s", appID, identifier)
+	return Rdb.Set(ctx, key, sessionJSON, expiration).Err()
+}
+
+// GetWebAuthnLoginChallenge retrieves a WebAuthn login/assertion challenge session from Redis.
+func GetWebAuthnLoginChallenge(appID, identifier string) (string, error) {
+	key := fmt.Sprintf("app:%s:webauthn_login:%s", appID, identifier)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteWebAuthnLoginChallenge removes a WebAuthn login/assertion challenge session from Redis.
+func DeleteWebAuthnLoginChallenge(appID, identifier string) error {
+	key := fmt.Sprintf("app:%s:webauthn_login:%s", appID, identifier)
+	return Rdb.Del(ctx, key).Err()
+}
+
 // Admin 2FA Functions
 
 // SetAdmin2FATempSecret stores a temporary TOTP secret during admin 2FA setup (10-minute TTL).

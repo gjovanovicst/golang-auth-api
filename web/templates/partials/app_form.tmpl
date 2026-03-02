@@ -74,6 +74,33 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Passkey / WebAuthn Settings -->
+            <div class="border rounded p-3 mt-3 bg-light bg-opacity-50">
+                <h6 class="fw-semibold mb-3"><i class="bi bi-key me-2"></i>Passkey / WebAuthn</h6>
+                <div class="row g-3">
+                    <div class="col-md-6 d-flex align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" id="appPasskey2FAEnabled"
+                                   name="passkey_2fa_enabled" {{if .Passkey2FAEnabled}}checked{{end}}>
+                            <label class="form-check-label" for="appPasskey2FAEnabled">
+                                <span class="small text-muted">Passkey as 2FA Method</span>
+                            </label>
+                            <div class="form-text">Allow users to verify their identity with a passkey as a second factor during login.</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" id="appPasskeyLoginEnabled"
+                                   name="passkey_login_enabled" {{if .PasskeyLoginEnabled}}checked{{end}}>
+                            <label class="form-check-label" for="appPasskeyLoginEnabled">
+                                <span class="small text-muted">Passwordless Login</span>
+                            </label>
+                            <div class="form-text">Allow users to sign in using only a passkey, without entering a password.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="mt-3 d-flex gap-2">
                 <button type="submit" class="btn btn-primary">
                     <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update{{else}}Create{{end}}

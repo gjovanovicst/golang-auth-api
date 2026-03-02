@@ -197,16 +197,18 @@ func (r *Repository) ListAppsByTenant(tenantID string) ([]models.Application, er
 
 // AppListItem holds an application with its tenant name and OAuth config count for list views.
 type AppListItem struct {
-	ID               uuid.UUID
-	TenantID         uuid.UUID
-	Name             string
-	Description      string
-	TenantName       string
-	OAuthConfigCount int64
-	TwoFAEnabled     bool
-	TwoFARequired    bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                  uuid.UUID
+	TenantID            uuid.UUID
+	Name                string
+	Description         string
+	TenantName          string
+	OAuthConfigCount    int64
+	TwoFAEnabled        bool
+	TwoFARequired       bool
+	Passkey2FAEnabled   bool
+	PasskeyLoginEnabled bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // ListAppsWithDetails returns paginated applications with tenant name and OAuth config count.
@@ -229,6 +231,7 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 		Select(`applications.id, applications.tenant_id, applications.name, applications.description,
 			applications.created_at, applications.updated_at,
 			applications.two_fa_enabled, applications.two_fa_required,
+			applications.passkey2_fa_enabled, applications.passkey_login_enabled,
 			tenants.name as tenant_name,
 			COUNT(oauth_provider_configs.id) as o_auth_config_count`).
 		Joins("LEFT JOIN tenants ON tenants.id = applications.tenant_id").
@@ -249,15 +252,17 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 	return items, total, nil
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool) error {
+func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool) error {
 	return r.DB.Model(&models.Application{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"name":               name,
-			"description":        description,
-			"two_fa_issuer_name": twoFAIssuerName,
-			"two_fa_enabled":     twoFAEnabled,
-			"two_fa_required":    twoFARequired,
+			"name":                  name,
+			"description":           description,
+			"two_fa_issuer_name":    twoFAIssuerName,
+			"two_fa_enabled":        twoFAEnabled,
+			"two_fa_required":       twoFARequired,
+			"passkey2_fa_enabled":   passkey2FAEnabled,
+			"passkey_login_enabled": passkeyLoginEnabled,
 		}).Error
 }
 
@@ -449,23 +454,24 @@ type UserListItem struct {
 
 // UserDetail represents a full user view with social accounts for the admin GUI detail panel
 type UserDetail struct {
-	ID             uuid.UUID              `json:"id"`
-	Email          string                 `json:"email"`
-	Name           string                 `json:"name"`
-	FirstName      string                 `json:"first_name"`
-	LastName       string                 `json:"last_name"`
-	ProfilePicture string                 `json:"profile_picture"`
-	Locale         string                 `json:"locale"`
-	AppID          uuid.UUID              `json:"app_id"`
-	AppName        string                 `json:"app_name"`
-	TenantName     string                 `json:"tenant_name"`
-	IsActive       bool                   `json:"is_active"`
-	EmailVerified  bool                   `json:"email_verified"`
-	TwoFAEnabled   bool                   `json:"two_fa_enabled"`
-	HasPassword    bool                   `json:"has_password"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
-	SocialAccounts []models.SocialAccount `json:"social_accounts" gorm:"-"`
+	ID                  uuid.UUID                   `json:"id"`
+	Email               string                      `json:"email"`
+	Name                string                      `json:"name"`
+	FirstName           string                      `json:"first_name"`
+	LastName            string                      `json:"last_name"`
+	ProfilePicture      string                      `json:"profile_picture"`
+	Locale              string                      `json:"locale"`
+	AppID               uuid.UUID                   `json:"app_id"`
+	AppName             string                      `json:"app_name"`
+	TenantName          string                      `json:"tenant_name"`
+	IsActive            bool                        `json:"is_active"`
+	EmailVerified       bool                        `json:"email_verified"`
+	TwoFAEnabled        bool                        `json:"two_fa_enabled"`
+	HasPassword         bool                        `json:"has_password"`
+	CreatedAt           time.Time                   `json:"created_at"`
+	UpdatedAt           time.Time                   `json:"updated_at"`
+	SocialAccounts      []models.SocialAccount      `json:"social_accounts" gorm:"-"`
+	WebAuthnCredentials []models.WebAuthnCredential `json:"webauthn_credentials" gorm:"-"`
 }
 
 // UserStatusCounts holds active/inactive user counts for dashboard display
@@ -550,6 +556,13 @@ func (r *Repository) GetUserDetailByID(id string) (*UserDetail, error) {
 		return nil, err
 	}
 	detail.SocialAccounts = socialAccounts
+
+	// Load WebAuthn passkey credentials
+	var webauthnCreds []models.WebAuthnCredential
+	if err := r.DB.Where("user_id = ?", id).Order("created_at asc").Find(&webauthnCreds).Error; err != nil {
+		return nil, err
+	}
+	detail.WebAuthnCredentials = webauthnCreds
 
 	return &detail, nil
 }
@@ -864,4 +877,22 @@ func (r *Repository) CountSocialAccountsByUserID(userID string) (int64, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// ============================================================
+// WebAuthn Passkey Operations (Admin GUI - delete support)
+// ============================================================
+
+// GetWebAuthnCredentialByID returns a single WebAuthn credential by primary key.
+func (r *Repository) GetWebAuthnCredentialByID(id string) (*models.WebAuthnCredential, error) {
+	var cred models.WebAuthnCredential
+	if err := r.DB.First(&cred, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &cred, nil
+}
+
+// DeleteWebAuthnCredential permanently removes a WebAuthn credential by ID.
+func (r *Repository) DeleteWebAuthnCredential(id string) error {
+	return r.DB.Where("id = ?", id).Delete(&models.WebAuthnCredential{}).Error
 }

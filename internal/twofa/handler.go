@@ -279,7 +279,15 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 			return
 		}
 
-		if userMethod == emailpkg.TwoFAMethodEmail {
+		if userMethod == emailpkg.TwoFAMethodPasskey {
+			// Passkey 2FA uses a two-step challenge-response flow via separate endpoints:
+			// POST /2fa/passkey/begin → POST /2fa/passkey/finish
+			// It cannot be verified with a simple code through this endpoint.
+			c.JSON(http.StatusBadRequest, dto.ErrorResponse{
+				Error: "Passkey 2FA requires the /2fa/passkey/begin and /2fa/passkey/finish endpoints",
+			})
+			return
+		} else if userMethod == emailpkg.TwoFAMethodEmail {
 			// Email 2FA code verification
 			method = "email"
 			verificationErr = h.Service.VerifyEmail2FACode(appID, userID, req.Code)
@@ -483,6 +491,7 @@ func (h *Handler) GetAvailableMethods(c *gin.Context) {
 
 	hasTOTP := false
 	hasEmail := false
+	hasPasskey := false
 	for _, m := range methods {
 		if m == emailpkg.TwoFAMethodTOTP {
 			hasTOTP = true
@@ -490,12 +499,16 @@ func (h *Handler) GetAvailableMethods(c *gin.Context) {
 		if m == emailpkg.TwoFAMethodEmail {
 			hasEmail = true
 		}
+		if m == emailpkg.TwoFAMethodPasskey {
+			hasPasskey = true
+		}
 	}
 
 	c.JSON(http.StatusOK, dto.TwoFAMethodsResponse{
 		AvailableMethods: methods,
 		TOTPEnabled:      hasTOTP,
 		Email2FAEnabled:  hasEmail,
+		PasskeyEnabled:   hasPasskey,
 	})
 }
 

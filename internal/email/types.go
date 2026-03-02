@@ -80,6 +80,7 @@ type EmailData struct {
 
 // TwoFAMethod constants
 const (
-	TwoFAMethodTOTP  = "totp"
-	TwoFAMethodEmail = "email"
+	TwoFAMethodTOTP    = "totp"
+	TwoFAMethodEmail   = "email"
+	TwoFAMethodPasskey = "passkey"
 )

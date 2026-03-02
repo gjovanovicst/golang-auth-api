@@ -180,6 +180,77 @@
             <p class="text-muted small mb-0">No social accounts linked.</p>
         </div>
         {{end}}
+
+        <!-- Passkeys / WebAuthn credentials -->
+        {{if .WebAuthnCredentials}}
+        <h6 class="fw-bold mb-2 mt-3 pt-3 border-top">
+            <i class="bi bi-fingerprint me-2"></i>Passkeys (WebAuthn)
+        </h6>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Name</th>
+                        <th>Transports</th>
+                        <th>Backup</th>
+                        <th>Last Used</th>
+                        <th>Registered</th>
+                        <th class="text-center" style="width: 80px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .WebAuthnCredentials}}
+                    <tr>
+                        <td>
+                            <i class="bi bi-key me-1 text-primary"></i>
+                            {{if .Name}}{{.Name}}{{else}}<span class="text-muted fst-italic">Unnamed passkey</span>{{end}}
+                        </td>
+                        <td>
+                            {{if .Transports}}
+                            <small class="text-muted">{{.Transports}}</small>
+                            {{else}}
+                            <small class="text-muted fst-italic">-</small>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .BackupEligible}}
+                            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-cloud-check me-1"></i>Yes</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">No</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if .LastUsedAt}}
+                            <small class="text-muted" title="{{formatDateTimeFull (deref .LastUsedAt)}}">{{timeAgo (deref .LastUsedAt)}}</small>
+                            {{else}}
+                            <small class="text-muted fst-italic">Never</small>
+                            {{end}}
+                        </td>
+                        <td><small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small></td>
+                        <td class="text-center">
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/users/passkeys/{{.ID}}/delete"
+                                    hx-target="#delete-passkey-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deletePasskeyModal"
+                                    title="Delete passkey">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="mt-3 pt-3 border-top">
+            <h6 class="fw-bold mb-2">
+                <i class="bi bi-fingerprint me-2"></i>Passkeys (WebAuthn)
+            </h6>
+            <p class="text-muted small mb-0">No passkeys registered.</p>
+        </div>
+        {{end}}
     </div>
 </div>
 {{end}}

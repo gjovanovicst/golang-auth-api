@@ -400,3 +400,39 @@ func API2FAVerifyRateLimit() gin.HandlerFunc {
 		LockoutDuration:  15 * time.Minute,
 	})
 }
+
+// APIPasskeyLoginRateLimit — 10 requests/min per IP, lockout after 20
+// (two-step ceremony means each login attempt uses 2 requests: begin + finish)
+func APIPasskeyLoginRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "api:passkey-login",
+		MaxAttempts:      10,
+		Window:           60 * time.Second,
+		LockoutThreshold: 20,
+		LockoutDuration:  15 * time.Minute,
+	})
+}
+
+// APIPasskey2FARateLimit — 10 requests/min per IP, lockout after 20
+// (two-step ceremony: begin + finish)
+func APIPasskey2FARateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "api:passkey-2fa",
+		MaxAttempts:      10,
+		Window:           60 * time.Second,
+		LockoutThreshold: 20,
+		LockoutDuration:  15 * time.Minute,
+	})
+}
+
+// GUIPasskeyLoginRateLimit — 10 requests/min per IP, lockout after 20
+// (two-step ceremony means each login attempt uses 2 requests: begin + finish)
+func GUIPasskeyLoginRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "gui:passkey-login",
+		MaxAttempts:      10,
+		Window:           60 * time.Second,
+		LockoutThreshold: 20,
+		LockoutDuration:  15 * time.Minute,
+	})
+}

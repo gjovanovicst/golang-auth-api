@@ -417,6 +417,97 @@ definitions:
       total_records:
         type: integer
     type: object
+  dto.Passkey2FABeginRequest:
+    properties:
+      temp_token:
+        type: string
+    required:
+    - temp_token
+    type: object
+  dto.Passkey2FABeginResponse:
+    properties:
+      options:
+        type: object
+    type: object
+  dto.Passkey2FAFinishRequest:
+    properties:
+      credential:
+        type: object
+      temp_token:
+        type: string
+    required:
+    - credential
+    - temp_token
+    type: object
+  dto.PasskeyListResponse:
+    properties:
+      passkeys:
+        items:
+          $ref: '#/definitions/dto.PasskeyResponse'
+        type: array
+    type: object
+  dto.PasskeyLoginBeginResponse:
+    properties:
+      options:
+        type: object
+      session_id:
+        type: string
+    type: object
+  dto.PasskeyLoginFinishRequest:
+    properties:
+      credential:
+        type: object
+      session_id:
+        type: string
+    required:
+    - credential
+    - session_id
+    type: object
+  dto.PasskeyRegisterBeginResponse:
+    properties:
+      options:
+        type: object
+    type: object
+  dto.PasskeyRegisterFinishRequest:
+    properties:
+      credential:
+        type: object
+      name:
+        maxLength: 100
+        minLength: 1
+        type: string
+    required:
+    - credential
+    - name
+    type: object
+  dto.PasskeyRenameRequest:
+    properties:
+      name:
+        maxLength: 100
+        minLength: 1
+        type: string
+    required:
+    - name
+    type: object
+  dto.PasskeyResponse:
+    properties:
+      backup_eligible:
+        type: boolean
+      backup_state:
+        type: boolean
+      created_at:
+        type: string
+      id:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      transports:
+        items:
+          type: string
+        type: array
+    type: object
   dto.PermissionResponse:
     properties:
       action:
@@ -601,6 +692,8 @@ definitions:
           type: string
         type: array
       email_2fa_enabled:
+        type: boolean
+      passkey_enabled:
         type: boolean
       totp_enabled:
         type: boolean
@@ -1012,6 +1105,76 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       summary: Get available 2FA methods
+      tags:
+      - 2FA
+  /2fa/passkey/begin:
+    post:
+      consumes:
+      - application/json
+      description: Start the WebAuthn assertion ceremony for 2FA verification during
+        login
+      parameters:
+      - description: Temp token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.Passkey2FABeginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.Passkey2FABeginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Begin passkey 2FA verification
+      tags:
+      - 2FA
+  /2fa/passkey/finish:
+    post:
+      consumes:
+      - application/json
+      description: Complete the WebAuthn assertion ceremony for 2FA verification during
+        login
+      parameters:
+      - description: Assertion response
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.Passkey2FAFinishRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Finish passkey 2FA verification
       tags:
       - 2FA
   /2fa/recovery-codes:
@@ -3048,6 +3211,211 @@ paths:
       summary: User logout
       tags:
       - Auth
+  /passkey/login/begin:
+    post:
+      description: Start a passwordless login ceremony using discoverable credentials
+        (passkeys)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.PasskeyLoginBeginResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Begin passwordless login
+      tags:
+      - Passkeys
+  /passkey/login/finish:
+    post:
+      consumes:
+      - application/json
+      description: Complete the passwordless login ceremony with the client's assertion
+        response
+      parameters:
+      - description: Assertion response
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.PasskeyLoginFinishRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Finish passwordless login
+      tags:
+      - Passkeys
+  /passkey/register/begin:
+    post:
+      description: Start the WebAuthn registration ceremony to add a new passkey
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.PasskeyRegisterBeginResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Begin passkey registration
+      tags:
+      - Passkeys
+  /passkey/register/finish:
+    post:
+      consumes:
+      - application/json
+      description: Complete the WebAuthn registration ceremony with the client's attestation
+        response
+      parameters:
+      - description: Registration response
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.PasskeyRegisterFinishRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Finish passkey registration
+      tags:
+      - Passkeys
+  /passkeys:
+    get:
+      description: List all registered passkeys for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.PasskeyListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List passkeys
+      tags:
+      - Passkeys
+  /passkeys/{id}:
+    delete:
+      description: Remove a registered passkey
+      parameters:
+      - description: Passkey ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Delete a passkey
+      tags:
+      - Passkeys
+    put:
+      consumes:
+      - application/json
+      description: Update the friendly name of a registered passkey
+      parameters:
+      - description: Passkey ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New name
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.PasskeyRenameRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Rename a passkey
+      tags:
+      - Passkeys
   /profile:
     delete:
       consumes:

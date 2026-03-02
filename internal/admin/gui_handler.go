@@ -14,6 +14,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/gjovanovicst/auth_api/web"
 	"github.com/google/uuid"
@@ -29,10 +30,11 @@ type GUIHandler struct {
 	SettingsService  *SettingsService
 	EmailService     *email.Service
 	RBACService      *rbac.Service
+	PasskeyService   *passkeypkg.Service
 }
 
 // NewGUIHandler creates a new GUIHandler
-func NewGUIHandler(accountService *AccountService, dashboardService *DashboardService, repo *Repository, settingsService *SettingsService, emailService *email.Service, rbacService *rbac.Service) *GUIHandler {
+func NewGUIHandler(accountService *AccountService, dashboardService *DashboardService, repo *Repository, settingsService *SettingsService, emailService *email.Service, rbacService *rbac.Service, passkeyService *passkeypkg.Service) *GUIHandler {
 	return &GUIHandler{
 		AccountService:   accountService,
 		DashboardService: dashboardService,
@@ -40,6 +42,7 @@ func NewGUIHandler(accountService *AccountService, dashboardService *DashboardSe
 		SettingsService:  settingsService,
 		EmailService:     emailService,
 		RBACService:      rbacService,
+		PasskeyService:   passkeyService,
 	}
 }
 
@@ -470,15 +473,17 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID              string
-		Name            string
-		Description     string
-		TenantID        string
-		TwoFAIssuerName string
-		TwoFAEnabled    bool
-		TwoFARequired   bool
-		Tenants         []models.Tenant
-		IsEdit          bool
+		ID                  string
+		Name                string
+		Description         string
+		TenantID            string
+		TwoFAIssuerName     string
+		TwoFAEnabled        bool
+		TwoFARequired       bool
+		Passkey2FAEnabled   bool
+		PasskeyLoginEnabled bool
+		Tenants             []models.Tenant
+		IsEdit              bool
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
 		TwoFAEnabled: true, // Default: 2FA enabled for new apps
@@ -495,6 +500,8 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
 	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
 	twoFARequired := c.PostForm("two_fa_required") == "on"
+	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
+	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -515,12 +522,14 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	}
 
 	app := &models.Application{
-		TenantID:        parsedTenantID,
-		Name:            name,
-		Description:     description,
-		TwoFAIssuerName: twoFAIssuerName,
-		TwoFAEnabled:    twoFAEnabled,
-		TwoFARequired:   twoFARequired,
+		TenantID:            parsedTenantID,
+		Name:                name,
+		Description:         description,
+		TwoFAIssuerName:     twoFAIssuerName,
+		TwoFAEnabled:        twoFAEnabled,
+		TwoFARequired:       twoFARequired,
+		Passkey2FAEnabled:   passkey2FAEnabled,
+		PasskeyLoginEnabled: passkeyLoginEnabled,
 	}
 	if err := h.Repo.CreateApp(app); err != nil {
 		c.String(http.StatusInternalServerError,
@@ -555,26 +564,30 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID              string
-		Name            string
-		Description     string
-		TenantID        string
-		TwoFAIssuerName string
-		TwoFAEnabled    bool
-		TwoFARequired   bool
-		Tenants         []models.Tenant
-		IsEdit          bool
+		ID                  string
+		Name                string
+		Description         string
+		TenantID            string
+		TwoFAIssuerName     string
+		TwoFAEnabled        bool
+		TwoFARequired       bool
+		Passkey2FAEnabled   bool
+		PasskeyLoginEnabled bool
+		Tenants             []models.Tenant
+		IsEdit              bool
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
-		ID:              app.ID.String(),
-		Name:            app.Name,
-		Description:     app.Description,
-		TenantID:        app.TenantID.String(),
-		TwoFAIssuerName: app.TwoFAIssuerName,
-		TwoFAEnabled:    app.TwoFAEnabled,
-		TwoFARequired:   app.TwoFARequired,
-		Tenants:         tenants,
-		IsEdit:          true,
+		ID:                  app.ID.String(),
+		Name:                app.Name,
+		Description:         app.Description,
+		TenantID:            app.TenantID.String(),
+		TwoFAIssuerName:     app.TwoFAIssuerName,
+		TwoFAEnabled:        app.TwoFAEnabled,
+		TwoFARequired:       app.TwoFARequired,
+		Passkey2FAEnabled:   app.Passkey2FAEnabled,
+		PasskeyLoginEnabled: app.PasskeyLoginEnabled,
+		Tenants:             tenants,
+		IsEdit:              true,
 	})
 }
 
@@ -587,6 +600,8 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
 	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
 	twoFARequired := c.PostForm("two_fa_required") == "on"
+	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
+	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -594,7 +609,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 		return
 	}
 
-	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired); err != nil {
+	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
@@ -3311,6 +3326,153 @@ func base64Encode(data []byte) string {
 }
 
 // ============================================================
+// Passkey Management (My Account - Admin self-service)
+// ============================================================
+
+// MyAccountPasskeyData holds passkey list data for the admin passkey status template.
+type MyAccountPasskeyData struct {
+	Passkeys []models.WebAuthnCredential
+}
+
+// MyAccountPasskeyStatus returns the current passkey status as an HTMX partial.
+// GET /gui/my-account/passkeys/status
+func (h *GUIHandler) MyAccountPasskeyStatus(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	adminUUID, err := uuid.Parse(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Invalid admin ID.</small></div>`)
+		return
+	}
+
+	creds, appErr := h.PasskeyService.ListAdminCredentials(adminUUID)
+	if appErr != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to load passkeys.</small></div>`)
+		return
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: MyAccountPasskeyData{
+			Passkeys: creds,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_passkey_status", data)
+}
+
+// MyAccountPasskeyBeginRegister starts the WebAuthn registration ceremony for the admin.
+// POST /gui/my-account/passkeys/register/begin
+func (h *GUIHandler) MyAccountPasskeyBeginRegister(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+
+	optionsJSON, appErr := h.PasskeyService.BeginAdminRegistration(account)
+	if appErr != nil {
+		c.String(appErr.Code, appErr.Message)
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", optionsJSON)
+}
+
+// MyAccountPasskeyFinishRegister completes the WebAuthn registration ceremony for the admin.
+// POST /gui/my-account/passkeys/register/finish
+func (h *GUIHandler) MyAccountPasskeyFinishRegister(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+
+	credentialName := strings.TrimSpace(c.PostForm("name"))
+	credentialJSON := c.PostForm("credential")
+	if credentialJSON == "" {
+		c.String(http.StatusBadRequest, "Missing credential data")
+		return
+	}
+
+	appErr := h.PasskeyService.FinishAdminRegistration(account, credentialName, json.RawMessage(credentialJSON))
+	if appErr != nil {
+		c.String(appErr.Code, appErr.Message)
+		return
+	}
+
+	c.String(http.StatusOK, "OK")
+}
+
+// MyAccountPasskeyDelete deletes a passkey for the current admin.
+// DELETE /gui/my-account/passkeys/:id
+func (h *GUIHandler) MyAccountPasskeyDelete(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	passkeyID := c.Param("id")
+
+	adminUUID, err := uuid.Parse(adminID)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>Invalid admin ID.</small></div>`)
+		return
+	}
+
+	credUUID, err := uuid.Parse(passkeyID)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>Invalid passkey ID.</small></div>`)
+		return
+	}
+
+	appErr := h.PasskeyService.DeleteAdminCredential(adminUUID, credUUID)
+	if appErr != nil {
+		c.String(appErr.Code, fmt.Sprintf(
+			`<div class="alert alert-danger py-2"><small>%s</small></div>`, appErr.Message))
+		return
+	}
+
+	// Return refreshed passkey status
+	h.MyAccountPasskeyStatus(c)
+}
+
+// MyAccountPasskeyRename renames a passkey for the current admin.
+// POST /gui/my-account/passkeys/:id/rename
+func (h *GUIHandler) MyAccountPasskeyRename(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	passkeyID := c.Param("id")
+	newName := strings.TrimSpace(c.PostForm("name"))
+
+	if newName == "" {
+		c.String(http.StatusBadRequest, "Name is required")
+		return
+	}
+
+	adminUUID, err := uuid.Parse(adminID)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid admin ID")
+		return
+	}
+
+	credUUID, err := uuid.Parse(passkeyID)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid passkey ID")
+		return
+	}
+
+	appErr := h.PasskeyService.RenameAdminCredential(adminUUID, credUUID, newName)
+	if appErr != nil {
+		c.String(appErr.Code, appErr.Message)
+		return
+	}
+
+	c.String(http.StatusOK, "OK")
+}
+
+// ============================================================
 // RBAC — Roles Management
 // ============================================================
 
@@ -4043,6 +4205,81 @@ func (h *GUIHandler) SocialAccountUnlink(c *gin.Context) {
 	c.HTML(http.StatusOK, "user_detail", refreshed)
 }
 
+// PasskeyDeleteConfirm returns a confirmation dialog partial for deleting a passkey.
+// GET /gui/users/passkeys/:id/delete
+func (h *GUIHandler) PasskeyDeleteConfirm(c *gin.Context) {
+	id := c.Param("id")
+	cred, err := h.Repo.GetWebAuthnCredentialByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Passkey not found.</div></div>`)
+		return
+	}
+
+	if cred.UserID == nil {
+		c.String(http.StatusBadRequest,
+			`<div class="modal-body"><div class="alert alert-danger">This passkey is not associated with a regular user.</div></div>`)
+		return
+	}
+
+	detail, err := h.Repo.GetUserDetailByID(cred.UserID.String())
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to load user details.</div></div>`)
+		return
+	}
+
+	type confirmData struct {
+		PasskeyID   string
+		PasskeyName string
+		UserEmail   string
+	}
+	c.HTML(http.StatusOK, "passkey_delete_confirm", confirmData{
+		PasskeyID:   cred.ID.String(),
+		PasskeyName: cred.Name,
+		UserEmail:   detail.Email,
+	})
+}
+
+// PasskeyDelete handles deleting a WebAuthn passkey credential.
+// DELETE /gui/users/passkeys/:id
+func (h *GUIHandler) PasskeyDelete(c *gin.Context) {
+	id := c.Param("id")
+	cred, err := h.Repo.GetWebAuthnCredentialByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger">Passkey not found.</div>`)
+		return
+	}
+
+	if cred.UserID == nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">This passkey is not associated with a regular user.</div>`)
+		return
+	}
+
+	userID := cred.UserID.String()
+
+	if err := h.Repo.DeleteWebAuthnCredential(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to delete passkey.</div>`)
+		return
+	}
+
+	// Trigger modal close via HX-Trigger
+	c.Header("HX-Trigger", "passkeyDeleted")
+
+	// Re-render the user detail with refreshed data
+	refreshed, err := h.Repo.GetUserDetailByID(userID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Passkey deleted but failed to refresh user details.</div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "user_detail", refreshed)
+}
+
 // parseVariablesFromForm parses variable rows from the dynamic form.
 // Variables are submitted as var_name[], var_description[], var_required[],
 // var_source[], and var_default_value[] arrays.
@@ -4093,4 +4330,85 @@ func parseVariablesFromForm(c *gin.Context) []byte {
 		return nil
 	}
 	return data
+}
+
+// ============================================================
+// Passkey Login (Passwordless Admin Login via Discoverable Credentials)
+// ============================================================
+
+// PasskeyLoginBegin starts the WebAuthn discoverable login ceremony for admin passkey login.
+// POST /gui/passkey-login/begin
+func (h *GUIHandler) PasskeyLoginBegin(c *gin.Context) {
+	// Check if rate limiter already blocked the request
+	if errMsg, exists := c.Get(web.RateLimitErrorKey); exists {
+		msg, _ := errMsg.(string)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": msg})
+		return
+	}
+
+	optionsJSON, sessionID, appErr := h.PasskeyService.BeginAdminLogin()
+	if appErr != nil {
+		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"options":    json.RawMessage(optionsJSON),
+		"session_id": sessionID,
+	})
+}
+
+// PasskeyLoginFinish completes the WebAuthn discoverable login ceremony for admin passkey login.
+// On success, creates a full admin session (bypassing 2FA) and sets the session cookie.
+// POST /gui/passkey-login/finish
+func (h *GUIHandler) PasskeyLoginFinish(c *gin.Context) {
+	// Check if rate limiter already blocked the request
+	if errMsg, exists := c.Get(web.RateLimitErrorKey); exists {
+		msg, _ := errMsg.(string)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": msg})
+		return
+	}
+
+	var req struct {
+		SessionID  string          `json:"session_id"`
+		Credential json.RawMessage `json:"credential"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if req.SessionID == "" || len(req.Credential) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing session_id or credential"})
+		return
+	}
+
+	adminID, appErr := h.PasskeyService.FinishAdminLogin(req.SessionID, req.Credential)
+	if appErr != nil {
+		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
+		return
+	}
+
+	// Update last login timestamp (best effort)
+	_ = h.AccountService.Repo.UpdateLastLogin(adminID.String())
+
+	// Create full session (passkey login bypasses 2FA entirely)
+	sessionID, err := h.AccountService.CreateSession(adminID.String())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
+	}
+
+	// Set session cookie
+	maxAge := sessionMaxAgeSeconds()
+	web.SetSessionCookie(c, sessionID, maxAge)
+
+	// Clear rate limit counters on successful login
+	_ = redis.ClearLoginAttempts(c.ClientIP())
+	_ = redis.ClearRateLimitKeys("gui:passkey-login", c.ClientIP())
+	if web.ClearRateLimitFallback != nil {
+		web.ClearRateLimitFallback("gui:passkey-login", c.ClientIP())
+	}
+
+	c.JSON(http.StatusOK, gin.H{"redirect": "/gui/"})
 }

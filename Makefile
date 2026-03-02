@@ -58,7 +58,7 @@ fmt:
 
 # Run linter (requires golangci-lint)
 lint:
-	golangci-lint run
+	golangci-lint run --timeout 5m
 
 # Install security scanning tools
 install-security-tools:

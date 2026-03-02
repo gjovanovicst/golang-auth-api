@@ -157,6 +157,9 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 			}
 		}
 
+		// For passkey 2FA, no server-side action needed here — the client
+		// must call /2fa/passkey/begin + /2fa/passkey/finish using the temp token.
+
 		return &LoginResult{
 			RequiresTwoFA: true,
 			UserID:        user.ID,

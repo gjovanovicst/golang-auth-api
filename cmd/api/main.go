@@ -19,6 +19,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/social"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
+	passkey "github.com/gjovanovicst/auth_api/internal/webauthn"
 	"github.com/gjovanovicst/auth_api/web"
 	"github.com/gjovanovicst/auth_api/web/static"
 	swaggerFiles "github.com/swaggo/files"
@@ -116,13 +117,22 @@ func main() {
 	adminRepo := admin.NewRepository(database.DB)
 	adminHandler := admin.NewHandler(adminRepo, emailService)
 
+	// Initialize WebAuthn/Passkey Services and Handler
+	webauthnRepo := passkey.NewRepository(database.DB)
+	webauthnService := passkey.NewService(webauthnRepo, userRepo, database.DB)
+	webauthnHandler := passkey.NewHandler(webauthnService)
+	webauthnHandler.LookupRoles = rbacService.GetUserRoleNames
+
 	// Initialize Admin GUI Services and Handler
 	accountRepo := admin.NewAccountRepository(database.DB)
 	accountService := admin.NewAccountService(accountRepo, emailService)
 	dashboardService := admin.NewDashboardService(database.DB)
 	settingsRepo := admin.NewSettingsRepository(database.DB)
 	settingsService := admin.NewSettingsService(settingsRepo)
-	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService, rbacService)
+	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService, rbacService, webauthnService)
+
+	// Wire admin lookup for passkey discoverable login
+	webauthnService.AdminLookup = accountRepo.GetByID
 
 	// Setup Gin Router
 	r := gin.Default()
@@ -157,6 +167,14 @@ func main() {
 		public.POST("/2fa/email/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendEmail2FACode)
 		// 2FA available methods (public so login UI can show method options)
 		public.GET("/2fa/methods", twofaHandler.GetAvailableMethods)
+
+		// Passkey 2FA login (public because it needs temp token)
+		public.POST("/2fa/passkey/begin", middleware.APIPasskey2FARateLimit(), webauthnHandler.BeginPasskey2FA)
+		public.POST("/2fa/passkey/finish", middleware.APIPasskey2FARateLimit(), webauthnHandler.FinishPasskey2FA)
+
+		// Passwordless passkey login (public)
+		public.POST("/passkey/login/begin", middleware.APIPasskeyLoginRateLimit(), webauthnHandler.BeginPasswordlessLogin)
+		public.POST("/passkey/login/finish", middleware.APIPasskeyLoginRateLimit(), webauthnHandler.FinishPasswordlessLogin)
 	}
 
 	// Social authentication routes
@@ -216,6 +234,13 @@ func main() {
 		protected.POST("/2fa/recovery-codes", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.GenerateRecoveryCodes)
 		// Email 2FA routes
 		protected.POST("/2fa/email/enable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.EnableEmail2FA)
+
+		// Passkey management routes (require settings:write)
+		protected.POST("/passkey/register/begin", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.BeginRegistration)
+		protected.POST("/passkey/register/finish", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.FinishRegistration)
+		protected.GET("/passkeys", middleware.AuthorizePermission(rbacService, "settings", "read"), webauthnHandler.ListCredentials)
+		protected.PUT("/passkeys/:id", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.RenameCredential)
+		protected.DELETE("/passkeys/:id", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.DeleteCredential)
 
 		// Activity log routes (require log:read)
 		protected.GET("/activity-logs", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetUserActivityLogs)
@@ -310,6 +335,10 @@ func main() {
 		gui.GET("/login", guiHandler.LoginPage)
 		gui.POST("/login", middleware.LoginRateLimitMiddleware(), guiHandler.LoginSubmit)
 
+		// Passkey login (passwordless via discoverable credentials, no auth required)
+		gui.POST("/passkey-login/begin", middleware.GUIPasskeyLoginRateLimit(), guiHandler.PasskeyLoginBegin)
+		gui.POST("/passkey-login/finish", middleware.GUIPasskeyLoginRateLimit(), guiHandler.PasskeyLoginFinish)
+
 		// 2FA verification during login (no auth required — uses temp token)
 		gui.GET("/2fa-verify", guiHandler.TwoFAVerifyPage)
 		gui.POST("/2fa-verify", guiHandler.TwoFAVerifySubmit)
@@ -366,6 +395,8 @@ func main() {
 			guiAuth.PUT("/users/:id/toggle", guiHandler.UserToggleActive)
 			guiAuth.GET("/users/social-accounts/:id/unlink", guiHandler.SocialAccountUnlinkConfirm)
 			guiAuth.DELETE("/users/social-accounts/:id", guiHandler.SocialAccountUnlink)
+			guiAuth.GET("/users/passkeys/:id/delete", guiHandler.PasskeyDeleteConfirm)
+			guiAuth.DELETE("/users/passkeys/:id", guiHandler.PasskeyDelete)
 
 			// Activity logs viewer
 			guiAuth.GET("/logs", guiHandler.LogsPage)
@@ -468,6 +499,13 @@ func main() {
 			guiAuth.POST("/my-account/2fa/disable", guiHandler.MyAccount2FADisable)
 			guiAuth.GET("/my-account/2fa/status", guiHandler.MyAccount2FAStatus)
 			guiAuth.POST("/my-account/2fa/regenerate-codes", guiHandler.MyAccount2FARegenerateCodes)
+
+			// Passkey management (admin self-service)
+			guiAuth.GET("/my-account/passkeys/status", guiHandler.MyAccountPasskeyStatus)
+			guiAuth.POST("/my-account/passkeys/register/begin", guiHandler.MyAccountPasskeyBeginRegister)
+			guiAuth.POST("/my-account/passkeys/register/finish", guiHandler.MyAccountPasskeyFinishRegister)
+			guiAuth.DELETE("/my-account/passkeys/:id", guiHandler.MyAccountPasskeyDelete)
+			guiAuth.POST("/my-account/passkeys/:id/rename", guiHandler.MyAccountPasskeyRename)
 		}
 	}
 

@@ -35,6 +35,9 @@ const (
 	EventRecoveryCodeUsed      = "RECOVERY_CODE_USED"
 	EventRecoveryCodeGen       = "RECOVERY_CODE_GENERATE"
 	EventEmailVerifyResend     = "EMAIL_VERIFY_RESEND"
+	EventPasskeyRegister       = "PASSKEY_REGISTER"
+	EventPasskeyDelete         = "PASSKEY_DELETE"
+	EventPasskeyLogin          = "PASSKEY_LOGIN"
 )
 
 // LogEntry represents a log entry to be processed
@@ -379,4 +382,22 @@ func LogSocialAccountUnlinked(appID, userID uuid.UUID, ipAddress, userAgent stri
 		"social_account_id": socialAccountID,
 	}
 	GetLogService().LogActivity(appID, userID, EventSocialAccountUnlinked, ipAddress, userAgent, details)
+}
+
+// LogPasskeyRegister logs when a user registers a new passkey
+func LogPasskeyRegister(appID, userID uuid.UUID, ipAddress, userAgent string, passkeyName string) {
+	details := map[string]interface{}{
+		"passkey_name": passkeyName,
+	}
+	GetLogService().LogActivity(appID, userID, EventPasskeyRegister, ipAddress, userAgent, details)
+}
+
+// LogPasskeyDelete logs when a user deletes a passkey
+func LogPasskeyDelete(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventPasskeyDelete, ipAddress, userAgent, nil)
+}
+
+// LogPasskeyLogin logs a successful passwordless login via passkey
+func LogPasskeyLogin(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventPasskeyLogin, ipAddress, userAgent, nil)
 }

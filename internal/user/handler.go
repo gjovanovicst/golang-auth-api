@@ -97,14 +97,14 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
-	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password)
+	// Get client info for logging and session tracking
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password, ipAddress, userAgent)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
-
-	// Get client info for logging
-	ipAddress, userAgent := util.GetClientInfo(c)
 
 	// Check if 2FA is required
 	if loginResult.RequiresTwoFA {
@@ -457,7 +457,13 @@ func (h *Handler) Logout(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
-	if err := h.Service.LogoutUser(appID.String(), userID.(string), req.RefreshToken, req.AccessToken); err != nil {
+	// Get session ID from context (set by AuthMiddleware from JWT claims)
+	sessionID := ""
+	if sid, exists := c.Get("sessionID"); exists {
+		sessionID = sid.(string)
+	}
+
+	if err := h.Service.LogoutUser(appID.String(), userID.(string), sessionID, req.RefreshToken, req.AccessToken); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}

@@ -896,3 +896,54 @@ func (r *Repository) GetWebAuthnCredentialByID(id string) (*models.WebAuthnCrede
 func (r *Repository) DeleteWebAuthnCredential(id string) error {
 	return r.DB.Where("id = ?", id).Delete(&models.WebAuthnCredential{}).Error
 }
+
+// ============================================================
+// Session Operations (Admin GUI - session management)
+// ============================================================
+
+// GetUserEmailsByIDs returns a map of userID -> email for the given user IDs.
+// Used for batch lookups when displaying session lists.
+func (r *Repository) GetUserEmailsByIDs(userIDs []string) (map[string]string, error) {
+	if len(userIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	type emailRow struct {
+		ID    string
+		Email string
+	}
+	var rows []emailRow
+	if err := r.DB.Model(&models.User{}).
+		Select("id, email").
+		Where("id IN ?", userIDs).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(rows))
+	for _, r := range rows {
+		result[r.ID] = r.Email
+	}
+	return result, nil
+}
+
+// GetAppNamesByIDs returns a map of appID -> appName for the given application IDs.
+func (r *Repository) GetAppNamesByIDs(appIDs []string) (map[string]string, error) {
+	if len(appIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	type nameRow struct {
+		ID   string
+		Name string
+	}
+	var rows []nameRow
+	if err := r.DB.Model(&models.Application{}).
+		Select("id, name").
+		Where("id IN ?", appIDs).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(rows))
+	for _, r := range rows {
+		result[r.ID] = r.Name
+	}
+	return result, nil
+}

@@ -50,18 +50,20 @@ func loadSecret() {
 type Claims struct {
 	UserID    string   `json:"user_id"`
 	AppID     string   `json:"app_id"`
+	SessionID string   `json:"session_id,omitempty"` // Session identifier for multi-device session management
 	TokenType string   `json:"token_type,omitempty"` // "access" or "refresh"; empty for legacy tokens
 	Roles     []string `json:"roles,omitempty"`      // User's role names in the application
 	jwt.RegisteredClaims
 }
 
 // GenerateAccessToken generates a new access token
-func GenerateAccessToken(appID, userID string, roles []string) (string, error) {
+func GenerateAccessToken(appID, userID, sessionID string, roles []string) (string, error) {
 	loadSecret()
 	expirationTime := time.Now().Add(time.Minute * time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")))
 	claims := &Claims{
 		UserID:    userID,
 		AppID:     appID,
+		SessionID: sessionID,
 		TokenType: TokenTypeAccess,
 		Roles:     roles,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -74,12 +76,13 @@ func GenerateAccessToken(appID, userID string, roles []string) (string, error) {
 }
 
 // GenerateRefreshToken generates a new refresh token
-func GenerateRefreshToken(appID, userID string, roles []string) (string, error) {
+func GenerateRefreshToken(appID, userID, sessionID string, roles []string) (string, error) {
 	loadSecret()
 	expirationTime := time.Now().Add(time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS")))
 	claims := &Claims{
 		UserID:    userID,
 		AppID:     appID,
+		SessionID: sessionID,
 		TokenType: TokenTypeRefresh,
 		Roles:     roles,
 		RegisteredClaims: jwt.RegisteredClaims{

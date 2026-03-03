@@ -188,7 +188,7 @@ func GetWebAuthnForAdmin() (*webauthn.WebAuthn, error) {
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
 			ResidentKey:             protocol.ResidentKeyRequirementRequired, // Discoverable credentials for passkey login
 			UserVerification:        protocol.VerificationPreferred,
-			AuthenticatorAttachment: "",
+			AuthenticatorAttachment: "", // Use platform authenticators only (Windows Hello, Touch ID) to avoid cloud passkey provider issues
 		},
 	}
 
@@ -250,7 +250,7 @@ func GetWebAuthnForAdminLogin() (*webauthn.WebAuthn, error) {
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
 			ResidentKey:             protocol.ResidentKeyRequirementRequired, // Discoverable credentials required for login
 			UserVerification:        protocol.VerificationRequired,           // Must verify identity for passwordless login
-			AuthenticatorAttachment: "",
+			AuthenticatorAttachment: "",                                      // Use platform authenticators only, consistent with admin registration
 		},
 	}
 

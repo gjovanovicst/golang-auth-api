@@ -58,7 +58,7 @@ func TestAuthMiddlewareValidTokenNoRedis(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, "", nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestAuthMiddlewareRedisUnavailable(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, "", nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, "", nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestAuthMiddlewareBlacklistedToken(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, "", nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestAuthMiddlewareUserTokensBlacklisted(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id-" + time.Now().Format("20060102150405") // Unique userID for this test
-	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, "", nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestAuthMiddlewareTokenWithoutBearer(t *testing.T) {
 
 	// Generate a valid token
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID, nil)
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, "", nil)
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestAuthMiddlewareAndAuthorizeRoleTogether(t *testing.T) {
 
 	// Generate a valid token with "admin" role
 	userID := "test-user-id"
-	token, err := jwt.GenerateAccessToken("test-app-id", userID, []string{"admin"})
+	token, err := jwt.GenerateAccessToken("test-app-id", userID, "", []string{"admin"})
 	if err != nil {
 		t.Fatalf("Failed to generate test token: %v", err)
 	}

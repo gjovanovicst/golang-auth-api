@@ -70,6 +70,9 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Set("userID", claims.UserID)
 		c.Set("appID", claims.AppID)
 		c.Set("roles", claims.Roles)
+		if claims.SessionID != "" {
+			c.Set("sessionID", claims.SessionID)
+		}
 		c.Next()
 	}
 }

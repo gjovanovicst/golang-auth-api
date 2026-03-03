@@ -1,6 +1,6 @@
 {{define "dashboard_stats"}}
 <div class="row g-3 mb-4">
-    <div class="col-sm-6 col-xl-3">
+    <div class="col-sm-6 col-xl">
         <div class="card border-0 shadow-sm">
             <div class="card-body">
                 <div class="d-flex align-items-center">
@@ -21,7 +21,7 @@
             </div>
         </div>
     </div>
-    <div class="col-sm-6 col-xl-3">
+    <div class="col-sm-6 col-xl">
         <div class="card border-0 shadow-sm">
             <div class="card-body">
                 <div class="d-flex align-items-center">
@@ -36,7 +36,7 @@
             </div>
         </div>
     </div>
-    <div class="col-sm-6 col-xl-3">
+    <div class="col-sm-6 col-xl">
         <div class="card border-0 shadow-sm">
             <div class="card-body">
                 <div class="d-flex align-items-center">
@@ -51,7 +51,22 @@
             </div>
         </div>
     </div>
-    <div class="col-sm-6 col-xl-3">
+    <div class="col-sm-6 col-xl">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="bg-purple bg-opacity-10 rounded-3 p-3 me-3" style="background-color: rgba(111, 66, 193, 0.1) !important;">
+                        <i class="bi bi-broadcast fs-4" style="color: #6f42c1;"></i>
+                    </div>
+                    <div>
+                        <h6 class="text-muted mb-0 small">Active Sessions</h6>
+                        <h4 class="mb-0 fw-bold">{{.ActiveSessions}}</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-xl">
         <div class="card border-0 shadow-sm">
             <div class="card-body">
                 <div class="d-flex align-items-center">

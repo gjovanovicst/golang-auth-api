@@ -9,6 +9,7 @@ import (
 
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
@@ -33,6 +34,7 @@ type Service struct {
 	Repo              *Repository
 	EmailService      *emailpkg.Service
 	DB                *gorm.DB
+	SessionService    *session.Service      // Session management for multi-device tracking
 	LookupRoles       RoleLookupFunc        // Optional: if nil, tokens are generated without roles
 	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no default role is assigned on registration
 }
@@ -42,6 +44,8 @@ func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
 }
 
 // getUserRoles fetches roles for JWT embedding. Returns nil on error (non-fatal).
+// Self-healing: if the user has no roles and AssignDefaultRole is available,
+// assigns the "member" role automatically (covers pre-RBAC users).
 func (s *Service) getUserRoles(appID, userID string) []string {
 	if s.LookupRoles == nil {
 		return nil
@@ -51,6 +55,22 @@ func (s *Service) getUserRoles(appID, userID string) []string {
 		log.Printf("Warning: failed to lookup roles for user %s in app %s: %v", userID, appID, err)
 		return nil
 	}
+
+	// Self-healing: assign default role if user has none (pre-RBAC users)
+	if len(roles) == 0 && s.AssignDefaultRole != nil {
+		if err := s.AssignDefaultRole(appID, userID); err != nil {
+			log.Printf("Warning: self-healing role assignment failed for user %s in app %s: %v", userID, appID, err)
+			return nil
+		}
+		// Re-fetch roles after assignment
+		roles, err = s.LookupRoles(appID, userID)
+		if err != nil {
+			log.Printf("Warning: failed to re-lookup roles after self-healing for user %s in app %s: %v", userID, appID, err)
+			return nil
+		}
+		log.Printf("Info: self-healing assigned default role to user %s in app %s, roles: %v", userID, appID, roles)
+	}
+
 	return roles
 }
 
@@ -61,6 +81,7 @@ type LoginResult struct {
 	UserID             uuid.UUID
 	AccessToken        string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
 	RefreshToken       string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
+	SessionID          string
 	TwoFAResponse      *dto.TwoFARequiredResponse
 	TwoFASetupResponse *dto.TwoFASetupRequiredResponse
 }
@@ -110,7 +131,7 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 	return user.ID, nil
 }
 
-func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResult, *errors.AppError) {
+func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent string) (*LoginResult, *errors.AppError) {
 	user, err := s.Repo.GetUserByEmail(appID.String(), email)
 	if err != nil { // User not found
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
@@ -175,20 +196,10 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 	var app models.Application
 	if err := s.DB.Select("two_fa_required").First(&app, "id = ?", appID).Error; err == nil && app.TwoFARequired {
 		// User doesn't have 2FA set up, but the app requires it.
-		// Issue tokens so the user can authenticate to /2fa/generate, but flag the response.
-		roles := s.getUserRoles(appID.String(), user.ID.String())
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String(), roles)
-		if err != nil {
-			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
-		}
-
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String(), roles)
-		if err != nil {
-			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
-		}
-
-		if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
-			return nil, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+		// Issue tokens via session so the user can authenticate to /2fa/generate, but flag the response.
+		accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+		if appErr != nil {
+			return nil, appErr
 		}
 
 		return &LoginResult{
@@ -196,6 +207,7 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 			UserID:             user.ID,
 			AccessToken:        accessToken,
 			RefreshToken:       refreshToken,
+			SessionID:          sessionID,
 			TwoFASetupResponse: &dto.TwoFASetupRequiredResponse{
 				Message:      "2FA setup is required for this application",
 				AccessToken:  accessToken,
@@ -204,21 +216,10 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 		}, nil
 	}
 
-	// Generate JWTs for standard login
-	roles := s.getUserRoles(appID.String(), user.ID.String())
-	accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String(), roles)
-	if err != nil {
-		return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
-	}
-
-	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String(), roles)
-	if err != nil {
-		return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
-	}
-
-	// Store refresh token in Redis
-	if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
-		return nil, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+	// Standard login — create session
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+	if appErr != nil {
+		return nil, appErr
 	}
 
 	return &LoginResult{
@@ -226,10 +227,17 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 		UserID:        user.ID,
 		AccessToken:   accessToken,
 		RefreshToken:  refreshToken,
+		SessionID:     sessionID,
 	}, nil
 }
 
 func (s *Service) RefreshUserToken(refreshToken string) (string, string, string, *errors.AppError) {
+	// Delegate to session service if available (session-based refresh with token rotation)
+	if s.SessionService != nil {
+		return s.SessionService.RefreshSession(refreshToken)
+	}
+
+	// Legacy fallback: refresh without session tracking
 	claims, err := jwt.ParseToken(refreshToken)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid refresh token")
@@ -248,11 +256,11 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, string,
 
 	// Generate new access and refresh tokens (re-fetch roles for freshness)
 	roles := s.getUserRoles(claims.AppID, claims.UserID)
-	newAccessToken, err := jwt.GenerateAccessToken(claims.AppID, claims.UserID, roles)
+	newAccessToken, err := jwt.GenerateAccessToken(claims.AppID, claims.UserID, claims.SessionID, roles)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new access token")
 	}
-	newRefreshToken, err := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, roles)
+	newRefreshToken, err := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, claims.SessionID, roles)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new refresh token")
 	}
@@ -268,9 +276,17 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, string,
 	return newAccessToken, newRefreshToken, claims.UserID, nil
 }
 
-// LogoutUser logs out a user by revoking their refresh token and blacklisting their access token
-func (s *Service) LogoutUser(appID, userID, refreshToken, accessToken string) *errors.AppError {
-	// Revoke the refresh token in Redis
+// LogoutUser logs out a user by revoking their session and blacklisting their access token
+func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken string) *errors.AppError {
+	// Revoke the session if session service is available and sessionID is present
+	if s.SessionService != nil && sessionID != "" {
+		if appErr := s.SessionService.LogoutSession(appID, userID, sessionID, accessToken); appErr != nil {
+			log.Printf("Warning: Failed to revoke session %s: %v\n", sessionID, appErr.Message)
+		}
+		return nil
+	}
+
+	// Legacy fallback: revoke refresh token directly
 	if err := redis.RevokeRefreshToken(appID, userID, refreshToken); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to revoke refresh token")
 	}
@@ -294,6 +310,30 @@ func (s *Service) LogoutUser(appID, userID, refreshToken, accessToken string) *e
 	}
 
 	return nil
+}
+
+// createSession creates a new session via the session service, or falls back to legacy token storage.
+func (s *Service) createSession(appID, userID, ip, userAgent string) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
+	roles := s.getUserRoles(appID, userID)
+
+	if s.SessionService != nil {
+		return s.SessionService.CreateSession(appID, userID, ip, userAgent, roles)
+	}
+
+	// Legacy fallback: generate tokens without session tracking
+	var err error
+	accessToken, err = jwt.GenerateAccessToken(appID, userID, "", roles)
+	if err != nil {
+		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
+	}
+	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, "", roles)
+	if err != nil {
+		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
+	}
+	if err := redis.SetRefreshToken(appID, userID, refreshToken); err != nil {
+		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+	}
+	return accessToken, refreshToken, "", nil
 }
 
 func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.AppError {

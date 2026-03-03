@@ -9,6 +9,7 @@ import (
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
@@ -19,9 +20,14 @@ import (
 // RoleLookupFunc is a function that returns role names for a user in an app.
 type RoleLookupFunc func(appID, userID string) ([]string, error)
 
+// AssignDefaultRoleFunc is called to assign the default role to a user.
+type AssignDefaultRoleFunc func(appID, userID string) error
+
 type Handler struct {
-	Service     *Service
-	LookupRoles RoleLookupFunc // Optional: if nil, tokens are generated without roles
+	Service           *Service
+	SessionService    *session.Service      // Session management for creating sessions on 2FA login completion
+	LookupRoles       RoleLookupFunc        // Optional: if nil, tokens are generated without roles
+	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no self-healing role assignment
 }
 
 func NewHandler(s *Service) *Handler {
@@ -29,6 +35,8 @@ func NewHandler(s *Service) *Handler {
 }
 
 // getUserRoles fetches roles for JWT embedding. Returns nil on error (non-fatal).
+// Self-healing: if the user has no roles and AssignDefaultRole is available,
+// assigns the "member" role automatically (covers pre-RBAC users).
 func (h *Handler) getUserRoles(appID, userID string) []string {
 	if h.LookupRoles == nil {
 		return nil
@@ -38,6 +46,22 @@ func (h *Handler) getUserRoles(appID, userID string) []string {
 		stdlog.Printf("Warning: failed to lookup roles for user %s in app %s: %v", userID, appID, err)
 		return nil
 	}
+
+	// Self-healing: assign default role if user has none (pre-RBAC users)
+	if len(roles) == 0 && h.AssignDefaultRole != nil {
+		if err := h.AssignDefaultRole(appID, userID); err != nil {
+			stdlog.Printf("Warning: self-healing role assignment failed for user %s in app %s: %v", userID, appID, err)
+			return nil
+		}
+		// Re-fetch roles after assignment
+		roles, err = h.LookupRoles(appID, userID)
+		if err != nil {
+			stdlog.Printf("Warning: failed to re-lookup roles after self-healing for user %s in app %s: %v", userID, appID, err)
+			return nil
+		}
+		stdlog.Printf("Info: self-healing assigned default role to user %s in app %s, roles: %v", userID, appID, roles)
+	}
+
 	return roles
 }
 
@@ -306,16 +330,16 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		return
 	}
 
-	// Generate final tokens
+	// Generate final tokens (via session if available, else legacy)
+	ipAddress, userAgent := util.GetClientInfo(c)
 	roles := h.getUserRoles(appID.String(), userID)
-	accessToken, refreshToken, err := generateTokensForUser(appID.String(), userID, roles)
-	if err != nil {
+	accessToken, refreshToken, tokenErr := h.createSessionOrTokens(appID.String(), userID, ipAddress, userAgent, roles)
+	if tokenErr != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to generate tokens"})
 		return
 	}
 
 	// Log successful 2FA login
-	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID)
 	if parseErr == nil {
 		log.Log2FALogin(appID, userUUID, ipAddress, userAgent, method)
@@ -519,14 +543,14 @@ func getUserIDFromTempSession(appID, tempToken string) (string, error) {
 	return redis.GetTempUserSession(appID, tempToken)
 }
 
-// generateTokensForUser generates access and refresh tokens for a user
+// generateTokensForUser generates access and refresh tokens for a user (legacy, no session)
 func generateTokensForUser(appID string, userID string, roles []string) (string, string, error) {
-	accessToken, err := jwt.GenerateAccessToken(appID, userID, roles)
+	accessToken, err := jwt.GenerateAccessToken(appID, userID, "", roles)
 	if err != nil {
 		return "", "", err
 	}
 
-	refreshToken, err := jwt.GenerateRefreshToken(appID, userID, roles)
+	refreshToken, err := jwt.GenerateRefreshToken(appID, userID, "", roles)
 	if err != nil {
 		return "", "", err
 	}
@@ -537,6 +561,19 @@ func generateTokensForUser(appID string, userID string, roles []string) (string,
 	}
 
 	return accessToken, refreshToken, nil
+}
+
+// createSessionOrTokens creates a session via the session service if available,
+// otherwise falls back to legacy token generation.
+func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent string, roles []string) (string, string, error) {
+	if h.SessionService != nil {
+		accessToken, refreshToken, _, appErr := h.SessionService.CreateSession(appID, userID, ip, userAgent, roles)
+		if appErr != nil {
+			return "", "", fmt.Errorf("%s", appErr.Message)
+		}
+		return accessToken, refreshToken, nil
+	}
+	return generateTokensForUser(appID, userID, roles)
 }
 
 // clearTempSession clears the temporary 2FA session

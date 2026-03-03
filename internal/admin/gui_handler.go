@@ -4412,3 +4412,378 @@ func (h *GUIHandler) PasskeyLoginFinish(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"redirect": "/gui/"})
 }
+
+// ============================================================
+// Session Management
+// ============================================================
+
+// SessionsPage renders the session management page.
+// GET /gui/sessions
+func (h *GUIHandler) SessionsPage(c *gin.Context) {
+	apps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "sessions", gin.H{
+			"ActivePage": "sessions",
+			"AdminUser":  getAdminUsername(c),
+			"CSRFToken":  getCSRFToken(c),
+			"Error":      "Failed to load applications",
+		})
+		return
+	}
+
+	c.HTML(http.StatusOK, "sessions", gin.H{
+		"ActivePage": "sessions",
+		"AdminUser":  getAdminUsername(c),
+		"CSRFToken":  getCSRFToken(c),
+		"Apps":       apps,
+	})
+}
+
+// sessionItem is a flattened struct for rendering in the session list template.
+type sessionItem struct {
+	SessionID           string
+	UserID              string
+	UserEmail           string
+	AppID               string
+	AppName             string
+	IP                  string
+	UserAgent           string
+	CreatedAt           string
+	LastActive          string
+	CreatedAtFormatted  string
+	LastActiveFormatted string
+}
+
+// SessionList returns the paginated session list partial (HTMX fragment).
+// GET /gui/sessions/list
+func (h *GUIHandler) SessionList(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize := 20
+
+	filterAppID := c.Query("app_id")
+	search := strings.ToLower(c.Query("search"))
+	ipSearch := strings.ToLower(c.Query("ip"))
+
+	// Determine which apps to query
+	var appIDs []string
+	var appNames map[string]string
+
+	if filterAppID != "" {
+		appIDs = []string{filterAppID}
+	} else {
+		apps, err := h.Repo.ListAllAppsWithTenantName()
+		if err != nil {
+			c.HTML(http.StatusInternalServerError, "session_list", gin.H{"Sessions": nil, "Error": "Failed to load apps"})
+			return
+		}
+		for _, a := range apps {
+			appIDs = append(appIDs, a.ID.String())
+		}
+	}
+
+	// Fetch app names for display
+	appNames, _ = h.Repo.GetAppNamesByIDs(appIDs)
+
+	// Collect all sessions across selected apps
+	var allSessions []map[string]string
+	var allAppIDs []string // parallel array tracking which appID each session belongs to
+	for _, appID := range appIDs {
+		sessions, err := redis.GetAllSessionsForApp(appID)
+		if err != nil {
+			continue
+		}
+		for _, s := range sessions {
+			s["app_id"] = appID
+			allSessions = append(allSessions, s)
+			allAppIDs = append(allAppIDs, appID)
+		}
+	}
+
+	// Collect unique user IDs for batch email lookup
+	userIDSet := make(map[string]bool)
+	for _, s := range allSessions {
+		if uid, ok := s["user_id"]; ok && uid != "" {
+			userIDSet[uid] = true
+		}
+	}
+	var userIDs []string
+	for uid := range userIDSet {
+		userIDs = append(userIDs, uid)
+	}
+	userEmails, _ := h.Repo.GetUserEmailsByIDs(userIDs)
+
+	// Build flattened items and apply in-memory filters
+	var items []sessionItem
+	for _, s := range allSessions {
+		userID := s["user_id"]
+		userEmail := userEmails[userID]
+		ip := s["ip"]
+		appID := s["app_id"]
+
+		// Apply search filter (user email)
+		if search != "" && !strings.Contains(strings.ToLower(userEmail), search) {
+			continue
+		}
+		// Apply IP filter
+		if ipSearch != "" && !strings.Contains(strings.ToLower(ip), ipSearch) {
+			continue
+		}
+
+		item := sessionItem{
+			SessionID:  s["session_id"],
+			UserID:     userID,
+			UserEmail:  userEmail,
+			AppID:      appID,
+			AppName:    appNames[appID],
+			IP:         ip,
+			UserAgent:  s["user_agent"],
+			CreatedAt:  s["created_at"],
+			LastActive: s["last_active"],
+		}
+
+		// Format timestamps for display
+		if t, err := time.Parse(time.RFC3339, s["created_at"]); err == nil {
+			item.CreatedAtFormatted = formatTimeAgo(t)
+		} else {
+			item.CreatedAtFormatted = s["created_at"]
+		}
+		if t, err := time.Parse(time.RFC3339, s["last_active"]); err == nil {
+			item.LastActiveFormatted = formatTimeAgo(t)
+		} else {
+			item.LastActiveFormatted = s["last_active"]
+		}
+
+		items = append(items, item)
+	}
+
+	// Sort by last_active descending (most recently active first)
+	sortSessionsByLastActive(items)
+
+	// Paginate
+	total := len(items)
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	pageItems := items[start:end]
+
+	c.HTML(http.StatusOK, "session_list", gin.H{
+		"Sessions":   pageItems,
+		"Page":       page,
+		"TotalPages": totalPages,
+		"Total":      total,
+		"AppID":      filterAppID,
+		"Search":     c.Query("search"),
+		"IP":         c.Query("ip"),
+	})
+}
+
+// SessionDetail returns the session detail partial (HTMX fragment).
+// GET /gui/sessions/:app_id/:session_id/detail
+func (h *GUIHandler) SessionDetail(c *gin.Context) {
+	appID := c.Param("app_id")
+	sessionID := c.Param("session_id")
+
+	data, err := redis.GetSession(appID, sessionID)
+	if err != nil {
+		c.HTML(http.StatusNotFound, "session_detail", gin.H{
+			"Error": "Session not found",
+		})
+		return
+	}
+
+	userID := data["user_id"]
+	userEmails, _ := h.Repo.GetUserEmailsByIDs([]string{userID})
+	appNames, _ := h.Repo.GetAppNamesByIDs([]string{appID})
+
+	c.HTML(http.StatusOK, "session_detail", gin.H{
+		"SessionID":  sessionID,
+		"UserID":     userID,
+		"UserEmail":  userEmails[userID],
+		"AppID":      appID,
+		"AppName":    appNames[appID],
+		"IP":         data["ip"],
+		"UserAgent":  data["user_agent"],
+		"CreatedAt":  data["created_at"],
+		"LastActive": data["last_active"],
+	})
+}
+
+// SessionRevoke deletes a single session (HTMX action).
+// DELETE /gui/sessions/:app_id/:session_id
+func (h *GUIHandler) SessionRevoke(c *gin.Context) {
+	appID := c.Param("app_id")
+	sessionID := c.Param("session_id")
+	userID := c.Query("user_id")
+
+	if userID == "" {
+		// Try to get user_id from the session itself
+		data, err := redis.GetSession(appID, sessionID)
+		if err == nil {
+			userID = data["user_id"]
+		}
+	}
+
+	if err := redis.DeleteSession(appID, sessionID, userID); err != nil {
+		c.String(http.StatusInternalServerError, "Failed to revoke session")
+		return
+	}
+
+	// Check if this was called from user detail page
+	if c.Query("from_user_detail") == "1" {
+		h.renderUserSessions(c, appID, userID)
+		return
+	}
+
+	// Trigger list refresh and re-render
+	c.Header("HX-Trigger", "sessionListRefresh")
+	h.SessionList(c)
+}
+
+// SessionRevokeAllForUser revokes all sessions for a specific user (HTMX action).
+// DELETE /gui/sessions/revoke-all-user
+func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
+	appID := c.Query("app_id")
+	userID := c.Query("user_id")
+
+	if appID == "" || userID == "" {
+		c.String(http.StatusBadRequest, "Missing app_id or user_id")
+		return
+	}
+
+	if err := redis.DeleteAllUserSessions(appID, userID, ""); err != nil {
+		c.String(http.StatusInternalServerError, "Failed to revoke sessions")
+		return
+	}
+
+	// Check if this was called from user detail page
+	if c.Query("from_user_detail") == "1" {
+		h.renderUserSessions(c, appID, userID)
+		return
+	}
+
+	// Trigger list refresh and re-render
+	c.Header("HX-Trigger", "sessionListRefresh")
+	h.SessionList(c)
+}
+
+// UserSessions returns the user sessions partial for the user detail page.
+// GET /gui/users/:id/sessions
+func (h *GUIHandler) UserSessions(c *gin.Context) {
+	userID := c.Param("id")
+	appID := c.Query("app_id")
+
+	if appID == "" {
+		// Look up the user's app_id
+		detail, err := h.Repo.GetUserDetailByID(userID)
+		if err != nil {
+			c.HTML(http.StatusNotFound, "user_sessions", gin.H{"Sessions": nil})
+			return
+		}
+		appID = detail.AppID.String()
+	}
+
+	h.renderUserSessions(c, appID, userID)
+}
+
+// renderUserSessions is a helper that renders the user_sessions partial for a given user.
+func (h *GUIHandler) renderUserSessions(c *gin.Context, appID, userID string) {
+	sessionIDs, err := redis.GetUserSessionIDs(appID, userID)
+	if err != nil {
+		c.HTML(http.StatusOK, "user_sessions", gin.H{
+			"Sessions": nil,
+			"AppID":    appID,
+			"UserID":   userID,
+		})
+		return
+	}
+
+	var items []sessionItem
+	for _, sid := range sessionIDs {
+		data, err := redis.GetSession(appID, sid)
+		if err != nil {
+			continue
+		}
+
+		item := sessionItem{
+			SessionID:  sid,
+			UserID:     userID,
+			AppID:      appID,
+			IP:         data["ip"],
+			UserAgent:  data["user_agent"],
+			CreatedAt:  data["created_at"],
+			LastActive: data["last_active"],
+		}
+
+		if t, err := time.Parse(time.RFC3339, data["created_at"]); err == nil {
+			item.CreatedAtFormatted = formatTimeAgo(t)
+		} else {
+			item.CreatedAtFormatted = data["created_at"]
+		}
+		if t, err := time.Parse(time.RFC3339, data["last_active"]); err == nil {
+			item.LastActiveFormatted = formatTimeAgo(t)
+		} else {
+			item.LastActiveFormatted = data["last_active"]
+		}
+
+		items = append(items, item)
+	}
+
+	sortSessionsByLastActive(items)
+
+	c.HTML(http.StatusOK, "user_sessions", gin.H{
+		"Sessions": items,
+		"AppID":    appID,
+		"UserID":   userID,
+	})
+}
+
+// sortSessionsByLastActive sorts sessions by last_active time descending.
+func sortSessionsByLastActive(items []sessionItem) {
+	for i := 0; i < len(items); i++ {
+		for j := i + 1; j < len(items); j++ {
+			ti, _ := time.Parse(time.RFC3339, items[i].LastActive)
+			tj, _ := time.Parse(time.RFC3339, items[j].LastActive)
+			if tj.After(ti) {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+}
+
+// formatTimeAgo returns a human-readable relative time string.
+func formatTimeAgo(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		mins := int(d.Minutes())
+		if mins == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", mins)
+	case d < 24*time.Hour:
+		hours := int(d.Hours())
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
+	case d < 7*24*time.Hour:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	default:
+		return t.Format("Jan 02, 2006 15:04")
+	}
+}

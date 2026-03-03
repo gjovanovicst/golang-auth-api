@@ -591,7 +591,11 @@ func (s *Service) BeginAdminRegistration(admin *models.AdminAccount) (json.RawMe
 		return nil, errors.NewAppError(errors.ErrInternal, "WebAuthn is not configured for admin")
 	}
 
-	options, session, err := wan.BeginRegistration(adminUser)
+	options, session, err := wan.BeginRegistration(adminUser,
+		gowebauthn.WithPublicKeyCredentialHints([]protocol.PublicKeyCredentialHints{
+			protocol.PublicKeyCredentialHintClientDevice,
+		}),
+	)
 	if err != nil {
 		log.Printf("Failed to begin admin WebAuthn registration: %v", err)
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to start passkey registration")
@@ -726,7 +730,11 @@ func (s *Service) BeginAdminLogin() (json.RawMessage, string, *errors.AppError) 
 	}
 
 	// Begin discoverable login — no allowCredentials list
-	options, session, err := wan.BeginDiscoverableLogin()
+	options, session, err := wan.BeginDiscoverableLogin(
+		gowebauthn.WithAssertionPublicKeyCredentialHints([]protocol.PublicKeyCredentialHints{
+			protocol.PublicKeyCredentialHintClientDevice,
+		}),
+	)
 	if err != nil {
 		log.Printf("Failed to begin admin WebAuthn discoverable login: %v", err)
 		return nil, "", errors.NewAppError(errors.ErrInternal, "Failed to start passkey login")

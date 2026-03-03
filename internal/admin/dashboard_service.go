@@ -3,6 +3,7 @@ package admin
 import (
 	"time"
 
+	appRedis "github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"gorm.io/gorm"
 )
@@ -15,6 +16,7 @@ type DashboardStats struct {
 	TotalTenants      int64
 	TotalApps         int64
 	RecentEventsCount int64 // activity logs in last 24 hours
+	ActiveSessions    int64 // active user sessions across all apps
 }
 
 // DashboardService provides aggregated data for the admin dashboard.
@@ -63,6 +65,19 @@ func (s *DashboardService) GetStats() (*DashboardStats, error) {
 		Where("timestamp >= ?", since).
 		Count(&stats.RecentEventsCount).Error; err != nil {
 		return nil, err
+	}
+
+	// Count active sessions across all apps (from Redis)
+	var appIDs []string
+	if err := s.db.Model(&models.Application{}).Pluck("id", &appIDs).Error; err != nil {
+		return nil, err
+	}
+	for _, appID := range appIDs {
+		count, err := appRedis.CountAppSessions(appID)
+		if err != nil {
+			continue // Don't fail dashboard if Redis is unavailable
+		}
+		stats.ActiveSessions += count
 	}
 
 	return stats, nil

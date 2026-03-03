@@ -1,0 +1,111 @@
+{{define "session_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Sessions}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">User</th>
+                        <th>Application</th>
+                        <th>IP Address</th>
+                        <th>User Agent</th>
+                        <th>Created</th>
+                        <th>Last Active</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Sessions}}
+                    <tr>
+                        <td class="ps-3">
+                            {{if .UserEmail}}
+                            <small class="fw-semibold">{{.UserEmail}}</small>
+                            {{else}}
+                            <small class="text-muted fst-italic">Unknown</small>
+                            {{end}}
+                            <br><small class="text-muted font-monospace" style="font-size: 0.7rem;">{{.UserID}}</small>
+                        </td>
+                        <td>
+                            {{if .AppName}}
+                            <small>{{.AppName}}</small>
+                            {{else}}
+                            <small class="text-muted font-monospace" style="font-size: 0.7rem;">{{.AppID}}</small>
+                            {{end}}
+                        </td>
+                        <td>
+                            <small class="text-muted font-monospace">{{if .IP}}{{.IP}}{{else}}-{{end}}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted" style="max-width: 200px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                   title="{{.UserAgent}}">
+                                {{if .UserAgent}}{{.UserAgent}}{{else}}-{{end}}
+                            </small>
+                        </td>
+                        <td class="text-nowrap">
+                            <small class="text-muted" title="{{.CreatedAt}}">{{.CreatedAtFormatted}}</small>
+                        </td>
+                        <td class="text-nowrap">
+                            <small class="text-muted" title="{{.LastActive}}">{{.LastActiveFormatted}}</small>
+                        </td>
+                        <td class="pe-3 text-end text-nowrap">
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/sessions/{{.AppID}}/{{.SessionID}}/detail"
+                                    hx-target="#session-detail-container"
+                                    hx-swap="innerHTML"
+                                    title="View details">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-delete="/gui/sessions/{{.AppID}}/{{.SessionID}}?user_id={{.UserID}}"
+                                    hx-target="#session-table"
+                                    hx-swap="innerHTML"
+                                    hx-confirm="Revoke this session for {{if .UserEmail}}{{.UserEmail}}{{else}}this user{{end}}?"
+                                    title="Revoke session">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {{if gt .TotalPages 1}}
+        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+            <small class="text-muted">
+                Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
+            </small>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item {{if le .Page 1}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/sessions/list?page={{sub .Page 1}}{{if .AppID}}&app_id={{.AppID}}{{end}}{{if .Search}}&search={{.Search}}{{end}}{{if .IP}}&ip={{.IP}}{{end}}"
+                           hx-target="#session-table"
+                           hx-swap="innerHTML">Previous</a>
+                    </li>
+                    <li class="page-item {{if ge .Page .TotalPages}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/sessions/list?page={{add .Page 1}}{{if .AppID}}&app_id={{.AppID}}{{end}}{{if .Search}}&search={{.Search}}{{end}}{{if .IP}}&ip={{.IP}}{{end}}"
+                           hx-target="#session-table"
+                           hx-swap="innerHTML">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        {{end}}
+
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-broadcast fs-1"></i>
+            {{if or .AppID .Search .IP}}
+            <p class="mt-2 mb-0">No active sessions found matching your filters.</p>
+            {{else}}
+            <p class="mt-2 mb-0">No active sessions found. Sessions will appear here when users log in.</p>
+            {{end}}
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

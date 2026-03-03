@@ -201,6 +201,214 @@ func IsUserTokensBlacklisted(appID, userID string) (bool, error) {
 	return true, nil // All user tokens are blacklisted
 }
 
+// ==================== Session Management Functions ====================
+
+// CreateSession stores a new session as a Redis Hash with metadata.
+// Key pattern: app:{appID}:session:{sessionID}
+// Also adds the sessionID to the user's session index set.
+func CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent string, ttl time.Duration) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	fields := map[string]interface{}{
+		"user_id":       userID,
+		"refresh_token": refreshToken,
+		"ip":            ip,
+		"user_agent":    userAgent,
+		"created_at":    time.Now().UTC().Format(time.RFC3339),
+		"last_active":   time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := Rdb.HSet(ctx, key, fields).Err(); err != nil {
+		return err
+	}
+	if err := Rdb.Expire(ctx, key, ttl).Err(); err != nil {
+		return err
+	}
+	// Add to user session index
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	if err := Rdb.SAdd(ctx, indexKey, sessionID).Err(); err != nil {
+		return err
+	}
+	// Set a generous TTL on the index (longer than any single session) to prevent stale keys
+	Rdb.Expire(ctx, indexKey, ttl+24*time.Hour)
+
+	// Add to app-level session index (for admin dashboard enumeration)
+	appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+	Rdb.SAdd(ctx, appIndexKey, sessionID)
+	Rdb.Expire(ctx, appIndexKey, ttl+24*time.Hour)
+
+	return nil
+}
+
+// GetSession retrieves all fields of a session hash.
+func GetSession(appID, sessionID string) (map[string]string, error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	result, err := Rdb.HGetAll(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(result) == 0 {
+		return nil, redis.Nil
+	}
+	return result, nil
+}
+
+// GetSessionRefreshToken retrieves only the refresh_token field from a session.
+func GetSessionRefreshToken(appID, sessionID string) (string, error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HGet(ctx, key, "refresh_token").Result()
+}
+
+// UpdateSessionRefreshToken updates the refresh token stored in a session hash.
+func UpdateSessionRefreshToken(appID, sessionID, newRefreshToken string) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HSet(ctx, key, "refresh_token", newRefreshToken).Err()
+}
+
+// TouchSession updates the last_active timestamp of a session.
+func TouchSession(appID, sessionID string) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HSet(ctx, key, "last_active", time.Now().UTC().Format(time.RFC3339)).Err()
+}
+
+// DeleteSession removes a session hash and removes it from the user and app session indexes.
+func DeleteSession(appID, sessionID, userID string) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	if err := Rdb.Del(ctx, key).Err(); err != nil {
+		return err
+	}
+	// Remove from user session index
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	Rdb.SRem(ctx, indexKey, sessionID)
+	// Remove from app-level session index
+	appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+	Rdb.SRem(ctx, appIndexKey, sessionID)
+	return nil
+}
+
+// GetUserSessionIDs returns all session IDs for a user from the session index set.
+// It performs lazy cleanup: any session ID in the set that no longer exists in Redis is removed.
+func GetUserSessionIDs(appID, userID string) ([]string, error) {
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	sessionIDs, err := Rdb.SMembers(ctx, indexKey).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// Lazy cleanup: verify each session still exists
+	var validIDs []string
+	for _, sid := range sessionIDs {
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		exists, err := Rdb.Exists(ctx, sessionKey).Result()
+		if err != nil {
+			continue // Skip on error, don't remove
+		}
+		if exists == 0 {
+			// Session expired, remove from index
+			Rdb.SRem(ctx, indexKey, sid)
+			continue
+		}
+		validIDs = append(validIDs, sid)
+	}
+
+	return validIDs, nil
+}
+
+// DeleteAllUserSessions removes all sessions for a user except the one specified by exceptSessionID.
+// If exceptSessionID is empty, all sessions are removed.
+func DeleteAllUserSessions(appID, userID, exceptSessionID string) error {
+	sessionIDs, err := GetUserSessionIDs(appID, userID)
+	if err != nil {
+		return err
+	}
+
+	for _, sid := range sessionIDs {
+		if sid == exceptSessionID {
+			continue
+		}
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		Rdb.Del(ctx, sessionKey)
+		// Remove from app-level session index
+		appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+		Rdb.SRem(ctx, appIndexKey, sid)
+	}
+
+	// Clean up the index
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	if exceptSessionID == "" {
+		Rdb.Del(ctx, indexKey)
+	} else {
+		// Rebuild the set with only the excepted session
+		Rdb.Del(ctx, indexKey)
+		Rdb.SAdd(ctx, indexKey, exceptSessionID)
+	}
+
+	return nil
+}
+
+// SessionExists checks whether a session hash key exists in Redis.
+func SessionExists(appID, sessionID string) (bool, error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	exists, err := Rdb.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+	return exists > 0, nil
+}
+
+// GetAppSessionIDs returns all session IDs for an app from the app-level session index.
+// Performs lazy cleanup: removes IDs whose session hash has expired.
+func GetAppSessionIDs(appID string) ([]string, error) {
+	indexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+	sessionIDs, err := Rdb.SMembers(ctx, indexKey).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var validIDs []string
+	for _, sid := range sessionIDs {
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		exists, err := Rdb.Exists(ctx, sessionKey).Result()
+		if err != nil {
+			continue
+		}
+		if exists == 0 {
+			Rdb.SRem(ctx, indexKey, sid)
+			continue
+		}
+		validIDs = append(validIDs, sid)
+	}
+	return validIDs, nil
+}
+
+// CountAppSessions returns the count of entries in the app-level session index.
+// Note: may include stale entries until lazy cleanup runs via GetAppSessionIDs.
+func CountAppSessions(appID string) (int64, error) {
+	indexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+	return Rdb.SCard(ctx, indexKey).Result()
+}
+
+// GetAllSessionsForApp returns full session metadata for all active sessions in an app.
+// Each returned map contains: session_id, user_id, ip, user_agent, created_at, last_active.
+// The refresh_token field is intentionally excluded for security.
+func GetAllSessionsForApp(appID string) ([]map[string]string, error) {
+	sessionIDs, err := GetAppSessionIDs(appID)
+	if err != nil {
+		return nil, err
+	}
+
+	var sessions []map[string]string
+	for _, sid := range sessionIDs {
+		data, err := GetSession(appID, sid)
+		if err != nil {
+			continue
+		}
+		data["session_id"] = sid
+		// Remove refresh_token from admin-visible data
+		delete(data, "refresh_token")
+		sessions = append(sessions, data)
+	}
+	return sessions, nil
+}
+
 // Admin Session Functions
 
 // SetAdminSession stores an admin session in Redis

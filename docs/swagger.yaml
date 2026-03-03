@@ -604,6 +604,28 @@ definitions:
       type_code:
         type: string
     type: object
+  dto.SessionListResponse:
+    properties:
+      sessions:
+        items:
+          $ref: '#/definitions/dto.SessionResponse'
+        type: array
+    type: object
+  dto.SessionResponse:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      ip_address:
+        type: string
+      is_current:
+        type: boolean
+      last_active:
+        type: string
+      user_agent:
+        type: string
+    type: object
   dto.SetRolePermissionsRequest:
     properties:
       permission_ids:
@@ -3799,6 +3821,88 @@ paths:
       summary: Reset password
       tags:
       - Auth
+  /sessions:
+    delete:
+      description: Revoke all sessions except the current one
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Revoke all other sessions
+      tags:
+      - Sessions
+    get:
+      description: List all active sessions (devices/IPs) for the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.SessionListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List active sessions
+      tags:
+      - Sessions
+  /sessions/{id}:
+    delete:
+      description: Revoke a specific session by its ID (logout a specific device)
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Revoke a specific session
+      tags:
+      - Sessions
   /verify-email:
     get:
       description: Verify user's email address

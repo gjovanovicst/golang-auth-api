@@ -207,7 +207,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleGoogleCallback(appID, token.AccessToken)
+	userID, appErr := h.Service.HandleGoogleCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -236,14 +236,23 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 			c.Redirect(http.StatusFound, frontendURL)
 			return
 		}
-		// Redirect with 2FA requirement
+		// Redirect with 2FA requirement — NO session created yet
 		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=google", redirectURI, tempToken)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
-	// Log social login activity
+	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	if sessionErr != nil {
+		errorMsg := url.QueryEscape(sessionErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log social login activity
 	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "google")
 
 	// Redirect to frontend with tokens in URL parameters
@@ -375,7 +384,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleFacebookCallback(appID, token.AccessToken)
+	userID, appErr := h.Service.HandleFacebookCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -404,14 +413,23 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 			c.Redirect(http.StatusFound, frontendURL)
 			return
 		}
-		// Redirect with 2FA requirement
+		// Redirect with 2FA requirement — NO session created yet
 		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=facebook", redirectURI, tempToken)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
-	// Log social login activity
+	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	if sessionErr != nil {
+		errorMsg := url.QueryEscape(sessionErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log social login activity
 	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "facebook")
 
 	// Redirect to frontend with tokens in URL parameters
@@ -543,7 +561,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleGithubCallback(appID, token.AccessToken)
+	userID, appErr := h.Service.HandleGithubCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -572,14 +590,23 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 			c.Redirect(http.StatusFound, frontendURL)
 			return
 		}
-		// Redirect with 2FA requirement
+		// Redirect with 2FA requirement — NO session created yet
 		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=github", redirectURI, tempToken)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
-	// Log social login activity
+	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	if sessionErr != nil {
+		errorMsg := url.QueryEscape(sessionErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log social login activity
 	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "github")
 
 	// Redirect to frontend with tokens in URL parameters

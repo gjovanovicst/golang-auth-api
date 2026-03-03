@@ -16,6 +16,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/middleware"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/social"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
@@ -104,16 +105,22 @@ func main() {
 	userService := user.NewService(userRepo, emailService, database.DB)
 	userService.LookupRoles = rbacService.GetUserRoleNames
 	userService.AssignDefaultRole = rbacService.AssignDefaultRole
+	sessionService := session.NewService()
+	userService.SessionService = sessionService
 	socialService := social.NewService(userRepo, socialRepo)
 	socialService.LookupRoles = rbacService.GetUserRoleNames
 	socialService.AssignDefaultRole = rbacService.AssignDefaultRole
+	socialService.SessionService = sessionService
 	twofaService := twofa.NewService(userRepo, database.DB, emailService)
 	logQueryService := logService.NewQueryService(logRepo)
 	userHandler := user.NewHandler(userService)
 	socialHandler := social.NewHandler(socialService)
 	twofaHandler := twofa.NewHandler(twofaService)
 	twofaHandler.LookupRoles = rbacService.GetUserRoleNames
+	twofaHandler.SessionService = sessionService
+	twofaHandler.AssignDefaultRole = rbacService.AssignDefaultRole
 	logHandler := logService.NewHandler(logQueryService)
+	sessionHandler := session.NewHandler(sessionService)
 	adminRepo := admin.NewRepository(database.DB)
 	adminHandler := admin.NewHandler(adminRepo, emailService)
 
@@ -122,6 +129,8 @@ func main() {
 	webauthnService := passkey.NewService(webauthnRepo, userRepo, database.DB)
 	webauthnHandler := passkey.NewHandler(webauthnService)
 	webauthnHandler.LookupRoles = rbacService.GetUserRoleNames
+	webauthnHandler.SessionService = sessionService
+	webauthnHandler.AssignDefaultRole = rbacService.AssignDefaultRole
 
 	// Initialize Admin GUI Services and Handler
 	accountRepo := admin.NewAccountRepository(database.DB)
@@ -246,6 +255,11 @@ func main() {
 		protected.GET("/activity-logs", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetUserActivityLogs)
 		protected.GET("/activity-logs/event-types", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetEventTypes)
 		protected.GET("/activity-logs/:id", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetActivityLogByID)
+
+		// Session management routes
+		protected.GET("/sessions", sessionHandler.ListSessions)
+		protected.DELETE("/sessions/:id", sessionHandler.RevokeSession)
+		protected.DELETE("/sessions", sessionHandler.RevokeAllSessions)
 	}
 
 	// Admin routes (protected by Admin API Key)
@@ -488,6 +502,14 @@ func main() {
 			guiAuth.GET("/user-roles/revoke", guiHandler.UserRoleRevokeConfirm)
 			guiAuth.DELETE("/user-roles", guiHandler.UserRoleRevoke)
 			guiAuth.GET("/user-roles/form-cancel", guiHandler.UserRoleFormCancel)
+
+			// Session management
+			guiAuth.GET("/sessions", guiHandler.SessionsPage)
+			guiAuth.GET("/sessions/list", guiHandler.SessionList)
+			guiAuth.GET("/sessions/:app_id/:session_id/detail", guiHandler.SessionDetail)
+			guiAuth.DELETE("/sessions/:app_id/:session_id", guiHandler.SessionRevoke)
+			guiAuth.DELETE("/sessions/revoke-all-user", guiHandler.SessionRevokeAllForUser)
+			guiAuth.GET("/users/:id/sessions", guiHandler.UserSessions)
 
 			// My Account & 2FA management
 			guiAuth.GET("/my-account", guiHandler.MyAccountPage)

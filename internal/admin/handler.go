@@ -134,6 +134,20 @@ func (h *Handler) CreateApp(c *gin.Context) {
 		return
 	}
 
+	// Seed default RBAC roles for the new application
+	if err := h.Repo.SeedDefaultRolesForApp(app.ID); err != nil {
+		// Log but don't fail — the app was created, roles can be seeded later
+		c.JSON(http.StatusCreated, dto.AppResponse{
+			ID:          app.ID,
+			TenantID:    app.TenantID,
+			Name:        app.Name,
+			Description: app.Description,
+			CreatedAt:   app.CreatedAt,
+			UpdatedAt:   app.UpdatedAt,
+		})
+		return
+	}
+
 	c.JSON(http.StatusCreated, dto.AppResponse{
 		ID:          app.ID,
 		TenantID:    app.TenantID,

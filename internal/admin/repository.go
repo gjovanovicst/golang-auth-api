@@ -95,6 +95,90 @@ func (r *Repository) CreateApp(app *models.Application) error {
 	return r.DB.Create(app).Error
 }
 
+// SeedDefaultRolesForApp creates the default system roles (admin, member, viewer) for an application
+// and assigns them the standard permissions. Should be called after creating a new application.
+func (r *Repository) SeedDefaultRolesForApp(appID uuid.UUID) error {
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		// Load all permissions
+		var permissions []models.Permission
+		if err := tx.Find(&permissions).Error; err != nil {
+			return err
+		}
+		if len(permissions) == 0 {
+			return nil // No permissions seeded yet, skip
+		}
+
+		// Build permission lookup by "resource:action"
+		permByKey := make(map[string]models.Permission)
+		for _, p := range permissions {
+			permByKey[p.Resource+":"+p.Action] = p
+		}
+
+		// Define default roles and their permission keys
+		type roleDef struct {
+			Name        string
+			Description string
+			PermKeys    []string // nil means ALL permissions
+		}
+
+		roleDefs := []roleDef{
+			{
+				Name:        "admin",
+				Description: "Full access to all resources within the application",
+				PermKeys:    nil, // all
+			},
+			{
+				Name:        "member",
+				Description: "Standard user with read and limited write access",
+				PermKeys:    []string{"user:read", "user:write", "log:read", "role:read"},
+			},
+			{
+				Name:        "viewer",
+				Description: "Read-only access to resources",
+				PermKeys:    []string{"user:read", "log:read", "role:read"},
+			},
+		}
+
+		for _, rd := range roleDefs {
+			// Check if role already exists for this app
+			var existing models.Role
+			if err := tx.Where("app_id = ? AND name = ?", appID, rd.Name).First(&existing).Error; err == nil {
+				continue // Already exists, skip
+			}
+
+			role := models.Role{
+				AppID:       appID,
+				Name:        rd.Name,
+				Description: rd.Description,
+				IsSystem:    true,
+			}
+			if err := tx.Create(&role).Error; err != nil {
+				return err
+			}
+
+			// Assign permissions
+			var permsToAssign []models.Permission
+			if rd.PermKeys == nil {
+				permsToAssign = permissions // all
+			} else {
+				for _, key := range rd.PermKeys {
+					if p, ok := permByKey[key]; ok {
+						permsToAssign = append(permsToAssign, p)
+					}
+				}
+			}
+
+			if len(permsToAssign) > 0 {
+				if err := tx.Model(&role).Association("Permissions").Replace(permsToAssign); err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
 func (r *Repository) GetAppByID(id string) (*models.Application, error) {
 	var app models.Application
 	if err := r.DB.Preload("OAuthProviderConfigs").First(&app, "id = ?", id).Error; err != nil {
@@ -113,16 +197,19 @@ func (r *Repository) ListAppsByTenant(tenantID string) ([]models.Application, er
 
 // AppListItem holds an application with its tenant name and OAuth config count for list views.
 type AppListItem struct {
-	ID               uuid.UUID
-	TenantID         uuid.UUID
-	Name             string
-	Description      string
-	TenantName       string
-	OAuthConfigCount int64
-	TwoFAEnabled     bool
-	TwoFARequired    bool
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                  uuid.UUID
+	TenantID            uuid.UUID
+	Name                string
+	Description         string
+	TenantName          string
+	OAuthConfigCount    int64
+	TwoFAEnabled        bool
+	TwoFARequired       bool
+	Passkey2FAEnabled   bool
+	PasskeyLoginEnabled bool
+	MagicLinkEnabled    bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // ListAppsWithDetails returns paginated applications with tenant name and OAuth config count.
@@ -145,6 +232,8 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 		Select(`applications.id, applications.tenant_id, applications.name, applications.description,
 			applications.created_at, applications.updated_at,
 			applications.two_fa_enabled, applications.two_fa_required,
+			applications.passkey2_fa_enabled, applications.passkey_login_enabled,
+			applications.magic_link_enabled,
 			tenants.name as tenant_name,
 			COUNT(oauth_provider_configs.id) as o_auth_config_count`).
 		Joins("LEFT JOIN tenants ON tenants.id = applications.tenant_id").
@@ -165,15 +254,18 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 	return items, total, nil
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool) error {
+func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool) error {
 	return r.DB.Model(&models.Application{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"name":               name,
-			"description":        description,
-			"two_fa_issuer_name": twoFAIssuerName,
-			"two_fa_enabled":     twoFAEnabled,
-			"two_fa_required":    twoFARequired,
+			"name":                  name,
+			"description":           description,
+			"two_fa_issuer_name":    twoFAIssuerName,
+			"two_fa_enabled":        twoFAEnabled,
+			"two_fa_required":       twoFARequired,
+			"passkey2_fa_enabled":   passkey2FAEnabled,
+			"passkey_login_enabled": passkeyLoginEnabled,
+			"magic_link_enabled":    magicLinkEnabled,
 		}).Error
 }
 
@@ -365,23 +457,24 @@ type UserListItem struct {
 
 // UserDetail represents a full user view with social accounts for the admin GUI detail panel
 type UserDetail struct {
-	ID             uuid.UUID              `json:"id"`
-	Email          string                 `json:"email"`
-	Name           string                 `json:"name"`
-	FirstName      string                 `json:"first_name"`
-	LastName       string                 `json:"last_name"`
-	ProfilePicture string                 `json:"profile_picture"`
-	Locale         string                 `json:"locale"`
-	AppID          uuid.UUID              `json:"app_id"`
-	AppName        string                 `json:"app_name"`
-	TenantName     string                 `json:"tenant_name"`
-	IsActive       bool                   `json:"is_active"`
-	EmailVerified  bool                   `json:"email_verified"`
-	TwoFAEnabled   bool                   `json:"two_fa_enabled"`
-	HasPassword    bool                   `json:"has_password"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
-	SocialAccounts []models.SocialAccount `json:"social_accounts" gorm:"-"`
+	ID                  uuid.UUID                   `json:"id"`
+	Email               string                      `json:"email"`
+	Name                string                      `json:"name"`
+	FirstName           string                      `json:"first_name"`
+	LastName            string                      `json:"last_name"`
+	ProfilePicture      string                      `json:"profile_picture"`
+	Locale              string                      `json:"locale"`
+	AppID               uuid.UUID                   `json:"app_id"`
+	AppName             string                      `json:"app_name"`
+	TenantName          string                      `json:"tenant_name"`
+	IsActive            bool                        `json:"is_active"`
+	EmailVerified       bool                        `json:"email_verified"`
+	TwoFAEnabled        bool                        `json:"two_fa_enabled"`
+	HasPassword         bool                        `json:"has_password"`
+	CreatedAt           time.Time                   `json:"created_at"`
+	UpdatedAt           time.Time                   `json:"updated_at"`
+	SocialAccounts      []models.SocialAccount      `json:"social_accounts" gorm:"-"`
+	WebAuthnCredentials []models.WebAuthnCredential `json:"webauthn_credentials" gorm:"-"`
 }
 
 // UserStatusCounts holds active/inactive user counts for dashboard display
@@ -466,6 +559,13 @@ func (r *Repository) GetUserDetailByID(id string) (*UserDetail, error) {
 		return nil, err
 	}
 	detail.SocialAccounts = socialAccounts
+
+	// Load WebAuthn passkey credentials
+	var webauthnCreds []models.WebAuthnCredential
+	if err := r.DB.Where("user_id = ?", id).Order("created_at asc").Find(&webauthnCreds).Error; err != nil {
+		return nil, err
+	}
+	detail.WebAuthnCredentials = webauthnCreds
 
 	return &detail, nil
 }
@@ -753,4 +853,100 @@ func (r *Repository) FindActiveKeyByHash(keyHash string) (*models.ApiKey, error)
 func (r *Repository) UpdateApiKeyLastUsed(id uuid.UUID) {
 	// Fire-and-forget update; errors are non-critical
 	r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Update("last_used_at", time.Now())
+}
+
+// ============================================================
+// Social Account Operations (Admin GUI - unlink support)
+// ============================================================
+
+// GetSocialAccountByID returns a single social account by primary key.
+func (r *Repository) GetSocialAccountByID(id string) (*models.SocialAccount, error) {
+	var sa models.SocialAccount
+	if err := r.DB.First(&sa, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &sa, nil
+}
+
+// DeleteSocialAccount permanently removes a social account by ID.
+func (r *Repository) DeleteSocialAccount(id string) error {
+	return r.DB.Where("id = ?", id).Delete(&models.SocialAccount{}).Error
+}
+
+// CountSocialAccountsByUserID returns the number of social accounts linked to a user.
+func (r *Repository) CountSocialAccountsByUserID(userID string) (int64, error) {
+	var count int64
+	if err := r.DB.Model(&models.SocialAccount{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// ============================================================
+// WebAuthn Passkey Operations (Admin GUI - delete support)
+// ============================================================
+
+// GetWebAuthnCredentialByID returns a single WebAuthn credential by primary key.
+func (r *Repository) GetWebAuthnCredentialByID(id string) (*models.WebAuthnCredential, error) {
+	var cred models.WebAuthnCredential
+	if err := r.DB.First(&cred, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &cred, nil
+}
+
+// DeleteWebAuthnCredential permanently removes a WebAuthn credential by ID.
+func (r *Repository) DeleteWebAuthnCredential(id string) error {
+	return r.DB.Where("id = ?", id).Delete(&models.WebAuthnCredential{}).Error
+}
+
+// ============================================================
+// Session Operations (Admin GUI - session management)
+// ============================================================
+
+// GetUserEmailsByIDs returns a map of userID -> email for the given user IDs.
+// Used for batch lookups when displaying session lists.
+func (r *Repository) GetUserEmailsByIDs(userIDs []string) (map[string]string, error) {
+	if len(userIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	type emailRow struct {
+		ID    string
+		Email string
+	}
+	var rows []emailRow
+	if err := r.DB.Model(&models.User{}).
+		Select("id, email").
+		Where("id IN ?", userIDs).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(rows))
+	for _, r := range rows {
+		result[r.ID] = r.Email
+	}
+	return result, nil
+}
+
+// GetAppNamesByIDs returns a map of appID -> appName for the given application IDs.
+func (r *Repository) GetAppNamesByIDs(appIDs []string) (map[string]string, error) {
+	if len(appIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	type nameRow struct {
+		ID   string
+		Name string
+	}
+	var rows []nameRow
+	if err := r.DB.Model(&models.Application{}).
+		Select("id, name").
+		Where("id IN ?", appIDs).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(rows))
+	for _, r := range rows {
+		result[r.ID] = r.Name
+	}
+	return result, nil
 }

@@ -1,0 +1,49 @@
+{{define "permission_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Permissions}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Permission</th>
+                        <th>Resource</th>
+                        <th>Action</th>
+                        <th>Description</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Permissions}}
+                    <tr>
+                        <td class="ps-3">
+                            <span class="fw-semibold font-monospace">{{.Resource}}:{{.Action}}</span>
+                            <br>
+                            <small class="text-muted font-monospace">{{.ID}}</small>
+                        </td>
+                        <td>
+                            <span class="badge bg-primary bg-opacity-10 text-primary">{{.Resource}}</span>
+                        </td>
+                        <td>
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">{{.Action}}</span>
+                        </td>
+                        <td>
+                            <small class="text-muted">{{.Description}}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-lock fs-1"></i>
+            <p class="mt-2 mb-0">No permissions defined yet. Create your first permission to get started.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

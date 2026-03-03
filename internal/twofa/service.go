@@ -334,7 +334,7 @@ func (s *Service) ResendEmail2FACode(appID uuid.UUID, userID string) *errors.App
 // GetAvailableMethods returns the 2FA methods available for an application.
 func (s *Service) GetAvailableMethods(appID uuid.UUID) []string {
 	var app models.Application
-	if err := s.DB.Select("two_fa_methods, two_fa_enabled, email_2fa_enabled").First(&app, "id = ?", appID).Error; err != nil {
+	if err := s.DB.Select("two_fa_methods, two_fa_enabled, email_2fa_enabled, passkey2_fa_enabled").First(&app, "id = ?", appID).Error; err != nil {
 		return []string{emailpkg.TwoFAMethodTOTP} // default
 	}
 
@@ -347,6 +347,9 @@ func (s *Service) GetAvailableMethods(appID uuid.UUID) []string {
 	for _, m := range methods {
 		m = strings.TrimSpace(m)
 		if m == emailpkg.TwoFAMethodEmail && !app.Email2FAEnabled {
+			continue
+		}
+		if m == emailpkg.TwoFAMethodPasskey && !app.Passkey2FAEnabled {
 			continue
 		}
 		if m != "" {

@@ -363,6 +363,15 @@ func APIForgotPasswordRateLimit() gin.HandlerFunc {
 	})
 }
 
+// APIResendVerificationRateLimit — 3 requests/min per IP
+func APIResendVerificationRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "api:resend-verification",
+		MaxAttempts: 3,
+		Window:      60 * time.Second,
+	})
+}
+
 // APIRefreshTokenRateLimit — 10 requests/min per IP
 func APIRefreshTokenRateLimit() gin.HandlerFunc {
 	return RateLimitMiddleware(RateLimitConfig{
@@ -388,6 +397,62 @@ func API2FAVerifyRateLimit() gin.HandlerFunc {
 		MaxAttempts:      5,
 		Window:           60 * time.Second,
 		LockoutThreshold: 10,
+		LockoutDuration:  15 * time.Minute,
+	})
+}
+
+// APIPasskeyLoginRateLimit — 10 requests/min per IP, lockout after 20
+// (two-step ceremony means each login attempt uses 2 requests: begin + finish)
+func APIPasskeyLoginRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "api:passkey-login",
+		MaxAttempts:      10,
+		Window:           60 * time.Second,
+		LockoutThreshold: 20,
+		LockoutDuration:  15 * time.Minute,
+	})
+}
+
+// APIPasskey2FARateLimit — 10 requests/min per IP, lockout after 20
+// (two-step ceremony: begin + finish)
+func APIPasskey2FARateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "api:passkey-2fa",
+		MaxAttempts:      10,
+		Window:           60 * time.Second,
+		LockoutThreshold: 20,
+		LockoutDuration:  15 * time.Minute,
+	})
+}
+
+// APIMagicLinkRateLimit — 5 requests per 15 minutes per IP
+// Magic links are sensitive (email-based auth), so use a tighter window.
+func APIMagicLinkRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "api:magic-link",
+		MaxAttempts: 5,
+		Window:      15 * time.Minute,
+	})
+}
+
+// GUIMagicLinkRateLimit — 3 requests per 15 minutes per IP.
+// Magic links are sensitive (email-based auth), so use a tight window.
+func GUIMagicLinkRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "gui:magic-link",
+		MaxAttempts: 3,
+		Window:      15 * time.Minute,
+	})
+}
+
+// GUIPasskeyLoginRateLimit — 10 requests/min per IP, lockout after 20
+// (two-step ceremony means each login attempt uses 2 requests: begin + finish)
+func GUIPasskeyLoginRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "gui:passkey-login",
+		MaxAttempts:      10,
+		Window:           60 * time.Second,
+		LockoutThreshold: 20,
 		LockoutDuration:  15 * time.Minute,
 	})
 }

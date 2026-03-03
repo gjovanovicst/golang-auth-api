@@ -12,7 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/email"
+	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/gjovanovicst/auth_api/web"
 	"github.com/google/uuid"
@@ -27,16 +29,20 @@ type GUIHandler struct {
 	Repo             *Repository
 	SettingsService  *SettingsService
 	EmailService     *email.Service
+	RBACService      *rbac.Service
+	PasskeyService   *passkeypkg.Service
 }
 
 // NewGUIHandler creates a new GUIHandler
-func NewGUIHandler(accountService *AccountService, dashboardService *DashboardService, repo *Repository, settingsService *SettingsService, emailService *email.Service) *GUIHandler {
+func NewGUIHandler(accountService *AccountService, dashboardService *DashboardService, repo *Repository, settingsService *SettingsService, emailService *email.Service, rbacService *rbac.Service, passkeyService *passkeypkg.Service) *GUIHandler {
 	return &GUIHandler{
 		AccountService:   accountService,
 		DashboardService: dashboardService,
 		Repo:             repo,
 		SettingsService:  settingsService,
 		EmailService:     emailService,
+		RBACService:      rbacService,
+		PasskeyService:   passkeyService,
 	}
 }
 
@@ -73,7 +79,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	// Validate input
 	if username == "" || password == "" {
 		data := web.TemplateData{
-			Error:    "Username and password are required.",
+			Error:    "Username or email and password are required.",
 			Username: username,
 			Redirect: redirect,
 		}
@@ -85,7 +91,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	account, err := h.AccountService.Authenticate(username, password)
 	if err != nil {
 		data := web.TemplateData{
-			Error:    "Invalid username or password.",
+			Error:    "Invalid username/email or password.",
 			Username: username,
 			Redirect: redirect,
 		}
@@ -467,15 +473,18 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID              string
-		Name            string
-		Description     string
-		TenantID        string
-		TwoFAIssuerName string
-		TwoFAEnabled    bool
-		TwoFARequired   bool
-		Tenants         []models.Tenant
-		IsEdit          bool
+		ID                  string
+		Name                string
+		Description         string
+		TenantID            string
+		TwoFAIssuerName     string
+		TwoFAEnabled        bool
+		TwoFARequired       bool
+		Passkey2FAEnabled   bool
+		PasskeyLoginEnabled bool
+		MagicLinkEnabled    bool
+		Tenants             []models.Tenant
+		IsEdit              bool
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
 		TwoFAEnabled: true, // Default: 2FA enabled for new apps
@@ -492,6 +501,9 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
 	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
 	twoFARequired := c.PostForm("two_fa_required") == "on"
+	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
+	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
+	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -512,18 +524,24 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	}
 
 	app := &models.Application{
-		TenantID:        parsedTenantID,
-		Name:            name,
-		Description:     description,
-		TwoFAIssuerName: twoFAIssuerName,
-		TwoFAEnabled:    twoFAEnabled,
-		TwoFARequired:   twoFARequired,
+		TenantID:            parsedTenantID,
+		Name:                name,
+		Description:         description,
+		TwoFAIssuerName:     twoFAIssuerName,
+		TwoFAEnabled:        twoFAEnabled,
+		TwoFARequired:       twoFARequired,
+		Passkey2FAEnabled:   passkey2FAEnabled,
+		PasskeyLoginEnabled: passkeyLoginEnabled,
+		MagicLinkEnabled:    magicLinkEnabled,
 	}
 	if err := h.Repo.CreateApp(app); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
 	}
+
+	// Seed default RBAC roles for the new application (non-fatal on error)
+	_ = h.Repo.SeedDefaultRolesForApp(app.ID)
 
 	c.Header("HX-Trigger", "appListRefresh")
 	c.String(http.StatusOK,
@@ -549,26 +567,32 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID              string
-		Name            string
-		Description     string
-		TenantID        string
-		TwoFAIssuerName string
-		TwoFAEnabled    bool
-		TwoFARequired   bool
-		Tenants         []models.Tenant
-		IsEdit          bool
+		ID                  string
+		Name                string
+		Description         string
+		TenantID            string
+		TwoFAIssuerName     string
+		TwoFAEnabled        bool
+		TwoFARequired       bool
+		Passkey2FAEnabled   bool
+		PasskeyLoginEnabled bool
+		MagicLinkEnabled    bool
+		Tenants             []models.Tenant
+		IsEdit              bool
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
-		ID:              app.ID.String(),
-		Name:            app.Name,
-		Description:     app.Description,
-		TenantID:        app.TenantID.String(),
-		TwoFAIssuerName: app.TwoFAIssuerName,
-		TwoFAEnabled:    app.TwoFAEnabled,
-		TwoFARequired:   app.TwoFARequired,
-		Tenants:         tenants,
-		IsEdit:          true,
+		ID:                  app.ID.String(),
+		Name:                app.Name,
+		Description:         app.Description,
+		TenantID:            app.TenantID.String(),
+		TwoFAIssuerName:     app.TwoFAIssuerName,
+		TwoFAEnabled:        app.TwoFAEnabled,
+		TwoFARequired:       app.TwoFARequired,
+		Passkey2FAEnabled:   app.Passkey2FAEnabled,
+		PasskeyLoginEnabled: app.PasskeyLoginEnabled,
+		MagicLinkEnabled:    app.MagicLinkEnabled,
+		Tenants:             tenants,
+		IsEdit:              true,
 	})
 }
 
@@ -581,6 +605,9 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
 	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
 	twoFARequired := c.PostForm("two_fa_required") == "on"
+	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
+	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
+	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -588,7 +615,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 		return
 	}
 
-	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired); err != nil {
+	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
@@ -3304,6 +3331,961 @@ func base64Encode(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
 }
 
+// ============================================================
+// Passkey Management (My Account - Admin self-service)
+// ============================================================
+
+// MyAccountPasskeyData holds passkey list data for the admin passkey status template.
+type MyAccountPasskeyData struct {
+	Passkeys []models.WebAuthnCredential
+}
+
+// MyAccountPasskeyStatus returns the current passkey status as an HTMX partial.
+// GET /gui/my-account/passkeys/status
+func (h *GUIHandler) MyAccountPasskeyStatus(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	adminUUID, err := uuid.Parse(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Invalid admin ID.</small></div>`)
+		return
+	}
+
+	creds, appErr := h.PasskeyService.ListAdminCredentials(adminUUID)
+	if appErr != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to load passkeys.</small></div>`)
+		return
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: MyAccountPasskeyData{
+			Passkeys: creds,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_passkey_status", data)
+}
+
+// MyAccountPasskeyBeginRegister starts the WebAuthn registration ceremony for the admin.
+// POST /gui/my-account/passkeys/register/begin
+func (h *GUIHandler) MyAccountPasskeyBeginRegister(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+
+	optionsJSON, appErr := h.PasskeyService.BeginAdminRegistration(account)
+	if appErr != nil {
+		c.String(appErr.Code, appErr.Message)
+		return
+	}
+
+	c.Data(http.StatusOK, "application/json", optionsJSON)
+}
+
+// MyAccountPasskeyFinishRegister completes the WebAuthn registration ceremony for the admin.
+// POST /gui/my-account/passkeys/register/finish
+func (h *GUIHandler) MyAccountPasskeyFinishRegister(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load account")
+		return
+	}
+
+	credentialName := strings.TrimSpace(c.PostForm("name"))
+	credentialJSON := c.PostForm("credential")
+	if credentialJSON == "" {
+		c.String(http.StatusBadRequest, "Missing credential data")
+		return
+	}
+
+	appErr := h.PasskeyService.FinishAdminRegistration(account, credentialName, json.RawMessage(credentialJSON))
+	if appErr != nil {
+		c.String(appErr.Code, appErr.Message)
+		return
+	}
+
+	c.String(http.StatusOK, "OK")
+}
+
+// MyAccountPasskeyDelete deletes a passkey for the current admin.
+// DELETE /gui/my-account/passkeys/:id
+func (h *GUIHandler) MyAccountPasskeyDelete(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	passkeyID := c.Param("id")
+
+	adminUUID, err := uuid.Parse(adminID)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>Invalid admin ID.</small></div>`)
+		return
+	}
+
+	credUUID, err := uuid.Parse(passkeyID)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2"><small>Invalid passkey ID.</small></div>`)
+		return
+	}
+
+	appErr := h.PasskeyService.DeleteAdminCredential(adminUUID, credUUID)
+	if appErr != nil {
+		c.String(appErr.Code, fmt.Sprintf(
+			`<div class="alert alert-danger py-2"><small>%s</small></div>`, appErr.Message))
+		return
+	}
+
+	// Return refreshed passkey status
+	h.MyAccountPasskeyStatus(c)
+}
+
+// MyAccountPasskeyRename renames a passkey for the current admin.
+// POST /gui/my-account/passkeys/:id/rename
+func (h *GUIHandler) MyAccountPasskeyRename(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	passkeyID := c.Param("id")
+	newName := strings.TrimSpace(c.PostForm("name"))
+
+	if newName == "" {
+		c.String(http.StatusBadRequest, "Name is required")
+		return
+	}
+
+	adminUUID, err := uuid.Parse(adminID)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid admin ID")
+		return
+	}
+
+	credUUID, err := uuid.Parse(passkeyID)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid passkey ID")
+		return
+	}
+
+	appErr := h.PasskeyService.RenameAdminCredential(adminUUID, credUUID, newName)
+	if appErr != nil {
+		c.String(appErr.Code, appErr.Message)
+		return
+	}
+
+	c.String(http.StatusOK, "OK")
+}
+
+// ============================================================
+// RBAC — Roles Management
+// ============================================================
+
+// RolesPage renders the roles management page.
+// GET /gui/roles
+func (h *GUIHandler) RolesPage(c *gin.Context) {
+	apps, err := h.RBACService.Repo.ListAllApps()
+	if err != nil {
+		apps = nil
+	}
+
+	data := web.TemplateData{
+		ActivePage:    "roles",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+		Data:          apps,
+	}
+	c.HTML(http.StatusOK, "roles", data)
+}
+
+// RoleList returns the role table HTML fragment for HTMX.
+// GET /gui/roles/list?app_id=X
+func (h *GUIHandler) RoleList(c *gin.Context) {
+	appID := c.Query("app_id")
+	if appID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-warning">Please select an application.</div>`)
+		return
+	}
+
+	roles, err := h.RBACService.GetRolesByAppID(appID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load roles.</div>`)
+		return
+	}
+
+	type roleItem struct {
+		ID              string
+		Name            string
+		Description     string
+		IsSystem        bool
+		PermissionCount int
+		CreatedAt       time.Time
+	}
+
+	items := make([]roleItem, 0, len(roles))
+	for _, r := range roles {
+		items = append(items, roleItem{
+			ID:              r.ID.String(),
+			Name:            r.Name,
+			Description:     r.Description,
+			IsSystem:        r.IsSystem,
+			PermissionCount: len(r.Permissions),
+			CreatedAt:       r.CreatedAt,
+		})
+	}
+
+	type roleListData struct {
+		Roles []roleItem
+	}
+
+	c.HTML(http.StatusOK, "role_list", roleListData{Roles: items})
+}
+
+// RoleCreateForm returns the empty create form HTML fragment for HTMX.
+// GET /gui/roles/new
+func (h *GUIHandler) RoleCreateForm(c *gin.Context) {
+	type formData struct {
+		ID          string
+		AppID       string
+		Name        string
+		Description string
+	}
+	// Try to read app_id from query string (set by JS reading the filter dropdown)
+	appID := c.Query("app_id")
+	c.HTML(http.StatusOK, "role_form", formData{AppID: appID})
+}
+
+// RoleCreate handles creating a new role.
+// POST /gui/roles
+func (h *GUIHandler) RoleCreate(c *gin.Context) {
+	appID := strings.TrimSpace(c.PostForm("app_id"))
+	name := strings.TrimSpace(c.PostForm("name"))
+	description := strings.TrimSpace(c.PostForm("description"))
+
+	if appID == "" || name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Application and role name are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if _, err := h.RBACService.CreateRole(appID, name, description); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create role. It may already exist.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Role created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// RoleEditForm returns the pre-filled edit form HTML fragment for HTMX.
+// GET /gui/roles/:id/edit
+func (h *GUIHandler) RoleEditForm(c *gin.Context) {
+	id := c.Param("id")
+	role, err := h.RBACService.GetRoleByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Role not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	type formData struct {
+		ID          string
+		AppID       string
+		Name        string
+		Description string
+	}
+	c.HTML(http.StatusOK, "role_form", formData{
+		ID:          role.ID.String(),
+		Name:        role.Name,
+		Description: role.Description,
+	})
+}
+
+// RoleUpdate handles updating a role.
+// PUT /gui/roles/:id
+func (h *GUIHandler) RoleUpdate(c *gin.Context) {
+	id := c.Param("id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	description := strings.TrimSpace(c.PostForm("description"))
+
+	if name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Role name is required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if err := h.RBACService.UpdateRole(id, name, description); err != nil {
+		c.String(http.StatusInternalServerError,
+			fmt.Sprintf(`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update role: %s<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`, err.Error()))
+		return
+	}
+
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Role updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// RoleDeleteConfirm returns the delete confirmation modal body for HTMX.
+// GET /gui/roles/:id/delete
+func (h *GUIHandler) RoleDeleteConfirm(c *gin.Context) {
+	id := c.Param("id")
+	role, err := h.RBACService.GetRoleByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Role not found.</div></div>`)
+		return
+	}
+
+	type deleteData struct {
+		ID   string
+		Name string
+	}
+	c.HTML(http.StatusOK, "role_delete_confirm", deleteData{
+		ID:   role.ID.String(),
+		Name: role.Name,
+	})
+}
+
+// RoleDelete handles deleting a role and returns a refreshed role list.
+// DELETE /gui/roles/:id
+func (h *GUIHandler) RoleDelete(c *gin.Context) {
+	id := c.Param("id")
+
+	// Get the role first to know the app ID for refreshing the list
+	role, err := h.RBACService.GetRoleByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger">Role not found.</div>`)
+		return
+	}
+	appID := role.AppID.String()
+
+	if err := h.RBACService.DeleteRole(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			fmt.Sprintf(`<div class="alert alert-danger">Failed to delete role: %s</div>`, err.Error()))
+		return
+	}
+
+	c.Header("HX-Trigger", "roleDeleted")
+
+	// Re-fetch and render the updated role list
+	roles, err := h.RBACService.GetRolesByAppID(appID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Role deleted but failed to refresh list.</div>`)
+		return
+	}
+
+	type roleItem struct {
+		ID              string
+		Name            string
+		Description     string
+		IsSystem        bool
+		PermissionCount int
+		CreatedAt       time.Time
+	}
+
+	items := make([]roleItem, 0, len(roles))
+	for _, r := range roles {
+		items = append(items, roleItem{
+			ID:              r.ID.String(),
+			Name:            r.Name,
+			Description:     r.Description,
+			IsSystem:        r.IsSystem,
+			PermissionCount: len(r.Permissions),
+			CreatedAt:       r.CreatedAt,
+		})
+	}
+
+	type roleListData struct {
+		Roles []roleItem
+	}
+
+	c.HTML(http.StatusOK, "role_list", roleListData{Roles: items})
+}
+
+// RoleFormCancel clears the role form container.
+// GET /gui/roles/form-cancel
+func (h *GUIHandler) RoleFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// RolePermissions returns the permissions checkbox modal body for HTMX.
+// GET /gui/roles/:id/permissions
+func (h *GUIHandler) RolePermissions(c *gin.Context) {
+	roleID := c.Param("id")
+
+	role, err := h.RBACService.GetRoleByID(roleID)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Role not found.</div></div>`)
+		return
+	}
+
+	allPermissions, err := h.RBACService.GetAllPermissions()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to load permissions.</div></div>`)
+		return
+	}
+
+	// Build a set of currently assigned permission IDs
+	assigned := make(map[string]bool)
+	for _, p := range role.Permissions {
+		assigned[p.ID.String()] = true
+	}
+
+	type permItem struct {
+		ID          string
+		Resource    string
+		Action      string
+		Description string
+		Checked     bool
+	}
+
+	items := make([]permItem, 0, len(allPermissions))
+	for _, p := range allPermissions {
+		items = append(items, permItem{
+			ID:          p.ID.String(),
+			Resource:    p.Resource,
+			Action:      p.Action,
+			Description: p.Description,
+			Checked:     assigned[p.ID.String()],
+		})
+	}
+
+	type permData struct {
+		RoleID      string
+		RoleName    string
+		Permissions []permItem
+	}
+
+	c.HTML(http.StatusOK, "role_permissions", permData{
+		RoleID:      role.ID.String(),
+		RoleName:    role.Name,
+		Permissions: items,
+	})
+}
+
+// RolePermissionsUpdate saves the selected permissions for a role.
+// PUT /gui/roles/:id/permissions
+func (h *GUIHandler) RolePermissionsUpdate(c *gin.Context) {
+	roleID := c.Param("id")
+	permissionIDs := c.PostFormArray("permission_ids")
+
+	if err := h.RBACService.SetRolePermissions(roleID, permissionIDs); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to save permissions.</div></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "permissionsSaved")
+	c.String(http.StatusOK,
+		`<div class="modal-body"><div class="alert alert-success">Permissions saved successfully.</div></div><div class="modal-footer border-0"><button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button></div>`)
+}
+
+// ============================================================
+// RBAC — Permissions Management
+// ============================================================
+
+// PermissionsPage renders the permissions management page.
+// GET /gui/permissions
+func (h *GUIHandler) PermissionsPage(c *gin.Context) {
+	data := web.TemplateData{
+		ActivePage:    "permissions",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+	}
+	c.HTML(http.StatusOK, "permissions", data)
+}
+
+// PermissionList returns the permission table HTML fragment for HTMX.
+// GET /gui/permissions/list
+func (h *GUIHandler) PermissionList(c *gin.Context) {
+	permissions, err := h.RBACService.GetAllPermissions()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load permissions.</div>`)
+		return
+	}
+
+	type permListData struct {
+		Permissions []models.Permission
+	}
+
+	c.HTML(http.StatusOK, "permission_list", permListData{Permissions: permissions})
+}
+
+// PermissionCreateForm returns the empty create form HTML fragment for HTMX.
+// GET /gui/permissions/new
+func (h *GUIHandler) PermissionCreateForm(c *gin.Context) {
+	type formData struct {
+		Resource    string
+		Action      string
+		Description string
+	}
+	c.HTML(http.StatusOK, "permission_form", formData{})
+}
+
+// PermissionCreate handles creating a new permission.
+// POST /gui/permissions
+func (h *GUIHandler) PermissionCreate(c *gin.Context) {
+	resource := strings.TrimSpace(c.PostForm("resource"))
+	action := strings.TrimSpace(c.PostForm("action"))
+	description := strings.TrimSpace(c.PostForm("description"))
+
+	if resource == "" || action == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Resource and action are required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if _, err := h.RBACService.CreatePermission(resource, action, description); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create permission. It may already exist.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "permissionListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Permission created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// PermissionFormCancel clears the permission form container.
+// GET /gui/permissions/form-cancel
+func (h *GUIHandler) PermissionFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// ============================================================
+// RBAC — User Roles Management
+// ============================================================
+
+// UserRolesPage renders the user-roles management page.
+// GET /gui/user-roles
+func (h *GUIHandler) UserRolesPage(c *gin.Context) {
+	apps, err := h.RBACService.Repo.ListAllApps()
+	if err != nil {
+		apps = nil
+	}
+
+	data := web.TemplateData{
+		ActivePage:    "user-roles",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+		Data:          apps,
+	}
+	c.HTML(http.StatusOK, "user_roles", data)
+}
+
+// UserRoleList returns the user-role table HTML fragment for HTMX.
+// GET /gui/user-roles/list?app_id=X&page=N
+func (h *GUIHandler) UserRoleList(c *gin.Context) {
+	appID := c.Query("app_id")
+	if appID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-warning">Please select an application.</div>`)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize := 20
+
+	items, total, err := h.RBACService.Repo.GetUsersWithRoleInApp(appID, page, pageSize)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load user roles.</div>`)
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+
+	type userRoleListData struct {
+		Items      []rbac.UserRoleListItem
+		AppID      string
+		Page       int
+		TotalPages int
+		Total      int64
+	}
+
+	c.HTML(http.StatusOK, "user_role_list", userRoleListData{
+		Items:      items,
+		AppID:      appID,
+		Page:       page,
+		TotalPages: totalPages,
+		Total:      total,
+	})
+}
+
+// UserRoleCreateForm returns the assign role form HTML fragment for HTMX.
+// GET /gui/user-roles/new
+func (h *GUIHandler) UserRoleCreateForm(c *gin.Context) {
+	apps, err := h.RBACService.Repo.ListAllApps()
+	if err != nil {
+		apps = nil
+	}
+
+	type formData struct {
+		Apps []models.Application
+	}
+	c.HTML(http.StatusOK, "user_role_form", formData{Apps: apps})
+}
+
+// UserRoleCreate handles assigning a role to a user.
+// POST /gui/user-roles
+func (h *GUIHandler) UserRoleCreate(c *gin.Context) {
+	appID := strings.TrimSpace(c.PostForm("app_id"))
+	userID := strings.TrimSpace(c.PostForm("user_id"))
+	roleID := strings.TrimSpace(c.PostForm("role_id"))
+
+	if appID == "" || userID == "" || roleID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Application, user ID, and role are all required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if err := h.RBACService.AssignRoleToUser(userID, roleID, appID, nil); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to assign role. The user may already have this role.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Role assigned successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// UserRoleRolesForApp returns HTML <option> elements for the roles in an app.
+// GET /gui/user-roles/roles-for-app?app_id=X
+func (h *GUIHandler) UserRoleRolesForApp(c *gin.Context) {
+	appID := c.Query("app_id")
+	if appID == "" {
+		c.String(http.StatusOK, `<option value="">-- Select App first --</option>`)
+		return
+	}
+
+	roles, err := h.RBACService.GetRolesByAppID(appID)
+	if err != nil {
+		c.String(http.StatusOK, `<option value="">-- Error loading roles --</option>`)
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`<option value="">-- Select Role --</option>`)
+	for _, r := range roles {
+		sb.WriteString(fmt.Sprintf(`<option value="%s">%s</option>`, r.ID.String(), r.Name))
+	}
+	c.String(http.StatusOK, sb.String())
+}
+
+// UserRoleSearchUsers returns a list of matching users as clickable HTML items.
+// GET /gui/user-roles/search-users?app_id=X&q=term
+func (h *GUIHandler) UserRoleSearchUsers(c *gin.Context) {
+	appID := c.Query("app_id")
+	q := strings.TrimSpace(c.Query("q"))
+
+	if appID == "" {
+		c.String(http.StatusOK, `<div class="list-group-item text-muted small">Select an application first.</div>`)
+		return
+	}
+	if len(q) < 2 {
+		c.String(http.StatusOK, `<div class="list-group-item text-muted small">Type at least 2 characters to search.</div>`)
+		return
+	}
+
+	users, _, err := h.Repo.ListUsersWithDetails(1, 10, appID, q)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="list-group-item text-danger small">Error searching users.</div>`)
+		return
+	}
+
+	if len(users) == 0 {
+		c.String(http.StatusOK, `<div class="list-group-item text-muted small">No users found.</div>`)
+		return
+	}
+
+	var sb strings.Builder
+	for _, u := range users {
+		name := u.Email
+		if u.Name != "" {
+			name = u.Name + " &mdash; " + u.Email
+		}
+		sb.WriteString(fmt.Sprintf(
+			`<a href="#" class="list-group-item list-group-item-action py-2 px-3" onclick="selectUser('%s','%s'); return false;">
+				<div class="fw-semibold small">%s</div>
+				<div class="text-muted font-monospace" style="font-size:.7rem">%s</div>
+			</a>`,
+			u.ID.String(), escapeHTML(u.Email), name, u.ID.String(),
+		))
+	}
+	c.String(http.StatusOK, sb.String())
+}
+
+// escapeHTML is a minimal HTML entity escaper for dynamic string insertion.
+func escapeHTML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, `"`, "&quot;")
+	s = strings.ReplaceAll(s, "'", "&#39;")
+	return s
+}
+
+// UserRoleRevokeConfirm returns the revoke confirmation modal body for HTMX.
+// GET /gui/user-roles/revoke?user_id=X&role_id=X&app_id=X&user_email=X&role_name=X
+func (h *GUIHandler) UserRoleRevokeConfirm(c *gin.Context) {
+	type revokeData struct {
+		UserID    string
+		RoleID    string
+		AppID     string
+		UserEmail string
+		RoleName  string
+	}
+	c.HTML(http.StatusOK, "user_role_revoke_confirm", revokeData{
+		UserID:    c.Query("user_id"),
+		RoleID:    c.Query("role_id"),
+		AppID:     c.Query("app_id"),
+		UserEmail: c.Query("user_email"),
+		RoleName:  c.Query("role_name"),
+	})
+}
+
+// UserRoleRevoke handles revoking a role from a user and returns a refreshed list.
+// DELETE /gui/user-roles?user_id=X&role_id=X&app_id=X
+func (h *GUIHandler) UserRoleRevoke(c *gin.Context) {
+	userID := c.Query("user_id")
+	roleID := c.Query("role_id")
+	appID := c.Query("app_id")
+
+	if userID == "" || roleID == "" || appID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Missing required parameters.</div>`)
+		return
+	}
+
+	if err := h.RBACService.RevokeRoleFromUser(userID, roleID, appID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to revoke role.</div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "roleRevoked")
+
+	// Re-fetch and render the updated user-role list
+	page := 1
+	pageSize := 20
+	items, total, err := h.RBACService.Repo.GetUsersWithRoleInApp(appID, page, pageSize)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Role revoked but failed to refresh list.</div>`)
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+
+	type userRoleListData struct {
+		Items      []rbac.UserRoleListItem
+		AppID      string
+		Page       int
+		TotalPages int
+		Total      int64
+	}
+
+	c.HTML(http.StatusOK, "user_role_list", userRoleListData{
+		Items:      items,
+		AppID:      appID,
+		Page:       page,
+		TotalPages: totalPages,
+		Total:      total,
+	})
+}
+
+// UserRoleFormCancel clears the user-role form container.
+// GET /gui/user-roles/form-cancel
+func (h *GUIHandler) UserRoleFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// SocialAccountUnlinkConfirm returns a confirmation dialog partial for unlinking a social account.
+// GET /gui/users/social-accounts/:id/unlink
+func (h *GUIHandler) SocialAccountUnlinkConfirm(c *gin.Context) {
+	id := c.Param("id")
+	sa, err := h.Repo.GetSocialAccountByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Social account not found.</div></div>`)
+		return
+	}
+
+	detail, err := h.Repo.GetUserDetailByID(sa.UserID.String())
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to load user details.</div></div>`)
+		return
+	}
+
+	count, err := h.Repo.CountSocialAccountsByUserID(sa.UserID.String())
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to check social accounts.</div></div>`)
+		return
+	}
+
+	isLockoutRisk := !detail.HasPassword && count == 1
+
+	type confirmData struct {
+		SocialAccountID string
+		Provider        string
+		Email           string
+		UserEmail       string
+		IsLockoutRisk   bool
+	}
+	c.HTML(http.StatusOK, "social_unlink_confirm", confirmData{
+		SocialAccountID: sa.ID.String(),
+		Provider:        sa.Provider,
+		Email:           sa.Email,
+		UserEmail:       detail.Email,
+		IsLockoutRisk:   isLockoutRisk,
+	})
+}
+
+// SocialAccountUnlink handles deleting (unlinking) a social account from a user.
+// DELETE /gui/users/social-accounts/:id
+func (h *GUIHandler) SocialAccountUnlink(c *gin.Context) {
+	id := c.Param("id")
+	sa, err := h.Repo.GetSocialAccountByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger">Social account not found.</div>`)
+		return
+	}
+
+	userID := sa.UserID.String()
+
+	// Lockout prevention: check if user has no password and this is their only social account
+	detail, err := h.Repo.GetUserDetailByID(userID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load user details.</div>`)
+		return
+	}
+
+	count, err := h.Repo.CountSocialAccountsByUserID(userID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to check social accounts.</div>`)
+		return
+	}
+
+	if !detail.HasPassword && count == 1 {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Cannot unlink the only social account when the user has no password set.</div>`)
+		return
+	}
+
+	if err := h.Repo.DeleteSocialAccount(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to unlink social account.</div>`)
+		return
+	}
+
+	// Trigger modal close via HX-Trigger
+	c.Header("HX-Trigger", "socialAccountUnlinked")
+
+	// Re-render the user detail with refreshed data
+	refreshed, err := h.Repo.GetUserDetailByID(userID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Social account unlinked but failed to refresh user details.</div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "user_detail", refreshed)
+}
+
+// PasskeyDeleteConfirm returns a confirmation dialog partial for deleting a passkey.
+// GET /gui/users/passkeys/:id/delete
+func (h *GUIHandler) PasskeyDeleteConfirm(c *gin.Context) {
+	id := c.Param("id")
+	cred, err := h.Repo.GetWebAuthnCredentialByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Passkey not found.</div></div>`)
+		return
+	}
+
+	if cred.UserID == nil {
+		c.String(http.StatusBadRequest,
+			`<div class="modal-body"><div class="alert alert-danger">This passkey is not associated with a regular user.</div></div>`)
+		return
+	}
+
+	detail, err := h.Repo.GetUserDetailByID(cred.UserID.String())
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="modal-body"><div class="alert alert-danger">Failed to load user details.</div></div>`)
+		return
+	}
+
+	type confirmData struct {
+		PasskeyID   string
+		PasskeyName string
+		UserEmail   string
+	}
+	c.HTML(http.StatusOK, "passkey_delete_confirm", confirmData{
+		PasskeyID:   cred.ID.String(),
+		PasskeyName: cred.Name,
+		UserEmail:   detail.Email,
+	})
+}
+
+// PasskeyDelete handles deleting a WebAuthn passkey credential.
+// DELETE /gui/users/passkeys/:id
+func (h *GUIHandler) PasskeyDelete(c *gin.Context) {
+	id := c.Param("id")
+	cred, err := h.Repo.GetWebAuthnCredentialByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger">Passkey not found.</div>`)
+		return
+	}
+
+	if cred.UserID == nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">This passkey is not associated with a regular user.</div>`)
+		return
+	}
+
+	userID := cred.UserID.String()
+
+	if err := h.Repo.DeleteWebAuthnCredential(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to delete passkey.</div>`)
+		return
+	}
+
+	// Trigger modal close via HX-Trigger
+	c.Header("HX-Trigger", "passkeyDeleted")
+
+	// Re-render the user detail with refreshed data
+	refreshed, err := h.Repo.GetUserDetailByID(userID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Passkey deleted but failed to refresh user details.</div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "user_detail", refreshed)
+}
+
 // parseVariablesFromForm parses variable rows from the dynamic form.
 // Variables are submitted as var_name[], var_description[], var_required[],
 // var_source[], and var_default_value[] arrays.
@@ -3354,4 +4336,641 @@ func parseVariablesFromForm(c *gin.Context) []byte {
 		return nil
 	}
 	return data
+}
+
+// ============================================================
+// Passkey Login (Passwordless Admin Login via Discoverable Credentials)
+// ============================================================
+
+// PasskeyLoginBegin starts the WebAuthn discoverable login ceremony for admin passkey login.
+// POST /gui/passkey-login/begin
+func (h *GUIHandler) PasskeyLoginBegin(c *gin.Context) {
+	// Check if rate limiter already blocked the request
+	if errMsg, exists := c.Get(web.RateLimitErrorKey); exists {
+		msg, _ := errMsg.(string)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": msg})
+		return
+	}
+
+	optionsJSON, sessionID, appErr := h.PasskeyService.BeginAdminLogin()
+	if appErr != nil {
+		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"options":    json.RawMessage(optionsJSON),
+		"session_id": sessionID,
+	})
+}
+
+// PasskeyLoginFinish completes the WebAuthn discoverable login ceremony for admin passkey login.
+// On success, creates a full admin session (bypassing 2FA) and sets the session cookie.
+// POST /gui/passkey-login/finish
+func (h *GUIHandler) PasskeyLoginFinish(c *gin.Context) {
+	// Check if rate limiter already blocked the request
+	if errMsg, exists := c.Get(web.RateLimitErrorKey); exists {
+		msg, _ := errMsg.(string)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": msg})
+		return
+	}
+
+	var req struct {
+		SessionID  string          `json:"session_id"`
+		Credential json.RawMessage `json:"credential"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if req.SessionID == "" || len(req.Credential) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing session_id or credential"})
+		return
+	}
+
+	adminID, appErr := h.PasskeyService.FinishAdminLogin(req.SessionID, req.Credential)
+	if appErr != nil {
+		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
+		return
+	}
+
+	// Update last login timestamp (best effort)
+	_ = h.AccountService.Repo.UpdateLastLogin(adminID.String())
+
+	// Create full session (passkey login bypasses 2FA entirely)
+	sessionID, err := h.AccountService.CreateSession(adminID.String())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
+	}
+
+	// Set session cookie
+	maxAge := sessionMaxAgeSeconds()
+	web.SetSessionCookie(c, sessionID, maxAge)
+
+	// Clear rate limit counters on successful login
+	_ = redis.ClearLoginAttempts(c.ClientIP())
+	_ = redis.ClearRateLimitKeys("gui:passkey-login", c.ClientIP())
+	if web.ClearRateLimitFallback != nil {
+		web.ClearRateLimitFallback("gui:passkey-login", c.ClientIP())
+	}
+
+	c.JSON(http.StatusOK, gin.H{"redirect": "/gui/"})
+}
+
+// ============================================================
+// Magic Link (My Account - Admin self-service toggle)
+// ============================================================
+
+// MyAccountMagicLinkData holds data for the admin magic link status template.
+type MyAccountMagicLinkData struct {
+	MagicLinkEnabled bool
+}
+
+// MyAccountMagicLinkStatus returns the current magic link status as an HTMX partial.
+// GET /gui/my-account/magic-link/status
+func (h *GUIHandler) MyAccountMagicLinkStatus(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to load account.</small></div>`)
+		return
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: MyAccountMagicLinkData{
+			MagicLinkEnabled: account.MagicLinkEnabled,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_magic_link_status", data)
+}
+
+// MyAccountMagicLinkToggle enables or disables magic link login for the current admin.
+// POST /gui/my-account/magic-link/toggle
+func (h *GUIHandler) MyAccountMagicLinkToggle(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to load account.</small></div>`)
+		return
+	}
+
+	// Toggle the current state
+	newState := !account.MagicLinkEnabled
+
+	// Admin must have an email address to enable magic link login
+	if newState && account.Email == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-warning py-2"><small>You must set an email address before enabling magic link login.</small></div>`)
+		return
+	}
+
+	if err := h.AccountService.Repo.UpdateMagicLinkEnabled(adminID, newState); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to update magic link setting.</small></div>`)
+		return
+	}
+
+	// Re-render the status partial with the updated state
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: MyAccountMagicLinkData{
+			MagicLinkEnabled: newState,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_magic_link_status", data)
+}
+
+// ============================================================
+// Magic Link Login (Passwordless Admin Login via Email Link)
+// ============================================================
+
+// MagicLinkLoginRequest handles the magic link login request from the login page.
+// It looks up the admin by email, checks if magic link is enabled, generates a token,
+// sends the email, and returns a generic success message (to prevent email enumeration).
+// POST /gui/magic-link-login
+func (h *GUIHandler) MagicLinkLoginRequest(c *gin.Context) {
+	// Check if rate limiter already blocked the request
+	if errMsg, exists := c.Get(web.RateLimitErrorKey); exists {
+		msg, _ := errMsg.(string)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": msg})
+		return
+	}
+
+	email := strings.TrimSpace(c.PostForm("email"))
+	if email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email is required"})
+		return
+	}
+
+	// Always respond with success to prevent email enumeration.
+	// Perform the lookup and send silently.
+	account, err := h.AccountService.Repo.GetByEmail(email)
+	if err == nil && account != nil && account.MagicLinkEnabled && account.Email != "" {
+		// Generate magic link token
+		magicToken := uuid.New().String()
+
+		// Store in Redis with 10-minute expiration (invalidates any previous token)
+		if storeErr := redis.SetAdminMagicLinkToken(account.ID.String(), magicToken, 10*time.Minute); storeErr == nil {
+			// Build the magic link URL
+			baseURL := viper.GetString("ADMIN_BASE_URL")
+			if baseURL == "" {
+				baseURL = fmt.Sprintf("%s://%s", schemeFromRequest(c), c.Request.Host)
+			}
+			magicLink := fmt.Sprintf("%s/gui/magic-link-login/verify?token=%s", baseURL, magicToken)
+
+			// Send the email (best-effort — don't expose failures)
+			_ = h.EmailService.SendAdminMagicLinkEmail(account.Email, magicLink, account.Username)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "If that email is associated with an admin account with magic link enabled, a login link has been sent."})
+}
+
+// MagicLinkLoginVerify handles the magic link verification callback.
+// On success, creates a full admin session (bypassing 2FA like passkey login) and redirects.
+// GET /gui/magic-link-login/verify
+func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.HTML(http.StatusBadRequest, "login", web.TemplateData{
+			Error: "Invalid or missing magic link token.",
+		})
+		return
+	}
+
+	// Look up token in Redis
+	adminID, err := redis.GetAdminMagicLinkToken(token)
+	if err != nil || adminID == "" {
+		c.HTML(http.StatusUnauthorized, "login", web.TemplateData{
+			Error: "This magic link is invalid or has expired. Please request a new one.",
+		})
+		return
+	}
+
+	// Delete token immediately (single-use)
+	_ = redis.DeleteAdminMagicLinkToken(token)
+
+	// Verify the admin account still exists
+	account, accErr := h.AccountService.Repo.GetByID(adminID)
+	if accErr != nil || account == nil {
+		c.HTML(http.StatusUnauthorized, "login", web.TemplateData{
+			Error: "Account not found. Please contact an administrator.",
+		})
+		return
+	}
+
+	// Update last login timestamp (best effort)
+	_ = h.AccountService.Repo.UpdateLastLogin(adminID)
+
+	// Create full session (magic link login bypasses 2FA entirely, like passkey login)
+	sessionID, sessErr := h.AccountService.CreateSession(adminID)
+	if sessErr != nil {
+		c.HTML(http.StatusInternalServerError, "login", web.TemplateData{
+			Error: "Failed to create session. Please try again.",
+		})
+		return
+	}
+
+	// Set session cookie
+	maxAge := sessionMaxAgeSeconds()
+	web.SetSessionCookie(c, sessionID, maxAge)
+
+	// Clear rate limit counters on successful login
+	_ = redis.ClearRateLimitKeys("gui:magic-link", c.ClientIP())
+	if web.ClearRateLimitFallback != nil {
+		web.ClearRateLimitFallback("gui:magic-link", c.ClientIP())
+	}
+
+	// Redirect to admin dashboard
+	c.Redirect(http.StatusFound, "/gui/")
+}
+
+// schemeFromRequest returns "https" or "http" based on the incoming request.
+func schemeFromRequest(c *gin.Context) string {
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		return "https"
+	}
+	return "http"
+}
+
+// ============================================================
+// Session Management
+// ============================================================
+
+// SessionsPage renders the session management page.
+// GET /gui/sessions
+func (h *GUIHandler) SessionsPage(c *gin.Context) {
+	apps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "sessions", gin.H{
+			"ActivePage": "sessions",
+			"AdminUser":  getAdminUsername(c),
+			"CSRFToken":  getCSRFToken(c),
+			"Error":      "Failed to load applications",
+		})
+		return
+	}
+
+	c.HTML(http.StatusOK, "sessions", gin.H{
+		"ActivePage": "sessions",
+		"AdminUser":  getAdminUsername(c),
+		"CSRFToken":  getCSRFToken(c),
+		"Apps":       apps,
+	})
+}
+
+// sessionItem is a flattened struct for rendering in the session list template.
+type sessionItem struct {
+	SessionID           string
+	UserID              string
+	UserEmail           string
+	AppID               string
+	AppName             string
+	IP                  string
+	UserAgent           string
+	CreatedAt           string
+	LastActive          string
+	CreatedAtFormatted  string
+	LastActiveFormatted string
+}
+
+// SessionList returns the paginated session list partial (HTMX fragment).
+// GET /gui/sessions/list
+func (h *GUIHandler) SessionList(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize := 20
+
+	filterAppID := c.Query("app_id")
+	search := strings.ToLower(c.Query("search"))
+	ipSearch := strings.ToLower(c.Query("ip"))
+
+	// Determine which apps to query
+	var appIDs []string
+	var appNames map[string]string
+
+	if filterAppID != "" {
+		appIDs = []string{filterAppID}
+	} else {
+		apps, err := h.Repo.ListAllAppsWithTenantName()
+		if err != nil {
+			c.HTML(http.StatusInternalServerError, "session_list", gin.H{"Sessions": nil, "Error": "Failed to load apps"})
+			return
+		}
+		for _, a := range apps {
+			appIDs = append(appIDs, a.ID.String())
+		}
+	}
+
+	// Fetch app names for display
+	appNames, _ = h.Repo.GetAppNamesByIDs(appIDs)
+
+	// Collect all sessions across selected apps
+	var allSessions []map[string]string
+	var allAppIDs []string // parallel array tracking which appID each session belongs to
+	for _, appID := range appIDs {
+		sessions, err := redis.GetAllSessionsForApp(appID)
+		if err != nil {
+			continue
+		}
+		for _, s := range sessions {
+			s["app_id"] = appID
+			allSessions = append(allSessions, s)
+			allAppIDs = append(allAppIDs, appID)
+		}
+	}
+
+	// Collect unique user IDs for batch email lookup
+	userIDSet := make(map[string]bool)
+	for _, s := range allSessions {
+		if uid, ok := s["user_id"]; ok && uid != "" {
+			userIDSet[uid] = true
+		}
+	}
+	var userIDs []string
+	for uid := range userIDSet {
+		userIDs = append(userIDs, uid)
+	}
+	userEmails, _ := h.Repo.GetUserEmailsByIDs(userIDs)
+
+	// Build flattened items and apply in-memory filters
+	var items []sessionItem
+	for _, s := range allSessions {
+		userID := s["user_id"]
+		userEmail := userEmails[userID]
+		ip := s["ip"]
+		appID := s["app_id"]
+
+		// Apply search filter (user email)
+		if search != "" && !strings.Contains(strings.ToLower(userEmail), search) {
+			continue
+		}
+		// Apply IP filter
+		if ipSearch != "" && !strings.Contains(strings.ToLower(ip), ipSearch) {
+			continue
+		}
+
+		item := sessionItem{
+			SessionID:  s["session_id"],
+			UserID:     userID,
+			UserEmail:  userEmail,
+			AppID:      appID,
+			AppName:    appNames[appID],
+			IP:         ip,
+			UserAgent:  s["user_agent"],
+			CreatedAt:  s["created_at"],
+			LastActive: s["last_active"],
+		}
+
+		// Format timestamps for display
+		if t, err := time.Parse(time.RFC3339, s["created_at"]); err == nil {
+			item.CreatedAtFormatted = formatTimeAgo(t)
+		} else {
+			item.CreatedAtFormatted = s["created_at"]
+		}
+		if t, err := time.Parse(time.RFC3339, s["last_active"]); err == nil {
+			item.LastActiveFormatted = formatTimeAgo(t)
+		} else {
+			item.LastActiveFormatted = s["last_active"]
+		}
+
+		items = append(items, item)
+	}
+
+	// Sort by last_active descending (most recently active first)
+	sortSessionsByLastActive(items)
+
+	// Paginate
+	total := len(items)
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	pageItems := items[start:end]
+
+	c.HTML(http.StatusOK, "session_list", gin.H{
+		"Sessions":   pageItems,
+		"Page":       page,
+		"TotalPages": totalPages,
+		"Total":      total,
+		"AppID":      filterAppID,
+		"Search":     c.Query("search"),
+		"IP":         c.Query("ip"),
+	})
+}
+
+// SessionDetail returns the session detail partial (HTMX fragment).
+// GET /gui/sessions/:app_id/:session_id/detail
+func (h *GUIHandler) SessionDetail(c *gin.Context) {
+	appID := c.Param("app_id")
+	sessionID := c.Param("session_id")
+
+	data, err := redis.GetSession(appID, sessionID)
+	if err != nil {
+		c.HTML(http.StatusNotFound, "session_detail", gin.H{
+			"Error": "Session not found",
+		})
+		return
+	}
+
+	userID := data["user_id"]
+	userEmails, _ := h.Repo.GetUserEmailsByIDs([]string{userID})
+	appNames, _ := h.Repo.GetAppNamesByIDs([]string{appID})
+
+	c.HTML(http.StatusOK, "session_detail", gin.H{
+		"SessionID":  sessionID,
+		"UserID":     userID,
+		"UserEmail":  userEmails[userID],
+		"AppID":      appID,
+		"AppName":    appNames[appID],
+		"IP":         data["ip"],
+		"UserAgent":  data["user_agent"],
+		"CreatedAt":  data["created_at"],
+		"LastActive": data["last_active"],
+	})
+}
+
+// SessionRevoke deletes a single session (HTMX action).
+// DELETE /gui/sessions/:app_id/:session_id
+func (h *GUIHandler) SessionRevoke(c *gin.Context) {
+	appID := c.Param("app_id")
+	sessionID := c.Param("session_id")
+	userID := c.Query("user_id")
+
+	if userID == "" {
+		// Try to get user_id from the session itself
+		data, err := redis.GetSession(appID, sessionID)
+		if err == nil {
+			userID = data["user_id"]
+		}
+	}
+
+	if err := redis.DeleteSession(appID, sessionID, userID); err != nil {
+		c.String(http.StatusInternalServerError, "Failed to revoke session")
+		return
+	}
+
+	// Check if this was called from user detail page
+	if c.Query("from_user_detail") == "1" {
+		h.renderUserSessions(c, appID, userID)
+		return
+	}
+
+	// Trigger list refresh and re-render
+	c.Header("HX-Trigger", "sessionListRefresh")
+	h.SessionList(c)
+}
+
+// SessionRevokeAllForUser revokes all sessions for a specific user (HTMX action).
+// DELETE /gui/sessions/revoke-all-user
+func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
+	appID := c.Query("app_id")
+	userID := c.Query("user_id")
+
+	if appID == "" || userID == "" {
+		c.String(http.StatusBadRequest, "Missing app_id or user_id")
+		return
+	}
+
+	if err := redis.DeleteAllUserSessions(appID, userID, ""); err != nil {
+		c.String(http.StatusInternalServerError, "Failed to revoke sessions")
+		return
+	}
+
+	// Check if this was called from user detail page
+	if c.Query("from_user_detail") == "1" {
+		h.renderUserSessions(c, appID, userID)
+		return
+	}
+
+	// Trigger list refresh and re-render
+	c.Header("HX-Trigger", "sessionListRefresh")
+	h.SessionList(c)
+}
+
+// UserSessions returns the user sessions partial for the user detail page.
+// GET /gui/users/:id/sessions
+func (h *GUIHandler) UserSessions(c *gin.Context) {
+	userID := c.Param("id")
+	appID := c.Query("app_id")
+
+	if appID == "" {
+		// Look up the user's app_id
+		detail, err := h.Repo.GetUserDetailByID(userID)
+		if err != nil {
+			c.HTML(http.StatusNotFound, "user_sessions", gin.H{"Sessions": nil})
+			return
+		}
+		appID = detail.AppID.String()
+	}
+
+	h.renderUserSessions(c, appID, userID)
+}
+
+// renderUserSessions is a helper that renders the user_sessions partial for a given user.
+func (h *GUIHandler) renderUserSessions(c *gin.Context, appID, userID string) {
+	sessionIDs, err := redis.GetUserSessionIDs(appID, userID)
+	if err != nil {
+		c.HTML(http.StatusOK, "user_sessions", gin.H{
+			"Sessions": nil,
+			"AppID":    appID,
+			"UserID":   userID,
+		})
+		return
+	}
+
+	var items []sessionItem
+	for _, sid := range sessionIDs {
+		data, err := redis.GetSession(appID, sid)
+		if err != nil {
+			continue
+		}
+
+		item := sessionItem{
+			SessionID:  sid,
+			UserID:     userID,
+			AppID:      appID,
+			IP:         data["ip"],
+			UserAgent:  data["user_agent"],
+			CreatedAt:  data["created_at"],
+			LastActive: data["last_active"],
+		}
+
+		if t, err := time.Parse(time.RFC3339, data["created_at"]); err == nil {
+			item.CreatedAtFormatted = formatTimeAgo(t)
+		} else {
+			item.CreatedAtFormatted = data["created_at"]
+		}
+		if t, err := time.Parse(time.RFC3339, data["last_active"]); err == nil {
+			item.LastActiveFormatted = formatTimeAgo(t)
+		} else {
+			item.LastActiveFormatted = data["last_active"]
+		}
+
+		items = append(items, item)
+	}
+
+	sortSessionsByLastActive(items)
+
+	c.HTML(http.StatusOK, "user_sessions", gin.H{
+		"Sessions": items,
+		"AppID":    appID,
+		"UserID":   userID,
+	})
+}
+
+// sortSessionsByLastActive sorts sessions by last_active time descending.
+func sortSessionsByLastActive(items []sessionItem) {
+	for i := 0; i < len(items); i++ {
+		for j := i + 1; j < len(items); j++ {
+			ti, _ := time.Parse(time.RFC3339, items[i].LastActive)
+			tj, _ := time.Parse(time.RFC3339, items[j].LastActive)
+			if tj.After(ti) {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+}
+
+// formatTimeAgo returns a human-readable relative time string.
+func formatTimeAgo(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		mins := int(d.Minutes())
+		if mins == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", mins)
+	case d < 24*time.Hour:
+		hours := int(d.Hours())
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
+	case d < 7*24*time.Hour:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	default:
+		return t.Format("Jan 02, 2006 15:04")
+	}
 }

@@ -1,0 +1,74 @@
+{{define "user_sessions"}}
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white d-flex align-items-center justify-content-between">
+        <h6 class="mb-0 fw-bold">
+            <i class="bi bi-broadcast me-2"></i>Active Sessions
+            {{if .Sessions}}
+            <span class="badge bg-primary bg-opacity-10 text-primary ms-1">{{len .Sessions}}</span>
+            {{end}}
+        </h6>
+        {{if .Sessions}}
+        <button class="btn btn-outline-danger btn-sm"
+                hx-delete="/gui/sessions/revoke-all-user?app_id={{.AppID}}&user_id={{.UserID}}&from_user_detail=1"
+                hx-target="#user-sessions-container"
+                hx-swap="innerHTML"
+                hx-confirm="Revoke ALL sessions for this user?">
+            <i class="bi bi-x-circle me-1"></i>Revoke All
+        </button>
+        {{end}}
+    </div>
+    <div class="card-body p-0">
+        {{if .Sessions}}
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">IP Address</th>
+                        <th>User Agent</th>
+                        <th>Created</th>
+                        <th>Last Active</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Sessions}}
+                    <tr>
+                        <td class="ps-3">
+                            <small class="font-monospace">{{if .IP}}{{.IP}}{{else}}-{{end}}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted" style="max-width: 250px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                   title="{{.UserAgent}}">
+                                {{if .UserAgent}}{{.UserAgent}}{{else}}-{{end}}
+                            </small>
+                        </td>
+                        <td class="text-nowrap">
+                            <small class="text-muted">{{.CreatedAtFormatted}}</small>
+                        </td>
+                        <td class="text-nowrap">
+                            <small class="text-muted">{{.LastActiveFormatted}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-delete="/gui/sessions/{{.AppID}}/{{.SessionID}}?user_id={{.UserID}}&from_user_detail=1"
+                                    hx-target="#user-sessions-container"
+                                    hx-swap="innerHTML"
+                                    hx-confirm="Revoke this session?"
+                                    title="Revoke session">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="text-center py-4 text-muted">
+            <i class="bi bi-broadcast fs-4"></i>
+            <p class="mt-2 mb-0 small">No active sessions for this user.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

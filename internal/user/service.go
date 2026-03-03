@@ -9,11 +9,13 @@ import (
 
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
+	"github.com/spf13/viper"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -22,14 +24,55 @@ import (
 // security (matches the admin account bcrypt cost in cmd/setup).
 const bcryptCost = 12
 
+// RoleLookupFunc is a function that returns role names for a user in an app.
+// Used to populate JWT claims with roles without importing the rbac package directly.
+type RoleLookupFunc func(appID, userID string) ([]string, error)
+
+// AssignDefaultRoleFunc is called after user registration to assign the default role.
+type AssignDefaultRoleFunc func(appID, userID string) error
+
 type Service struct {
-	Repo         *Repository
-	EmailService *emailpkg.Service
-	DB           *gorm.DB
+	Repo              *Repository
+	EmailService      *emailpkg.Service
+	DB                *gorm.DB
+	SessionService    *session.Service      // Session management for multi-device tracking
+	LookupRoles       RoleLookupFunc        // Optional: if nil, tokens are generated without roles
+	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no default role is assigned on registration
 }
 
 func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
 	return &Service{Repo: r, EmailService: es, DB: db}
+}
+
+// getUserRoles fetches roles for JWT embedding. Returns nil on error (non-fatal).
+// Self-healing: if the user has no roles and AssignDefaultRole is available,
+// assigns the "member" role automatically (covers pre-RBAC users).
+func (s *Service) getUserRoles(appID, userID string) []string {
+	if s.LookupRoles == nil {
+		return nil
+	}
+	roles, err := s.LookupRoles(appID, userID)
+	if err != nil {
+		log.Printf("Warning: failed to lookup roles for user %s in app %s: %v", userID, appID, err)
+		return nil
+	}
+
+	// Self-healing: assign default role if user has none (pre-RBAC users)
+	if len(roles) == 0 && s.AssignDefaultRole != nil {
+		if err := s.AssignDefaultRole(appID, userID); err != nil {
+			log.Printf("Warning: self-healing role assignment failed for user %s in app %s: %v", userID, appID, err)
+			return nil
+		}
+		// Re-fetch roles after assignment
+		roles, err = s.LookupRoles(appID, userID)
+		if err != nil {
+			log.Printf("Warning: failed to re-lookup roles after self-healing for user %s in app %s: %v", userID, appID, err)
+			return nil
+		}
+		log.Printf("Info: self-healing assigned default role to user %s in app %s, roles: %v", userID, appID, roles)
+	}
+
+	return roles
 }
 
 // LoginResult represents the result of a login attempt
@@ -39,6 +82,7 @@ type LoginResult struct {
 	UserID             uuid.UUID
 	AccessToken        string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
 	RefreshToken       string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
+	SessionID          string
 	TwoFAResponse      *dto.TwoFARequiredResponse
 	TwoFASetupResponse *dto.TwoFASetupRequiredResponse
 }
@@ -67,6 +111,13 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create user")
 	}
 
+	// Assign default 'member' role to the new user (non-fatal if it fails)
+	if s.AssignDefaultRole != nil {
+		if err := s.AssignDefaultRole(appID.String(), user.ID.String()); err != nil {
+			log.Printf("Warning: failed to assign default role to user %s: %v", user.ID.String(), err)
+		}
+	}
+
 	// Generate email verification token and send email
 	verificationToken := uuid.New().String()
 
@@ -81,7 +132,7 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 	return user.ID, nil
 }
 
-func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResult, *errors.AppError) {
+func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent string) (*LoginResult, *errors.AppError) {
 	user, err := s.Repo.GetUserByEmail(appID.String(), email)
 	if err != nil { // User not found
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
@@ -128,6 +179,9 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 			}
 		}
 
+		// For passkey 2FA, no server-side action needed here — the client
+		// must call /2fa/passkey/begin + /2fa/passkey/finish using the temp token.
+
 		return &LoginResult{
 			RequiresTwoFA: true,
 			UserID:        user.ID,
@@ -143,19 +197,10 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 	var app models.Application
 	if err := s.DB.Select("two_fa_required").First(&app, "id = ?", appID).Error; err == nil && app.TwoFARequired {
 		// User doesn't have 2FA set up, but the app requires it.
-		// Issue tokens so the user can authenticate to /2fa/generate, but flag the response.
-		accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
-		if err != nil {
-			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
-		}
-
-		refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
-		if err != nil {
-			return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
-		}
-
-		if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
-			return nil, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+		// Issue tokens via session so the user can authenticate to /2fa/generate, but flag the response.
+		accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+		if appErr != nil {
+			return nil, appErr
 		}
 
 		return &LoginResult{
@@ -163,6 +208,7 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 			UserID:             user.ID,
 			AccessToken:        accessToken,
 			RefreshToken:       refreshToken,
+			SessionID:          sessionID,
 			TwoFASetupResponse: &dto.TwoFASetupRequiredResponse{
 				Message:      "2FA setup is required for this application",
 				AccessToken:  accessToken,
@@ -171,20 +217,10 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 		}, nil
 	}
 
-	// Generate JWTs for standard login
-	accessToken, err := jwt.GenerateAccessToken(appID.String(), user.ID.String())
-	if err != nil {
-		return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
-	}
-
-	refreshToken, err := jwt.GenerateRefreshToken(appID.String(), user.ID.String())
-	if err != nil {
-		return nil, errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
-	}
-
-	// Store refresh token in Redis
-	if err := redis.SetRefreshToken(appID.String(), user.ID.String(), refreshToken); err != nil {
-		return nil, errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+	// Standard login — create session
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+	if appErr != nil {
+		return nil, appErr
 	}
 
 	return &LoginResult{
@@ -192,10 +228,17 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password string) (*LoginResu
 		UserID:        user.ID,
 		AccessToken:   accessToken,
 		RefreshToken:  refreshToken,
+		SessionID:     sessionID,
 	}, nil
 }
 
 func (s *Service) RefreshUserToken(refreshToken string) (string, string, string, *errors.AppError) {
+	// Delegate to session service if available (session-based refresh with token rotation)
+	if s.SessionService != nil {
+		return s.SessionService.RefreshSession(refreshToken)
+	}
+
+	// Legacy fallback: refresh without session tracking
 	claims, err := jwt.ParseToken(refreshToken)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid refresh token")
@@ -212,12 +255,13 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, string,
 		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Refresh token revoked or invalid")
 	}
 
-	// Generate new access and refresh tokens
-	newAccessToken, err := jwt.GenerateAccessToken(claims.AppID, claims.UserID)
+	// Generate new access and refresh tokens (re-fetch roles for freshness)
+	roles := s.getUserRoles(claims.AppID, claims.UserID)
+	newAccessToken, err := jwt.GenerateAccessToken(claims.AppID, claims.UserID, claims.SessionID, roles)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new access token")
 	}
-	newRefreshToken, err := jwt.GenerateRefreshToken(claims.AppID, claims.UserID)
+	newRefreshToken, err := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, claims.SessionID, roles)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new refresh token")
 	}
@@ -233,9 +277,17 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, string,
 	return newAccessToken, newRefreshToken, claims.UserID, nil
 }
 
-// LogoutUser logs out a user by revoking their refresh token and blacklisting their access token
-func (s *Service) LogoutUser(appID, userID, refreshToken, accessToken string) *errors.AppError {
-	// Revoke the refresh token in Redis
+// LogoutUser logs out a user by revoking their session and blacklisting their access token
+func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken string) *errors.AppError {
+	// Revoke the session if session service is available and sessionID is present
+	if s.SessionService != nil && sessionID != "" {
+		if appErr := s.SessionService.LogoutSession(appID, userID, sessionID, accessToken); appErr != nil {
+			log.Printf("Warning: Failed to revoke session %s: %v\n", sessionID, appErr.Message)
+		}
+		return nil
+	}
+
+	// Legacy fallback: revoke refresh token directly
 	if err := redis.RevokeRefreshToken(appID, userID, refreshToken); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to revoke refresh token")
 	}
@@ -259,6 +311,30 @@ func (s *Service) LogoutUser(appID, userID, refreshToken, accessToken string) *e
 	}
 
 	return nil
+}
+
+// createSession creates a new session via the session service, or falls back to legacy token storage.
+func (s *Service) createSession(appID, userID, ip, userAgent string) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
+	roles := s.getUserRoles(appID, userID)
+
+	if s.SessionService != nil {
+		return s.SessionService.CreateSession(appID, userID, ip, userAgent, roles)
+	}
+
+	// Legacy fallback: generate tokens without session tracking
+	var err error
+	accessToken, err = jwt.GenerateAccessToken(appID, userID, "", roles)
+	if err != nil {
+		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
+	}
+	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, "", roles)
+	if err != nil {
+		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
+	}
+	if err := redis.SetRefreshToken(appID, userID, refreshToken); err != nil {
+		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
+	}
+	return accessToken, refreshToken, "", nil
 }
 
 func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.AppError {
@@ -305,6 +381,43 @@ func (s *Service) VerifyEmail(appID uuid.UUID, token string) (uuid.UUID, *errors
 	}
 
 	return userUUID, nil
+}
+
+// ResendVerificationEmail resends the email verification link for a user.
+// Returns nil even if the user is not found or already verified (to prevent email enumeration).
+func (s *Service) ResendVerificationEmail(appID uuid.UUID, email string) *errors.AppError {
+	user, err := s.Repo.GetUserByEmail(appID.String(), email)
+	if err != nil {
+		// User not found — return nil to prevent email enumeration
+		return nil
+	}
+
+	if user.EmailVerified {
+		// Already verified — return nil to prevent email enumeration
+		return nil
+	}
+
+	userID := user.ID.String()
+
+	// Invalidate any existing verification token for this user
+	oldToken, err := redis.GetEmailVerificationTokenByUserID(appID.String(), userID)
+	if err == nil && oldToken != "" {
+		if delErr := redis.DeleteEmailVerificationToken(appID.String(), oldToken); delErr != nil {
+			log.Printf("Warning: Failed to delete old email verification token from Redis: %v\n", delErr)
+		}
+	}
+
+	// Generate and store new verification token
+	verificationToken := uuid.New().String()
+	if err := redis.SetEmailVerificationToken(appID.String(), userID, verificationToken, 24*time.Hour); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to store verification token")
+	}
+
+	if err := s.EmailService.SendVerificationEmail(appID, user.Email, verificationToken, &user.ID); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to send verification email")
+	}
+
+	return nil
 }
 
 func (s *Service) ConfirmPasswordReset(appID uuid.UUID, token, newPassword string) (uuid.UUID, *errors.AppError) {
@@ -512,4 +625,115 @@ func generateSecure6DigitCode() string {
 		panic(fmt.Sprintf("Failed to generate secure random number for 2FA code: %v", err))
 	}
 	return fmt.Sprintf("%06d", n.Int64())
+}
+
+// RequestMagicLink generates a magic link token and sends it via email.
+// Returns nil even if the user is not found (to prevent email enumeration).
+func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppError {
+	// Check if magic link is enabled for this application
+	var app models.Application
+	if err := s.DB.Select("magic_link_enabled").First(&app, "id = ?", appID).Error; err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to load application settings")
+	}
+	if !app.MagicLinkEnabled {
+		return errors.NewAppError(errors.ErrBadRequest, "Magic link login is not enabled for this application")
+	}
+
+	user, err := s.Repo.GetUserByEmail(appID.String(), email)
+	if err != nil {
+		// User not found — return nil to prevent email enumeration
+		return nil
+	}
+
+	// Check if account is active
+	if !user.IsActive {
+		// Return nil to prevent email enumeration
+		return nil
+	}
+
+	// Check if email is verified
+	if !user.EmailVerified {
+		// Return nil to prevent email enumeration
+		return nil
+	}
+
+	// Generate magic link token
+	magicToken := uuid.New().String()
+
+	// Store in Redis with 10-minute expiration (invalidates any previous token for this user)
+	if err := redis.SetMagicLinkToken(appID.String(), user.ID.String(), magicToken, 10*time.Minute); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to generate magic link")
+	}
+
+	// Build the magic link URL using the frontend URL from config (same as verification email)
+	frontendURL := viper.GetString("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:8080"
+	}
+	magicLink := fmt.Sprintf("%s/magic-link?token=%s", frontendURL, magicToken)
+
+	if err := s.EmailService.SendMagicLinkEmail(appID, user.Email, magicLink, &user.ID); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to send magic link email")
+	}
+
+	return nil
+}
+
+// VerifyMagicLink verifies a magic link token and creates a session (passwordless login).
+// 2FA is skipped since the magic link itself serves as email-based verification.
+func (s *Service) VerifyMagicLink(appID uuid.UUID, token, ip, userAgent string) (*LoginResult, *errors.AppError) {
+	// Check if magic link is enabled for this application
+	var app models.Application
+	if err := s.DB.Select("magic_link_enabled").First(&app, "id = ?", appID).Error; err != nil {
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to load application settings")
+	}
+	if !app.MagicLinkEnabled {
+		return nil, errors.NewAppError(errors.ErrBadRequest, "Magic link login is not enabled for this application")
+	}
+
+	// Retrieve userID from Redis
+	userID, err := redis.GetMagicLinkToken(appID.String(), token)
+	if err != nil || userID == "" {
+		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired magic link")
+	}
+
+	// Delete token immediately — magic links are single-use
+	if delErr := redis.DeleteMagicLinkToken(appID.String(), token); delErr != nil {
+		log.Printf("Warning: Failed to delete used magic link token from Redis: %v\n", delErr)
+	}
+
+	// Fetch user from DB
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return nil, errors.NewAppError(errors.ErrInternal, "Invalid user ID format")
+	}
+
+	user, err := s.Repo.GetUserByID(userUUID.String())
+	if err != nil {
+		return nil, errors.NewAppError(errors.ErrUnauthorized, "User not found")
+	}
+
+	// Verify account is still active
+	if !user.IsActive {
+		return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+	}
+
+	// Verify email is still verified
+	if !user.EmailVerified {
+		return nil, errors.NewAppError(errors.ErrForbidden, "Email not verified.")
+	}
+
+	// Create session (skip 2FA — magic link is itself an email-based verification factor)
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+	if appErr != nil {
+		return nil, appErr
+	}
+
+	return &LoginResult{
+		RequiresTwoFA: false,
+		UserID:        user.ID,
+		AccessToken:   accessToken,
+		RefreshToken:  refreshToken,
+		SessionID:     sessionID,
+	}, nil
 }

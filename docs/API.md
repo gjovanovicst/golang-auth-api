@@ -11,7 +11,7 @@
 - `POST /login`
 - Request: `{ "email": "user@example.com", "password": "..." }`
 - Response: `{ "access_token": "...", "refresh_token": "..." }`
-- If 2FA enabled: `{ "message": "2FA verification required", "temp_token": "..." }`
+- If 2FA enabled: `{ "message": "2FA verification required", "temp_token": "...", "method": "totp" }`
 
 ### Logout
 - `POST /logout`
@@ -38,10 +38,43 @@
 - `GET /verify-email?token=...`
 - Response: `{ "message": "Email verified successfully!" }`
 
+### Resend Email Verification
+- `POST /resend-verification`
+- Request: `{ "email": "user@example.com" }`
+- Response: `{ "message": "If an account with that email exists and is not yet verified, a verification email has been sent." }`
+
 ### Token Validation (for external services)
 - `GET /auth/validate`
 - Header: `Authorization: Bearer <token>`
 - Response: `{ "valid": true, "userID": "uuid", "email": "user@example.com" }`
+
+---
+
+## Magic Link Authentication
+
+### Request Magic Link
+- `POST /magic-link/request`
+- Request:
+```json
+{
+  "email": "user@example.com"
+}
+```
+- Response: `{ "message": "If an account with that email exists, a magic link has been sent." }`
+- Note: The application must have `magic_link_enabled` set to `true`.
+
+### Verify Magic Link
+- `POST /magic-link/verify`
+- Request:
+```json
+{
+  "token": "magic-link-token-from-email"
+}
+```
+- Response: `{ "access_token": "...", "refresh_token": "..." }`
+- Note: Magic link tokens are single-use and expire after a configured duration.
+
+---
 
 ## Social Authentication Endpoints
 
@@ -57,13 +90,72 @@
 - `GET /auth/github/login` - Initiate GitHub login
 - `GET /auth/github/callback` - GitHub callback handler
 
+---
+
+## Social Account Linking (Protected)
+
+All linking endpoints require JWT authentication via `Authorization: Bearer <token>` header.
+
+### List Linked Social Accounts
+- `GET /profile/social-accounts`
+- Response:
+```json
+{
+  "social_accounts": [
+    {
+      "id": "uuid",
+      "provider": "google",
+      "provider_user_id": "...",
+      "email": "user@gmail.com",
+      "name": "John Doe",
+      "first_name": "John",
+      "last_name": "Doe",
+      "profile_picture": "https://...",
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+### Unlink a Social Account
+- `DELETE /profile/social-accounts/:id`
+- Response: `{ "message": "Social account unlinked successfully" }`
+- Note: Users must have a password or at least one remaining social account to unlink.
+
+### Link Social Account
+- `GET /auth/google/link` - Initiate Google account linking (requires auth via cookie/session)
+- `GET /auth/google/link/callback` - Google link callback
+- `GET /auth/facebook/link` - Initiate Facebook account linking
+- `GET /auth/facebook/link/callback` - Facebook link callback
+- `GET /auth/github/link` - Initiate GitHub account linking
+- `GET /auth/github/link/callback` - GitHub link callback
+
+On success, the link callback returns:
+```json
+{
+  "message": "Google account linked successfully",
+  "account": {
+    "id": "uuid",
+    "provider": "google",
+    "provider_user_id": "...",
+    "email": "user@gmail.com",
+    "name": "John Doe",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+}
+```
+
+---
+
 ## User Profile Endpoints (Protected)
 
 All profile endpoints require JWT authentication via `Authorization: Bearer <token>` header.
 
 ### Get Profile
 - `GET /profile`
-- Response: User profile with social accounts
+- Response: User profile with social accounts and roles
 ```json
 {
   "id": "uuid",
@@ -75,6 +167,8 @@ All profile endpoints require JWT authentication via `Authorization: Bearer <tok
   "profile_picture": "https://...",
   "locale": "en-US",
   "two_fa_enabled": false,
+  "two_fa_method": "totp",
+  "roles": ["member"],
   "created_at": "2023-01-01T00:00:00Z",
   "updated_at": "2023-01-01T00:00:00Z",
   "social_accounts": [...]
@@ -131,6 +225,162 @@ All profile endpoints require JWT authentication via `Authorization: Bearer <tok
 - Response: `{ "message": "Account deleted successfully. We're sorry to see you go." }`
 - Note: This action is permanent and cannot be undone
 
+---
+
+## Session Management Endpoints (Protected)
+
+All session endpoints require JWT authentication via `Authorization: Bearer <token>` header.
+
+### List Active Sessions
+- `GET /sessions`
+- Response:
+```json
+{
+  "sessions": [
+    {
+      "id": "session-uuid",
+      "ip_address": "192.168.1.1",
+      "user_agent": "Mozilla/5.0...",
+      "created_at": "2026-03-01T10:00:00Z",
+      "last_active": "2026-03-03T14:30:00Z",
+      "is_current": true
+    },
+    {
+      "id": "session-uuid-2",
+      "ip_address": "10.0.0.1",
+      "user_agent": "Mozilla/5.0...",
+      "created_at": "2026-03-02T08:00:00Z",
+      "last_active": "2026-03-03T12:00:00Z",
+      "is_current": false
+    }
+  ]
+}
+```
+
+### Revoke a Specific Session
+- `DELETE /sessions/:id`
+- Response: `{ "message": "Session revoked successfully" }`
+- Note: Cannot revoke the current session via this endpoint; use `/logout` instead.
+
+### Revoke All Other Sessions
+- `DELETE /sessions`
+- Response: `{ "message": "All other sessions revoked successfully" }`
+- Note: The current session is preserved.
+
+---
+
+## Passkey (WebAuthn) Endpoints
+
+### Registration (Protected)
+
+#### Begin Passkey Registration
+- `POST /passkey/register/begin`
+- Header: `Authorization: Bearer <token>`
+- Response:
+```json
+{
+  "options": { /* PublicKeyCredentialCreationOptions for navigator.credentials.create() */ }
+}
+```
+
+#### Finish Passkey Registration
+- `POST /passkey/register/finish`
+- Header: `Authorization: Bearer <token>`
+- Request:
+```json
+{
+  "name": "My MacBook",
+  "credential": { /* Attestation response from navigator.credentials.create() */ }
+}
+```
+- Response: `{ "message": "Passkey registered successfully" }`
+
+### Management (Protected)
+
+#### List Passkeys
+- `GET /passkeys`
+- Header: `Authorization: Bearer <token>`
+- Response:
+```json
+{
+  "passkeys": [
+    {
+      "id": "uuid",
+      "name": "My MacBook",
+      "created_at": "2026-03-01T10:00:00Z",
+      "last_used_at": "2026-03-03T14:00:00Z",
+      "backup_eligible": true,
+      "backup_state": false,
+      "transports": ["internal"]
+    }
+  ]
+}
+```
+
+#### Rename a Passkey
+- `PUT /passkeys/:id`
+- Header: `Authorization: Bearer <token>`
+- Request: `{ "name": "Work Laptop" }`
+- Response: `{ "message": "Passkey renamed successfully" }`
+
+#### Delete a Passkey
+- `DELETE /passkeys/:id`
+- Header: `Authorization: Bearer <token>`
+- Response: `{ "message": "Passkey deleted successfully" }`
+
+### Passkey as 2FA
+
+#### Begin Passkey 2FA
+- `POST /2fa/passkey/begin`
+- Request:
+```json
+{
+  "temp_token": "temporary-token-from-login"
+}
+```
+- Response:
+```json
+{
+  "options": { /* PublicKeyCredentialRequestOptions for navigator.credentials.get() */ }
+}
+```
+
+#### Finish Passkey 2FA
+- `POST /2fa/passkey/finish`
+- Request:
+```json
+{
+  "temp_token": "temporary-token-from-login",
+  "credential": { /* Assertion response from navigator.credentials.get() */ }
+}
+```
+- Response: `{ "access_token": "...", "refresh_token": "..." }`
+
+### Passwordless Login
+
+#### Begin Passwordless Login
+- `POST /passkey/login/begin`
+- Response:
+```json
+{
+  "options": { /* PublicKeyCredentialRequestOptions for discoverable credentials */ },
+  "session_id": "session-uuid"
+}
+```
+
+#### Finish Passwordless Login
+- `POST /passkey/login/finish`
+- Request:
+```json
+{
+  "session_id": "session-uuid-from-begin",
+  "credential": { /* Assertion response from navigator.credentials.get() */ }
+}
+```
+- Response: `{ "access_token": "...", "refresh_token": "..." }`
+
+---
+
 ## Two-Factor Authentication Endpoints (Protected)
 
 ### Generate 2FA Setup
@@ -156,6 +406,143 @@ All profile endpoints require JWT authentication via `Authorization: Bearer <tok
 - `POST /2fa/recovery-codes`
 - Request: `{ "code": "123456" }`
 - Response: New recovery codes
+
+---
+
+## RBAC Administration Endpoints (Admin)
+
+All RBAC endpoints require admin authentication.
+
+### Roles
+
+#### List Roles
+- `GET /admin/rbac/roles?app_id=<uuid>`
+- Response:
+```json
+[
+  {
+    "id": "uuid",
+    "app_id": "uuid",
+    "name": "admin",
+    "description": "Full administrative access",
+    "is_system": true,
+    "permissions": [...],
+    "created_at": "2026-03-01T00:00:00Z",
+    "updated_at": "2026-03-01T00:00:00Z"
+  }
+]
+```
+
+#### Get Role by ID
+- `GET /admin/rbac/roles/:id`
+- Response: Single role object with permissions
+
+#### Create Role
+- `POST /admin/rbac/roles`
+- Request:
+```json
+{
+  "app_id": "application-uuid",
+  "name": "editor",
+  "description": "Can edit content"
+}
+```
+- Response: Created role object
+
+#### Update Role
+- `PUT /admin/rbac/roles/:id`
+- Request:
+```json
+{
+  "name": "senior-editor",
+  "description": "Can edit and publish content"
+}
+```
+- Response: Updated role object
+
+#### Delete Role
+- `DELETE /admin/rbac/roles/:id`
+- Response: `{ "message": "Role deleted successfully" }`
+- Note: System roles (`is_system: true`) cannot be deleted.
+
+#### Set Role Permissions
+- `PUT /admin/rbac/roles/:id/permissions`
+- Request:
+```json
+{
+  "permission_ids": ["permission-uuid-1", "permission-uuid-2"]
+}
+```
+- Response: `{ "message": "Permissions updated successfully" }`
+
+### Permissions
+
+#### List Permissions
+- `GET /admin/rbac/permissions`
+- Response:
+```json
+[
+  {
+    "id": "uuid",
+    "resource": "users",
+    "action": "read",
+    "description": "View user profiles"
+  }
+]
+```
+
+#### Create Permission
+- `POST /admin/rbac/permissions`
+- Request:
+```json
+{
+  "resource": "articles",
+  "action": "publish",
+  "description": "Publish articles to production"
+}
+```
+- Response: Created permission object
+
+### User-Role Assignments
+
+#### List User-Role Assignments
+- `GET /admin/rbac/user-roles?app_id=<uuid>`
+- Response: List of user-role assignment objects
+
+#### Get Roles for a User
+- `GET /admin/rbac/user-roles/user?user_id=<uuid>&app_id=<uuid>`
+- Response:
+```json
+{
+  "user_id": "uuid",
+  "app_id": "uuid",
+  "roles": [...]
+}
+```
+
+#### Assign Role to User
+- `POST /admin/rbac/user-roles`
+- Request:
+```json
+{
+  "user_id": "user-uuid",
+  "role_id": "role-uuid"
+}
+```
+- Response: `{ "message": "Role assigned successfully" }`
+
+#### Revoke Role from User
+- `DELETE /admin/rbac/user-roles`
+- Request:
+```json
+{
+  "user_id": "user-uuid",
+  "role_id": "role-uuid"
+}
+```
+- Response: `{ "message": "Role revoked successfully" }`
+
+---
 
 ## Activity Log Endpoints (Protected)
 
@@ -205,6 +592,17 @@ The activity log system uses a tiered approach with event categorization by seve
 - `SOCIAL_LOGIN` - Social authentication login
 - `PROFILE_UPDATE` - Profile updated
 - `RECOVERY_CODE_GENERATE` - New recovery codes generated
+
+#### Additional Events (always logged)
+- `EMAIL_VERIFY_RESEND` - Email verification resent
+- `PASSKEY_REGISTER` - Passkey registered
+- `PASSKEY_DELETE` - Passkey deleted
+- `PASSKEY_LOGIN` - Passwordless login via passkey
+- `MAGIC_LINK_REQUESTED` - Magic link email requested
+- `MAGIC_LINK_LOGIN` - Successful login via magic link
+- `MAGIC_LINK_FAILED` - Failed magic link verification
+- `SOCIAL_ACCOUNT_LINKED` - Social account linked to user profile
+- `SOCIAL_ACCOUNT_UNLINKED` - Social account unlinked from user profile
 
 #### Informational Events (90-day retention, conditional logging)
 - `TOKEN_REFRESH` - Access token refreshed (disabled by default, only logs anomalies)

@@ -1,0 +1,83 @@
+{{define "role_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Roles}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        <th>Description</th>
+                        <th>Type</th>
+                        <th>Permissions</th>
+                        <th>Created</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Roles}}
+                    <tr>
+                        <td class="ps-3">
+                            <span class="fw-semibold">{{.Name}}</span>
+                            <br>
+                            <small class="text-muted font-monospace">{{.ID}}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted">{{.Description}}</small>
+                        </td>
+                        <td>
+                            {{if .IsSystem}}
+                            <span class="badge bg-info bg-opacity-10 text-info">System</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">Custom</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <span class="badge bg-primary bg-opacity-10 text-primary">{{.PermissionCount}} permission{{if ne .PermissionCount 1}}s{{end}}</span>
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-info btn-sm me-1"
+                                    hx-get="/gui/roles/{{.ID}}/permissions"
+                                    hx-target="#permissions-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#permissionsModal"
+                                    title="Manage Permissions">
+                                <i class="bi bi-lock"></i>
+                            </button>
+                            {{if not .IsSystem}}
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/roles/{{.ID}}/edit"
+                                    hx-target="#role-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/roles/{{.ID}}/delete"
+                                    hx-target="#delete-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteRoleModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            {{end}}
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-shield-check fs-1"></i>
+            <p class="mt-2 mb-0">No roles found for this application.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

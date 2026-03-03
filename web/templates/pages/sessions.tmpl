@@ -1,0 +1,129 @@
+{{define "sessions"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Sessions{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-broadcast me-2"></i>Active Sessions
+    </h4>
+</div>
+
+<!-- Filters row -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body py-2">
+        <div class="row g-2 align-items-end">
+            <!-- Search by user email -->
+            <div class="col-md-3">
+                <label for="sessionSearch" class="form-label mb-1 small text-muted">User Email</label>
+                <input type="text" class="form-control form-control-sm" id="sessionSearch"
+                       placeholder="Search by email...">
+            </div>
+            <!-- IP address filter -->
+            <div class="col-md-3">
+                <label for="ipSearch" class="form-label mb-1 small text-muted">IP Address</label>
+                <input type="text" class="form-control form-control-sm" id="ipSearch"
+                       placeholder="Search by IP...">
+            </div>
+            <!-- Application filter -->
+            <div class="col-md-3">
+                <label for="sessionAppFilter" class="form-label mb-1 small text-muted">Application</label>
+                <select class="form-select form-select-sm" id="sessionAppFilter">
+                    <option value="">All Apps</option>
+                    {{range .Apps}}
+                    <option value="{{.ID}}">{{.Name}} ({{.TenantName}})</option>
+                    {{end}}
+                </select>
+            </div>
+            <!-- Bulk actions -->
+            <div class="col-md-3 text-end">
+                <label class="form-label mb-1 small text-muted d-block">&nbsp;</label>
+                <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#revokeAllModal"
+                        id="btnRevokeFiltered" style="display: none;">
+                    <i class="bi bi-x-circle me-1"></i>Revoke All Shown
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Session detail panel (populated by HTMX when viewing a session) -->
+<div id="session-detail-container" class="mb-3"></div>
+
+<!-- Session table (loaded via HTMX) -->
+<div id="session-table"
+     hx-get="/gui/sessions/list?page=1"
+     hx-trigger="load, sessionListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading sessions...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Revoke All Confirmation Modal -->
+<div class="modal fade" id="revokeAllModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-2"></i>Revoke All Sessions</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div id="revoke-all-modal-body">
+                <!-- Content loaded by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Build the list URL with current filter/search state
+    function getSessionListURL(page) {
+        var url = '/gui/sessions/list?page=' + (page || 1);
+        var search = document.getElementById('sessionSearch').value.trim();
+        var ip = document.getElementById('ipSearch').value.trim();
+        var appID = document.getElementById('sessionAppFilter').value;
+        if (search) url += '&search=' + encodeURIComponent(search);
+        if (ip) url += '&ip=' + encodeURIComponent(ip);
+        if (appID) url += '&app_id=' + appID;
+        return url;
+    }
+
+    // Reload list when dropdown filter changes
+    document.getElementById('sessionAppFilter').addEventListener('change', function() {
+        htmx.ajax('GET', getSessionListURL(1), {target: '#session-table', swap: 'innerHTML'});
+    });
+
+    // Debounced search on keyup for user email
+    var searchTimeout = null;
+    document.getElementById('sessionSearch').addEventListener('keyup', function() {
+        if (searchTimeout) clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(function() {
+            htmx.ajax('GET', getSessionListURL(1), {target: '#session-table', swap: 'innerHTML'});
+        }, 300);
+    });
+
+    // Debounced search on keyup for IP
+    var ipTimeout = null;
+    document.getElementById('ipSearch').addEventListener('keyup', function() {
+        if (ipTimeout) clearTimeout(ipTimeout);
+        ipTimeout = setTimeout(function() {
+            htmx.ajax('GET', getSessionListURL(1), {target: '#session-table', swap: 'innerHTML'});
+        }, 300);
+    });
+
+    // Close detail panel event
+    document.body.addEventListener('sessionDetailClosed', function() {
+        document.getElementById('session-detail-container').innerHTML = '';
+    });
+</script>
+{{end}}

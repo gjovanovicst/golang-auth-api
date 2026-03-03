@@ -14,10 +14,13 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/email"
 	logService "github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/middleware"
+	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/social"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
+	passkey "github.com/gjovanovicst/auth_api/internal/webauthn"
 	"github.com/gjovanovicst/auth_api/web"
 	"github.com/gjovanovicst/auth_api/web/static"
 	swaggerFiles "github.com/swaggo/files"
@@ -96,16 +99,38 @@ func main() {
 	logRepo := logService.NewRepository(database.DB)
 	emailRepo := email.NewRepository(database.DB)
 	emailService := email.NewService(emailRepo, database.DB)
+	rbacRepo := rbac.NewRepository(database.DB)
+	rbacService := rbac.NewService(rbacRepo)
+	rbacHandler := rbac.NewHandler(rbacService)
 	userService := user.NewService(userRepo, emailService, database.DB)
+	userService.LookupRoles = rbacService.GetUserRoleNames
+	userService.AssignDefaultRole = rbacService.AssignDefaultRole
+	sessionService := session.NewService()
+	userService.SessionService = sessionService
 	socialService := social.NewService(userRepo, socialRepo)
+	socialService.LookupRoles = rbacService.GetUserRoleNames
+	socialService.AssignDefaultRole = rbacService.AssignDefaultRole
+	socialService.SessionService = sessionService
 	twofaService := twofa.NewService(userRepo, database.DB, emailService)
 	logQueryService := logService.NewQueryService(logRepo)
 	userHandler := user.NewHandler(userService)
 	socialHandler := social.NewHandler(socialService)
 	twofaHandler := twofa.NewHandler(twofaService)
+	twofaHandler.LookupRoles = rbacService.GetUserRoleNames
+	twofaHandler.SessionService = sessionService
+	twofaHandler.AssignDefaultRole = rbacService.AssignDefaultRole
 	logHandler := logService.NewHandler(logQueryService)
+	sessionHandler := session.NewHandler(sessionService)
 	adminRepo := admin.NewRepository(database.DB)
 	adminHandler := admin.NewHandler(adminRepo, emailService)
+
+	// Initialize WebAuthn/Passkey Services and Handler
+	webauthnRepo := passkey.NewRepository(database.DB)
+	webauthnService := passkey.NewService(webauthnRepo, userRepo, database.DB)
+	webauthnHandler := passkey.NewHandler(webauthnService)
+	webauthnHandler.LookupRoles = rbacService.GetUserRoleNames
+	webauthnHandler.SessionService = sessionService
+	webauthnHandler.AssignDefaultRole = rbacService.AssignDefaultRole
 
 	// Initialize Admin GUI Services and Handler
 	accountRepo := admin.NewAccountRepository(database.DB)
@@ -113,7 +138,10 @@ func main() {
 	dashboardService := admin.NewDashboardService(database.DB)
 	settingsRepo := admin.NewSettingsRepository(database.DB)
 	settingsService := admin.NewSettingsService(settingsRepo)
-	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService)
+	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService, rbacService, webauthnService)
+
+	// Wire admin lookup for passkey discoverable login
+	webauthnService.AdminLookup = accountRepo.GetByID
 
 	// Setup Gin Router
 	r := gin.Default()
@@ -141,12 +169,25 @@ func main() {
 		public.POST("/forgot-password", middleware.APIForgotPasswordRateLimit(), userHandler.ForgotPassword)
 		public.POST("/reset-password", middleware.APIResetPasswordRateLimit(), userHandler.ResetPassword)
 		public.GET("/verify-email", userHandler.VerifyEmail)
+		public.POST("/resend-verification", middleware.APIResendVerificationRateLimit(), userHandler.ResendVerification)
 		// 2FA login verification (public because it needs temp token)
 		public.POST("/2fa/login-verify", middleware.API2FAVerifyRateLimit(), twofaHandler.VerifyLogin)
 		// 2FA email code resend (public because it needs temp token during login)
 		public.POST("/2fa/email/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendEmail2FACode)
 		// 2FA available methods (public so login UI can show method options)
 		public.GET("/2fa/methods", twofaHandler.GetAvailableMethods)
+
+		// Passkey 2FA login (public because it needs temp token)
+		public.POST("/2fa/passkey/begin", middleware.APIPasskey2FARateLimit(), webauthnHandler.BeginPasskey2FA)
+		public.POST("/2fa/passkey/finish", middleware.APIPasskey2FARateLimit(), webauthnHandler.FinishPasskey2FA)
+
+		// Passwordless passkey login (public)
+		public.POST("/passkey/login/begin", middleware.APIPasskeyLoginRateLimit(), webauthnHandler.BeginPasswordlessLogin)
+		public.POST("/passkey/login/finish", middleware.APIPasskeyLoginRateLimit(), webauthnHandler.FinishPasswordlessLogin)
+
+		// Magic link passwordless login (public)
+		public.POST("/magic-link/request", middleware.APIMagicLinkRateLimit(), userHandler.RequestMagicLink)
+		public.POST("/magic-link/verify", middleware.APIMagicLinkRateLimit(), userHandler.VerifyMagicLink)
 	}
 
 	// Social authentication routes
@@ -163,36 +204,66 @@ func main() {
 		// GitHub OAuth2
 		auth.GET("/github/login", socialHandler.GithubLogin)
 		auth.GET("/github/callback", socialHandler.GithubCallback)
+
+		// Account linking callbacks (public — user ID embedded in OAuth state)
+		auth.GET("/google/link/callback", socialHandler.GoogleLinkCallback)
+		auth.GET("/facebook/link/callback", socialHandler.FacebookLinkCallback)
+		auth.GET("/github/link/callback", socialHandler.GithubLinkCallback)
+	}
+
+	// Account linking initiation routes (require JWT authentication)
+	authLink := r.Group("/auth")
+	authLink.Use(middleware.AuthMiddleware())
+	{
+		authLink.GET("/google/link", socialHandler.GoogleLink)
+		authLink.GET("/facebook/link", socialHandler.FacebookLink)
+		authLink.GET("/github/link", socialHandler.GithubLink)
 	}
 
 	// Protected routes (require JWT authentication)
 	protected := r.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
-		// User profile routes
-		protected.GET("/profile", userHandler.GetProfile)
-		protected.PUT("/profile", userHandler.UpdateProfile)
-		protected.DELETE("/profile", userHandler.DeleteAccount)
-		protected.PUT("/profile/email", userHandler.UpdateEmail)
-		protected.PUT("/profile/password", userHandler.UpdatePassword)
+		// User profile routes (require user:read / user:write / user:delete)
+		protected.GET("/profile", middleware.AuthorizePermission(rbacService, "user", "read"), userHandler.GetProfile)
+		protected.PUT("/profile", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdateProfile)
+		protected.DELETE("/profile", middleware.AuthorizePermission(rbacService, "user", "delete"), userHandler.DeleteAccount)
+		protected.PUT("/profile/email", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdateEmail)
+		protected.PUT("/profile/password", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdatePassword)
 
-		// Auth routes
+		// Social account management routes
+		protected.GET("/profile/social-accounts", middleware.AuthorizePermission(rbacService, "user", "read"), socialHandler.ListSocialAccounts)
+		protected.DELETE("/profile/social-accounts/:id", middleware.AuthorizePermission(rbacService, "user", "write"), socialHandler.UnlinkSocialAccount)
+
+		// Auth routes (no extra permission needed — auth is inherent)
 		protected.GET("/auth/validate", userHandler.ValidateToken)
 		protected.POST("/logout", userHandler.Logout)
 
-		// 2FA management routes
-		protected.POST("/2fa/generate", twofaHandler.Generate2FA)
-		protected.POST("/2fa/verify-setup", twofaHandler.VerifySetup)
-		protected.POST("/2fa/enable", twofaHandler.Enable2FA)
-		protected.POST("/2fa/disable", twofaHandler.Disable2FA)
-		protected.POST("/2fa/recovery-codes", twofaHandler.GenerateRecoveryCodes)
+		// 2FA management routes (require settings:write — managing own security settings)
+		protected.POST("/2fa/generate", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.Generate2FA)
+		protected.POST("/2fa/verify-setup", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.VerifySetup)
+		protected.POST("/2fa/enable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.Enable2FA)
+		protected.POST("/2fa/disable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.Disable2FA)
+		protected.POST("/2fa/recovery-codes", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.GenerateRecoveryCodes)
 		// Email 2FA routes
-		protected.POST("/2fa/email/enable", twofaHandler.EnableEmail2FA)
+		protected.POST("/2fa/email/enable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.EnableEmail2FA)
 
-		// Activity log routes
-		protected.GET("/activity-logs", logHandler.GetUserActivityLogs)
-		protected.GET("/activity-logs/event-types", logHandler.GetEventTypes)
-		protected.GET("/activity-logs/:id", logHandler.GetActivityLogByID)
+		// Passkey management routes (require settings:write)
+		protected.POST("/passkey/register/begin", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.BeginRegistration)
+		protected.POST("/passkey/register/finish", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.FinishRegistration)
+		protected.GET("/passkeys", middleware.AuthorizePermission(rbacService, "settings", "read"), webauthnHandler.ListCredentials)
+		protected.PUT("/passkeys/:id", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.RenameCredential)
+		protected.DELETE("/passkeys/:id", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.DeleteCredential)
+
+		// Activity log routes (require log:read)
+		protected.GET("/activity-logs", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetUserActivityLogs)
+		protected.GET("/activity-logs/event-types", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetEventTypes)
+		protected.GET("/activity-logs/:id", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetActivityLogByID)
+
+		// Session management routes
+		protected.GET("/sessions", sessionHandler.ListSessions)
+		protected.DELETE("/sessions/:id", sessionHandler.RevokeSession)
+		protected.DELETE("/sessions", sessionHandler.RevokeAllSessions)
 	}
 
 	// Admin routes (protected by Admin API Key)
@@ -238,6 +309,20 @@ func main() {
 		adminRoutes.PUT("/email-types/:id", adminHandler.UpdateEmailType)
 		adminRoutes.DELETE("/email-types/:id", adminHandler.DeleteEmailType)
 		adminRoutes.POST("/apps/:id/send-email", adminHandler.SendCustomEmail)
+
+		// RBAC Management
+		adminRoutes.GET("/rbac/roles", rbacHandler.ListRoles)
+		adminRoutes.GET("/rbac/roles/:id", rbacHandler.GetRole)
+		adminRoutes.POST("/rbac/roles", rbacHandler.CreateRole)
+		adminRoutes.PUT("/rbac/roles/:id", rbacHandler.UpdateRole)
+		adminRoutes.DELETE("/rbac/roles/:id", rbacHandler.DeleteRole)
+		adminRoutes.PUT("/rbac/roles/:id/permissions", rbacHandler.SetRolePermissions)
+		adminRoutes.GET("/rbac/permissions", rbacHandler.ListPermissions)
+		adminRoutes.POST("/rbac/permissions", rbacHandler.CreatePermission)
+		adminRoutes.GET("/rbac/user-roles", rbacHandler.ListUserRoles)
+		adminRoutes.POST("/rbac/user-roles", rbacHandler.AssignRole)
+		adminRoutes.DELETE("/rbac/user-roles", rbacHandler.RevokeRole)
+		adminRoutes.GET("/rbac/user-roles/user", rbacHandler.GetUserRoles)
 	}
 
 	// App API routes (protected by per-application API key)
@@ -267,6 +352,14 @@ func main() {
 		// Login page and form submission (no auth required)
 		gui.GET("/login", guiHandler.LoginPage)
 		gui.POST("/login", middleware.LoginRateLimitMiddleware(), guiHandler.LoginSubmit)
+
+		// Passkey login (passwordless via discoverable credentials, no auth required)
+		gui.POST("/passkey-login/begin", middleware.GUIPasskeyLoginRateLimit(), guiHandler.PasskeyLoginBegin)
+		gui.POST("/passkey-login/finish", middleware.GUIPasskeyLoginRateLimit(), guiHandler.PasskeyLoginFinish)
+
+		// Magic link login (passwordless via email link, no auth required)
+		gui.POST("/magic-link-login", middleware.GUIMagicLinkRateLimit(), guiHandler.MagicLinkLoginRequest)
+		gui.GET("/magic-link-login/verify", guiHandler.MagicLinkLoginVerify)
 
 		// 2FA verification during login (no auth required — uses temp token)
 		gui.GET("/2fa-verify", guiHandler.TwoFAVerifyPage)
@@ -322,6 +415,10 @@ func main() {
 			guiAuth.GET("/users/list", guiHandler.UserList)
 			guiAuth.GET("/users/:id", guiHandler.UserDetail)
 			guiAuth.PUT("/users/:id/toggle", guiHandler.UserToggleActive)
+			guiAuth.GET("/users/social-accounts/:id/unlink", guiHandler.SocialAccountUnlinkConfirm)
+			guiAuth.DELETE("/users/social-accounts/:id", guiHandler.SocialAccountUnlink)
+			guiAuth.GET("/users/passkeys/:id/delete", guiHandler.PasskeyDeleteConfirm)
+			guiAuth.DELETE("/users/passkeys/:id", guiHandler.PasskeyDelete)
 
 			// Activity logs viewer
 			guiAuth.GET("/logs", guiHandler.LogsPage)
@@ -383,6 +480,45 @@ func main() {
 			guiAuth.GET("/email-types/:id/delete", guiHandler.EmailTypeDeleteConfirm)
 			guiAuth.DELETE("/email-types/:id", guiHandler.EmailTypeDelete)
 
+			// Roles management
+			guiAuth.GET("/roles", guiHandler.RolesPage)
+			guiAuth.GET("/roles/list", guiHandler.RoleList)
+			guiAuth.GET("/roles/new", guiHandler.RoleCreateForm)
+			guiAuth.POST("/roles", guiHandler.RoleCreate)
+			guiAuth.GET("/roles/form-cancel", guiHandler.RoleFormCancel)
+			guiAuth.GET("/roles/:id/edit", guiHandler.RoleEditForm)
+			guiAuth.PUT("/roles/:id", guiHandler.RoleUpdate)
+			guiAuth.GET("/roles/:id/delete", guiHandler.RoleDeleteConfirm)
+			guiAuth.DELETE("/roles/:id", guiHandler.RoleDelete)
+			guiAuth.GET("/roles/:id/permissions", guiHandler.RolePermissions)
+			guiAuth.PUT("/roles/:id/permissions", guiHandler.RolePermissionsUpdate)
+
+			// Permissions management
+			guiAuth.GET("/permissions", guiHandler.PermissionsPage)
+			guiAuth.GET("/permissions/list", guiHandler.PermissionList)
+			guiAuth.GET("/permissions/new", guiHandler.PermissionCreateForm)
+			guiAuth.POST("/permissions", guiHandler.PermissionCreate)
+			guiAuth.GET("/permissions/form-cancel", guiHandler.PermissionFormCancel)
+
+			// User roles management
+			guiAuth.GET("/user-roles", guiHandler.UserRolesPage)
+			guiAuth.GET("/user-roles/list", guiHandler.UserRoleList)
+			guiAuth.GET("/user-roles/new", guiHandler.UserRoleCreateForm)
+			guiAuth.POST("/user-roles", guiHandler.UserRoleCreate)
+			guiAuth.GET("/user-roles/roles-for-app", guiHandler.UserRoleRolesForApp)
+			guiAuth.GET("/user-roles/search-users", guiHandler.UserRoleSearchUsers)
+			guiAuth.GET("/user-roles/revoke", guiHandler.UserRoleRevokeConfirm)
+			guiAuth.DELETE("/user-roles", guiHandler.UserRoleRevoke)
+			guiAuth.GET("/user-roles/form-cancel", guiHandler.UserRoleFormCancel)
+
+			// Session management
+			guiAuth.GET("/sessions", guiHandler.SessionsPage)
+			guiAuth.GET("/sessions/list", guiHandler.SessionList)
+			guiAuth.GET("/sessions/:app_id/:session_id/detail", guiHandler.SessionDetail)
+			guiAuth.DELETE("/sessions/:app_id/:session_id", guiHandler.SessionRevoke)
+			guiAuth.DELETE("/sessions/revoke-all-user", guiHandler.SessionRevokeAllForUser)
+			guiAuth.GET("/users/:id/sessions", guiHandler.UserSessions)
+
 			// My Account & 2FA management
 			guiAuth.GET("/my-account", guiHandler.MyAccountPage)
 			guiAuth.POST("/my-account/email", guiHandler.MyAccountUpdateEmail)
@@ -393,6 +529,17 @@ func main() {
 			guiAuth.POST("/my-account/2fa/disable", guiHandler.MyAccount2FADisable)
 			guiAuth.GET("/my-account/2fa/status", guiHandler.MyAccount2FAStatus)
 			guiAuth.POST("/my-account/2fa/regenerate-codes", guiHandler.MyAccount2FARegenerateCodes)
+
+			// Passkey management (admin self-service)
+			guiAuth.GET("/my-account/passkeys/status", guiHandler.MyAccountPasskeyStatus)
+			guiAuth.POST("/my-account/passkeys/register/begin", guiHandler.MyAccountPasskeyBeginRegister)
+			guiAuth.POST("/my-account/passkeys/register/finish", guiHandler.MyAccountPasskeyFinishRegister)
+			guiAuth.DELETE("/my-account/passkeys/:id", guiHandler.MyAccountPasskeyDelete)
+			guiAuth.POST("/my-account/passkeys/:id/rename", guiHandler.MyAccountPasskeyRename)
+
+			// Magic link management (admin self-service)
+			guiAuth.GET("/my-account/magic-link/status", guiHandler.MyAccountMagicLinkStatus)
+			guiAuth.POST("/my-account/magic-link/toggle", guiHandler.MyAccountMagicLinkToggle)
 		}
 	}
 

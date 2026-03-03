@@ -1,0 +1,47 @@
+{{define "role_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .ID}}
+            <i class="bi bi-pencil me-2"></i>Edit Role
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Create Role
+            {{end}}
+        </h6>
+        <form {{if .ID}}
+                hx-put="/gui/roles/{{.ID}}"
+              {{else}}
+                hx-post="/gui/roles"
+              {{end}}
+              hx-target="#role-form-container"
+              hx-swap="innerHTML">
+            {{if not .ID}}
+            <input type="hidden" name="app_id" value="{{.AppID}}">
+            {{end}}
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label for="roleName" class="form-label small text-muted">Role Name</label>
+                    <input type="text" class="form-control" id="roleName" name="name"
+                           value="{{.Name}}" placeholder="e.g. editor" required autofocus>
+                </div>
+                <div class="col-md-4">
+                    <label for="roleDescription" class="form-label small text-muted">Description</label>
+                    <input type="text" class="form-control" id="roleDescription" name="description"
+                           value="{{.Description}}" placeholder="Brief description">
+                </div>
+                <div class="col-md-4 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>{{if .ID}}Update{{else}}Create{{end}}
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary"
+                            hx-get="/gui/roles/form-cancel"
+                            hx-target="#role-form-container"
+                            hx-swap="innerHTML">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

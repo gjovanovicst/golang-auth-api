@@ -34,7 +34,7 @@ func NewAccountService(repo *AccountRepository, emailService *emailpkg.Service) 
 // Authenticate validates admin credentials and updates the last login timestamp.
 // Returns the admin account on success, or an error on failure.
 func (s *AccountService) Authenticate(username, password string) (*models.AdminAccount, error) {
-	account, err := s.Repo.GetByUsername(username)
+	account, err := s.Repo.GetByUsernameOrEmail(username)
 	if err != nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}

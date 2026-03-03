@@ -10,7 +10,145 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Changes planned for the upcoming `1.0.0` official release._
+_Future enhancements planned for the `1.0.0` official release._
+
+### Planned — Security Enhancements
+
+#### IP-Based Anomaly Detection Improvements
+`internal/log/anomaly.go` exists but could be expanded:
+- Login from new device/location notifications
+- Suspicious activity alerts via email
+- Geo-IP based blocking/allowlisting per application
+
+#### Brute-Force Protection Enhancements
+Rate limiting exists, but could be enhanced with:
+- Progressive delays (exponential backoff)
+- CAPTCHA integration triggers after N failed attempts
+- Account lockout with admin unlock via GUI
+
+#### Audit Log Export
+Activity logs are viewable but not exportable:
+- CSV/JSON export endpoints for compliance
+
+#### API Key Scoping & Expiry Notifications
+API keys exist but could be enhanced with:
+- Granular permission scopes per key
+- Email notifications before key expiration
+- Usage analytics per key
+
+### Planned — Developer Experience
+
+#### Webhook System
+Allow applications to register webhook URLs for events:
+- `user.registered`, `user.verified`, `user.login`, `user.password_changed`
+- `2fa.enabled`, `2fa.disabled`
+- `social.linked`, `social.unlinked`
+
+#### OpenID Connect (OIDC) Provider
+Extend beyond being just an auth API — become a proper OIDC provider:
+- `/.well-known/openid-configuration`
+- `/userinfo` endpoint
+- ID tokens with standard OIDC claims
+
+#### Multi-Factor Recovery Improvements
+- Allow backup email for recovery
+- SMS-based recovery (even if not primary 2FA)
+- Trusted device management ("remember this device for 30 days")
+
+### Planned — Operational / Admin Features
+
+#### User Import/Export
+Admin bulk operations:
+- CSV/JSON import of users
+- Export user lists for compliance (GDPR data portability)
+
+#### Application-Level Customization
+- Custom login page branding per app (logo, colors)
+- Configurable password policies per app (min length, complexity, history)
+- Configurable token TTLs per application (currently global)
+
+#### Health Check & Metrics Endpoint
+- `GET /health` — Database, Redis, SMTP connectivity checks
+- `GET /metrics` — Prometheus-compatible metrics (login counts, error rates, latency)
+
+---
+
+## [1.0.0-alpha.5] - 2026-03-03
+
+### Added
+
+#### WebAuthn / Passkeys
+- **Full FIDO2/WebAuthn passkey support** — Registration, two-factor authentication, and passwordless login
+- New endpoints: `POST /passkey/register/begin|finish`, `GET /passkeys`, `PUT /passkeys`, `DELETE /passkeys`, `POST /2fa/passkey/begin|finish`, `POST /passkey/login/begin|finish`
+- New model: `WebauthnCredential` (`pkg/models/webauthn_credential.go`)
+- New DTOs: `pkg/dto/webauthn.go` (passkey list, rename, delete, registration/login options)
+- New configuration: `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `WEBAUTHN_RP_ORIGINS` environment variables
+- New domain package: `internal/webauthn/` (handler, service, repository, config)
+
+#### Role-Based Access Control (RBAC)
+- **Per-application roles, permissions, and user-role assignments** via admin API
+- Admin endpoints: `POST/GET /admin/rbac/roles`, `PUT/DELETE /admin/rbac/roles/:id`, `POST/GET /admin/rbac/permissions`, `PUT/DELETE /admin/rbac/permissions/:id`, `POST/GET/DELETE /admin/rbac/user-roles`
+- Default system roles seeded on migration: `admin` and `member`
+- JWT tokens now include `roles` claim (array of role names per application)
+- New models: `Role`, `Permission`, `UserRole` (`pkg/models/role.go`)
+- New DTOs: `pkg/dto/rbac.go`
+- New domain package: `internal/rbac/` (handler, service, repository)
+- SQL migrations: `20260301_add_rbac.sql`, `20260301_seed_rbac_defaults.sql`, `20260302_backfill_member_role.sql`
+
+#### Session Management
+- **List and revoke active sessions** for authenticated users
+- New endpoints: `GET /sessions` (list active sessions), `DELETE /sessions/:id` (revoke one), `DELETE /sessions` (revoke all)
+- New DTOs: `pkg/dto/session.go`
+- New domain package: `internal/session/` (handler, service)
+
+#### Magic Link Login
+- **Passwordless login via email magic link** for both users and admin accounts
+- New endpoints: `POST /magic-link/request`, `POST /magic-link/verify`
+- Per-application setting: `magic_link_enabled` (opt-in via Admin API)
+- Admin GUI magic link login support
+- New environment variable: `ADMIN_URL` (base URL for magic link emails)
+- SQL migrations: `20260303_add_admin_magic_link.sql`, `20260303_add_magic_link_settings.sql`, `20260303_seed_magic_link_email_type.sql`
+
+#### Social Account Linking
+- **Link and unlink social accounts** to/from existing authenticated users
+- New endpoints: `GET /profile/social-accounts`, `DELETE /profile/social-accounts`, `/auth/{provider}/link`, `/auth/{provider}/link/callback` (for Google, Facebook, GitHub)
+- Admin GUI social account unlink support on My Account page
+
+#### Resend Email Verification
+- New endpoint: `POST /resend-verification` — Resend the email verification link for unverified users
+
+#### Admin GUI Expansion
+- **New admin pages**: Roles, Permissions, User Roles, Sessions, My Account
+- **My Account page**: Passkey management (register/rename/delete), magic link toggle, 2FA settings, social account unlinking
+- **Login page enhancements**: Passkey login option, magic link login option (in addition to password)
+- **HTMX sidebar navigation**: Improved admin GUI layout with HTMX-powered sidebar and page containers
+
+#### Admin Email Login
+- Admin accounts now support an `email` field and login by email (in addition to username)
+
+### Changed
+
+#### Auth Middleware Hardening
+- Auth middleware now validates session existence in Redis on **every authenticated request**
+- Revoked or expired sessions are immediately rejected even if the JWT token is still valid
+- Improves security by ensuring session revocation takes effect instantly
+
+#### Application Model
+- New feature flag fields on `applications` table: `passkey_2fa_enabled`, `passkey_login_enabled`, `magic_link_enabled`, `email_2fa_enabled`, `two_fa_methods`
+- All fields managed by GORM AutoMigrate (no manual SQL migration needed)
+
+#### Admin Account Model
+- New fields: `email`, `two_fa_enabled`, `two_fa_method`, `two_fa_secret`, `two_fa_recovery_codes`, `magic_link_enabled`
+
+#### JWT Claims
+- JWT access tokens now include a `roles` array claim containing the user's role names for the current application
+
+#### New Activity Log Event Types
+- Passkey events: `PASSKEY_REGISTER`, `PASSKEY_DELETE`, `PASSKEY_LOGIN`
+- Magic link events: `MAGIC_LINK_REQUESTED`, `MAGIC_LINK_LOGIN`, `MAGIC_LINK_FAILED`
+- Email events: `EMAIL_VERIFY_RESEND`
+- Social linking events: `SOCIAL_ACCOUNT_LINKED`, `SOCIAL_ACCOUNT_UNLINKED`
+- All new events default to **Informational** severity with standard retention policies
 
 ## [1.0.0-alpha.4] - 2026-02-21
 

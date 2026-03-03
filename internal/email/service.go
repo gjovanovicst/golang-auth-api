@@ -128,6 +128,15 @@ func (s *Service) SendPasswordChangedEmail(appID uuid.UUID, toEmail, changeTime 
 	})
 }
 
+// SendMagicLinkEmail sends a magic link login email.
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendMagicLinkEmail(appID uuid.UUID, toEmail, magicLink string, userID *uuid.UUID) error {
+	return s.SendEmailWithContext(appID, TypeMagicLink, toEmail, userID, map[string]string{
+		VarMagicLink:         magicLink,
+		VarExpirationMinutes: "10",
+	})
+}
+
 // SendAdmin2FACodeEmail sends a 2FA verification code to an admin's email address.
 // This bypasses the app-scoped template/SMTP resolution and uses the global SMTP config
 // with a simple hardcoded template, since admin accounts are not scoped to any application.
@@ -158,6 +167,55 @@ func (s *Service) SendAdmin2FACodeEmail(toEmail, code, adminUsername string) err
 		globalConfig, err := s.repo.GetGlobalServerConfig()
 		if err != nil {
 			log.Printf("Warning: failed to look up global SMTP config for admin 2FA email: %v", err)
+		}
+		if globalConfig != nil && globalConfig.IsActive {
+			smtpConfig = SMTPConfig{
+				Host:        globalConfig.SMTPHost,
+				Port:        globalConfig.SMTPPort,
+				Username:    globalConfig.SMTPUsername,
+				Password:    globalConfig.SMTPPassword,
+				FromAddress: globalConfig.FromAddress,
+				FromName:    globalConfig.FromName,
+				UseTLS:      globalConfig.UseTLS,
+			}
+		}
+	}
+
+	return s.sender.Send(smtpConfig, toEmail, subject, htmlBody, textBody)
+}
+
+// SendAdminMagicLinkEmail sends a magic link login email to an admin's email address.
+// This bypasses the app-scoped template/SMTP resolution and uses the global SMTP config
+// with a simple hardcoded template, since admin accounts are not scoped to any application.
+// Resolution chain: global DB config -> dev mode (log to stdout).
+func (s *Service) SendAdminMagicLinkEmail(toEmail, magicLink, adminUsername string) error {
+	subject := "Auth API Admin - Magic Link Login"
+	htmlBody := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8f9fa; padding: 40px 20px;">
+  <div style="max-width: 480px; margin: 0 auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 32px;">
+    <h2 style="margin: 0 0 8px; color: #212529;">Magic Link Login</h2>
+    <p style="color: #6c757d; margin: 0 0 24px;">Hi <strong>%s</strong>, click the button below to sign in to the Auth API Admin Panel.</p>
+    <div style="text-align: center; margin-bottom: 24px;">
+      <a href="%s" style="display: inline-block; background: #0d6efd; color: #fff; text-decoration: none; padding: 12px 32px; border-radius: 6px; font-weight: 600; font-size: 16px;">Sign In</a>
+    </div>
+    <p style="color: #6c757d; font-size: 14px; margin: 0 0 8px;">Or copy and paste this link into your browser:</p>
+    <p style="color: #0d6efd; font-size: 13px; word-break: break-all; margin: 0 0 24px;">%s</p>
+    <p style="color: #6c757d; font-size: 14px; margin: 0;">This link expires in <strong>10 minutes</strong>. If you didn't request this, please ignore this email.</p>
+  </div>
+</body>
+</html>`, adminUsername, magicLink, magicLink)
+
+	textBody := fmt.Sprintf("Hi %s,\n\nClick the link below to sign in to the Auth API Admin Panel:\n\n%s\n\nThis link expires in 10 minutes.\n\nIf you didn't request this, please ignore this email.", adminUsername, magicLink)
+
+	// Use the global SMTP config (admin is not scoped to any app)
+	var smtpConfig SMTPConfig
+	if s.repo != nil {
+		globalConfig, err := s.repo.GetGlobalServerConfig()
+		if err != nil {
+			log.Printf("Warning: failed to look up global SMTP config for admin magic link email: %v", err)
 		}
 		if globalConfig != nil && globalConfig.IsActive {
 			smtpConfig = SMTPConfig{

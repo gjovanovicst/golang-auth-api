@@ -1,10 +1,10 @@
+<p align="center">
+  <img src="banner.png" alt="Auth API - Production-Ready Authentication & Authorization" width="100%" />
+</p>
+
 <div align="center">
 
-# Authentication API
-
-### Production-Ready Go REST API for Authentication
-
-A complete authentication and authorization system with multi-tenancy, social login, two-factor authentication, email verification, JWT tokens, admin GUI, and activity logging.
+A complete authentication and authorization system with multi-tenancy, social login, WebAuthn/passkeys, magic link login, role-based access control, two-factor authentication, session management, email verification, JWT tokens, admin GUI, and activity logging.
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -20,12 +20,16 @@ A complete authentication and authorization system with multi-tenancy, social lo
 ## Features
 
 - **Multi-Tenancy** -- Serve multiple organizations and applications from a single deployment with complete data isolation
-- **Authentication** -- Registration, login, JWT access/refresh tokens, token blacklisting, password reset, email verification
-- **Two-Factor Authentication** -- TOTP with authenticator apps and recovery codes
-- **Social Login** -- Google, Facebook, and GitHub OAuth2
-- **Admin GUI** -- Built-in web panel for managing tenants, apps, users, OAuth configs, API keys, and settings
+- **Authentication** -- Registration, login, JWT access/refresh tokens, token blacklisting, password reset, email verification, resend verification
+- **WebAuthn/Passkeys** -- FIDO2 passkey registration, passkey as 2FA method, and fully passwordless login via discoverable credentials
+- **Magic Link Login** -- Passwordless authentication via email magic links for both users and admin accounts
+- **Two-Factor Authentication** -- TOTP with authenticator apps, email-based 2FA, passkey-based 2FA, and recovery codes
+- **Social Login** -- Google, Facebook, and GitHub OAuth2 with account linking and unlinking
+- **Role-Based Access Control** -- Per-application roles and permissions with admin management and self-healing default role assignment
+- **Session Management** -- List active sessions across devices, revoke individual sessions, and revoke all other sessions
+- **Admin GUI** -- Built-in web panel for managing tenants, apps, users, OAuth configs, API keys, roles, permissions, sessions, and settings
 - **Activity Logging** -- Smart event categorization, anomaly detection, and automatic retention cleanup
-- **Security Hardening** -- Rate limiting, security headers, timing-safe CSRF, JWT token type enforcement
+- **Security Hardening** -- Rate limiting, security headers, timing-safe CSRF, JWT token type enforcement, Redis session validation
 - **API Documentation** -- Interactive Swagger UI
 
 ---
@@ -93,6 +97,7 @@ For early fork users upgrading from before multi-tenancy was added, see the [Pre
 | Database | PostgreSQL 13+ with [GORM](https://gorm.io/) |
 | Cache/Sessions | Redis 6+ with [go-redis](https://github.com/redis/go-redis) |
 | Authentication | JWT ([golang-jwt](https://github.com/golang-jwt/jwt)), OAuth2 |
+| WebAuthn | [go-webauthn](https://github.com/go-webauthn/webauthn) |
 | 2FA | TOTP ([pquerna/otp](https://github.com/pquerna/otp)) |
 | API Docs | [Swagger/Swaggo](https://github.com/swaggo/swag) |
 | Admin GUI | Go Templates, HTMX, Bootstrap 5 |

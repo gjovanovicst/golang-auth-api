@@ -97,14 +97,14 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
-	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password)
+	// Get client info for logging and session tracking
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password, ipAddress, userAgent)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
-
-	// Get client info for logging
-	ipAddress, userAgent := util.GetClientInfo(c)
 
 	// Check if 2FA is required
 	if loginResult.RequiresTwoFA {
@@ -304,6 +304,45 @@ func (h *Handler) VerifyEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Email verified successfully!"})
 }
 
+// @Summary Resend email verification
+// @Description Resend verification email to user. Returns a generic success message regardless of whether the email exists or is already verified (to prevent email enumeration).
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param   request  body      dto.ResendVerificationRequest  true  "Email address"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /resend-verification [post]
+func (h *Handler) ResendVerification(c *gin.Context) {
+	var req dto.ResendVerificationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.ResendVerificationEmail(appID, req.Email); err != nil {
+		c.JSON(err.Code, gin.H{"error": err.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "If an account with that email exists and is not yet verified, a verification email has been sent."})
+}
+
 // @Summary Get user profile
 // @Description Retrieve authenticated user's profile information
 // @Tags User
@@ -353,6 +392,14 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		}
 	}
 
+	// Get user roles from context (set by AuthMiddleware from JWT claims)
+	var userRoles []string
+	if rolesVal, rolesExist := c.Get("roles"); rolesExist {
+		if r, ok := rolesVal.([]string); ok {
+			userRoles = r
+		}
+	}
+
 	// Return user profile without sensitive information
 	c.JSON(http.StatusOK, dto.UserResponse{
 		ID:             user.ID.String(),
@@ -364,6 +411,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		ProfilePicture: user.ProfilePicture,
 		Locale:         user.Locale,
 		TwoFAEnabled:   user.TwoFAEnabled,
+		Roles:          userRoles,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		SocialAccounts: socialAccounts,
@@ -409,7 +457,13 @@ func (h *Handler) Logout(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
-	if err := h.Service.LogoutUser(appID.String(), userID.(string), req.RefreshToken, req.AccessToken); err != nil {
+	// Get session ID from context (set by AuthMiddleware from JWT claims)
+	sessionID := ""
+	if sid, exists := c.Get("sessionID"); exists {
+		sessionID = sid.(string)
+	}
+
+	if err := h.Service.LogoutUser(appID.String(), userID.(string), sessionID, req.RefreshToken, req.AccessToken); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
@@ -532,6 +586,14 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		}
 	}
 
+	// Get user roles from context (set by AuthMiddleware from JWT claims)
+	var profileRoles []string
+	if rolesVal, rolesExist := c.Get("roles"); rolesExist {
+		if r, ok := rolesVal.([]string); ok {
+			profileRoles = r
+		}
+	}
+
 	c.JSON(http.StatusOK, dto.UserResponse{
 		ID:             user.ID.String(),
 		Email:          user.Email,
@@ -542,6 +604,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		ProfilePicture: user.ProfilePicture,
 		Locale:         user.Locale,
 		TwoFAEnabled:   user.TwoFAEnabled,
+		Roles:          profileRoles,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		SocialAccounts: socialAccounts,
@@ -710,4 +773,100 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Account deleted successfully. We're sorry to see you go."})
+}
+
+// @Summary Request a magic link login email
+// @Description Send a magic link to the user's email for passwordless authentication. Always returns 200 regardless of whether the email exists (to prevent enumeration).
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param   request  body      dto.MagicLinkRequest  true  "Magic Link Request Data"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /magic-link/request [post]
+func (h *Handler) RequestMagicLink(c *gin.Context) {
+	var req dto.MagicLinkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.RequestMagicLink(appID, req.Email); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Log activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogMagicLinkRequested(appID, ipAddress, userAgent)
+
+	// Always return success to prevent email enumeration
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "If an account exists with that email, a magic link has been sent."})
+}
+
+// @Summary Verify a magic link token and log in
+// @Description Verify the magic link token from the email and return access/refresh tokens. The token is single-use and expires after 10 minutes.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param   request  body      dto.MagicLinkVerifyRequest  true  "Magic Link Verification Data"
+// @Success 200 {object}  dto.LoginResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse
+// @Failure 403 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /magic-link/verify [post]
+func (h *Handler) VerifyMagicLink(c *gin.Context) {
+	var req dto.MagicLinkVerifyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	result, err := h.Service.VerifyMagicLink(appID, req.Token, ipAddress, userAgent)
+	if err != nil {
+		// Log failed attempt
+		log.LogMagicLinkFailed(appID, ipAddress, userAgent, err.Message)
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Log successful magic link login
+	log.LogMagicLinkLogin(appID, result.UserID, ipAddress, userAgent)
+
+	c.JSON(http.StatusOK, dto.LoginResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+	})
 }

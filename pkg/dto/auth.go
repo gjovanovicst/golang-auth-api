@@ -28,6 +28,11 @@ type ForgotPasswordRequest struct {
 	Email string `json:"email" validate:"required,email"`
 }
 
+// ResendVerificationRequest represents the request payload for resending email verification
+type ResendVerificationRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
 // ResetPasswordRequest represents the request payload for password reset
 type ResetPasswordRequest struct {
 	Token       string `json:"token" validate:"required"` // #nosec G101 -- This is a DTO field, not a hardcoded credential
@@ -112,6 +117,7 @@ type UserResponse struct {
 	Locale         string                  `json:"locale,omitempty"`
 	TwoFAEnabled   bool                    `json:"two_fa_enabled"`
 	TwoFAMethod    string                  `json:"two_fa_method,omitempty"` // "totp" or "email"
+	Roles          []string                `json:"roles,omitempty"`
 	CreatedAt      string                  `json:"created_at"`
 	UpdatedAt      string                  `json:"updated_at"`
 	SocialAccounts []SocialAccountResponse `json:"social_accounts,omitempty"`
@@ -152,4 +158,30 @@ type UpdatePasswordRequest struct {
 type DeleteAccountRequest struct {
 	Password        string `json:"password" validate:"required,max=128" example:"password123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
 	ConfirmDeletion bool   `json:"confirm_deletion" validate:"required,eq=true" example:"true"`
+}
+
+// SocialAccountListResponse represents the response for listing linked social accounts
+type SocialAccountListResponse struct {
+	SocialAccounts []SocialAccountResponse `json:"social_accounts"`
+}
+
+// LinkSocialAccountResponse represents the response when a social account is linked
+type LinkSocialAccountResponse struct {
+	Message string                `json:"message"`
+	Account SocialAccountResponse `json:"account"`
+}
+
+// UnlinkSocialAccountResponse represents the response when a social account is unlinked
+type UnlinkSocialAccountResponse struct {
+	Message string `json:"message"`
+}
+
+// MagicLinkRequest represents the request payload for requesting a magic link login email
+type MagicLinkRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// MagicLinkVerifyRequest represents the request payload for verifying a magic link token
+type MagicLinkVerifyRequest struct {
+	Token string `json:"token" validate:"required"` // #nosec G101 -- This is a DTO field, not a hardcoded credential
 }

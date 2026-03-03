@@ -12,6 +12,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/util"
+	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -206,7 +207,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleGoogleCallback(appID, token.AccessToken)
+	userID, appErr := h.Service.HandleGoogleCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -235,14 +236,23 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 			c.Redirect(http.StatusFound, frontendURL)
 			return
 		}
-		// Redirect with 2FA requirement
+		// Redirect with 2FA requirement — NO session created yet
 		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=google", redirectURI, tempToken)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
-	// Log social login activity
+	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	if sessionErr != nil {
+		errorMsg := url.QueryEscape(sessionErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log social login activity
 	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "google")
 
 	// Redirect to frontend with tokens in URL parameters
@@ -374,7 +384,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleFacebookCallback(appID, token.AccessToken)
+	userID, appErr := h.Service.HandleFacebookCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -403,14 +413,23 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 			c.Redirect(http.StatusFound, frontendURL)
 			return
 		}
-		// Redirect with 2FA requirement
+		// Redirect with 2FA requirement — NO session created yet
 		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=facebook", redirectURI, tempToken)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
-	// Log social login activity
+	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	if sessionErr != nil {
+		errorMsg := url.QueryEscape(sessionErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log social login activity
 	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "facebook")
 
 	// Redirect to frontend with tokens in URL parameters
@@ -542,7 +561,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, userID, appErr := h.Service.HandleGithubCallback(appID, token.AccessToken)
+	userID, appErr := h.Service.HandleGithubCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -571,14 +590,23 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 			c.Redirect(http.StatusFound, frontendURL)
 			return
 		}
-		// Redirect with 2FA requirement
+		// Redirect with 2FA requirement — NO session created yet
 		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=github", redirectURI, tempToken)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
-	// Log social login activity
+	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	if sessionErr != nil {
+		errorMsg := url.QueryEscape(sessionErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log social login activity
 	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "github")
 
 	// Redirect to frontend with tokens in URL parameters
@@ -588,4 +616,506 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		url.QueryEscape(refreshToken))
 
 	c.Redirect(http.StatusFound, frontendURL)
+}
+
+// ListSocialAccounts godoc
+// @Summary      List linked social accounts
+// @Description  Returns all social accounts linked to the authenticated user
+// @Tags         social
+// @Produce      json
+// @Security     ApiKeyAuth
+// @Success      200 {object} dto.SocialAccountListResponse
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /profile/social-accounts [get]
+func (h *Handler) ListSocialAccounts(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in context"})
+		return
+	}
+
+	accounts, appErr := h.Service.GetLinkedAccounts(userID.(string))
+	if appErr != nil {
+		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
+		return
+	}
+
+	socialAccounts := make([]dto.SocialAccountResponse, len(accounts))
+	for i, sa := range accounts {
+		socialAccounts[i] = dto.SocialAccountResponse{
+			ID:             sa.ID.String(),
+			Provider:       sa.Provider,
+			ProviderUserID: sa.ProviderUserID,
+			Email:          sa.Email,
+			Name:           sa.Name,
+			FirstName:      sa.FirstName,
+			LastName:       sa.LastName,
+			ProfilePicture: sa.ProfilePicture,
+			Username:       sa.Username,
+			Locale:         sa.Locale,
+			CreatedAt:      sa.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:      sa.UpdatedAt.Format(time.RFC3339),
+		}
+	}
+
+	c.JSON(http.StatusOK, dto.SocialAccountListResponse{
+		SocialAccounts: socialAccounts,
+	})
+}
+
+// UnlinkSocialAccount godoc
+// @Summary      Unlink a social account
+// @Description  Removes a linked social account from the authenticated user's profile
+// @Tags         social
+// @Produce      json
+// @Security     ApiKeyAuth
+// @Param        id path string true "Social account ID"
+// @Success      200 {object} dto.UnlinkSocialAccountResponse
+// @Failure      400 {object} dto.ErrorResponse
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      404 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /profile/social-accounts/{id} [delete]
+func (h *Handler) UnlinkSocialAccount(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User ID not found in context"})
+		return
+	}
+
+	appIDVal, appIDExists := c.Get("app_id")
+	if !appIDExists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	socialAccountID := c.Param("id")
+	if socialAccountID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Social account ID is required"})
+		return
+	}
+
+	if appErr := h.Service.UnlinkSocialAccount(appID.String(), userID.(string), socialAccountID); appErr != nil {
+		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
+		return
+	}
+
+	// Log the unlink activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	parsedUserID, _ := uuid.Parse(userID.(string))
+	log.LogSocialAccountUnlinked(appID, parsedUserID, ipAddress, userAgent, socialAccountID)
+
+	c.JSON(http.StatusOK, dto.UnlinkSocialAccountResponse{
+		Message: "Social account unlinked successfully",
+	})
+}
+
+// GoogleLink godoc
+// @Summary      Link Google account
+// @Description  Initiates OAuth flow to link a Google account to the authenticated user
+// @Tags         social
+// @Produce      json
+// @Security     ApiKeyAuth
+// @Param        redirect_uri query string false "Frontend callback URL"
+// @Success      307 {string} string "Redirect"
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /auth/google/link [get]
+func (h *Handler) GoogleLink(c *gin.Context) {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, userExists := c.Get("userID")
+	if !userExists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	googleConfig, err := h.getGoogleConfig(appID.String())
+	if err != nil {
+		stdlog.Printf("Failed to get Google OAuth config for app %s: %v", appID.String(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "OAuth configuration error"})
+		return
+	}
+
+	redirectURI := c.Query("redirect_uri")
+	if redirectURI == "" {
+		redirectURI = GetDefaultRedirectURI()
+	}
+
+	state, err := CreateOAuthLinkState(redirectURI, appID.String(), userID.(string))
+	if err != nil {
+		stdlog.Printf("Invalid OAuth redirect URI for Google link: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid redirect URI"})
+		return
+	}
+
+	oauthURL := googleConfig.AuthCodeURL(state)
+	c.Redirect(http.StatusTemporaryRedirect, oauthURL)
+}
+
+// GoogleLinkCallback godoc
+// @Summary      Google link callback
+// @Description  Handles callback from Google OAuth to link account to existing user
+// @Tags         social
+// @Produce      json
+// @Param        state query string true "State token"
+// @Param        code  query string true "Authorization code"
+// @Success      302 {string} string "Redirect with linked=true"
+// @Failure      302 {string} string "Redirect with error"
+// @Router       /auth/google/link/callback [get]
+func (h *Handler) GoogleLinkCallback(c *gin.Context) {
+	encodedState := c.Query("state")
+	if encodedState == "" {
+		frontendURL := fmt.Sprintf("%s?error=missing_state", GetDefaultRedirectURI())
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	state, err := ParseOAuthState(encodedState)
+	if err != nil {
+		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
+		frontendURL := fmt.Sprintf("%s?error=%s", GetDefaultRedirectURI(), errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	if state.Flow != "link" || state.UserID == "" {
+		frontendURL := fmt.Sprintf("%s?error=invalid_link_state", state.RedirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	code := c.Query("code")
+	if code == "" {
+		frontendURL := fmt.Sprintf("%s?error=authorization_code_missing", state.RedirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	redirectURI := state.RedirectURI
+
+	var appID uuid.UUID
+	if state.AppID != "" {
+		parsedAppID, err := uuid.Parse(state.AppID)
+		if err != nil {
+			frontendURL := fmt.Sprintf("%s?error=invalid_app_id_state", redirectURI)
+			c.Redirect(http.StatusFound, frontendURL)
+			return
+		}
+		appID = parsedAppID
+	} else {
+		frontendURL := fmt.Sprintf("%s?error=app_id_missing", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	googleConfig, err := h.getGoogleConfig(appID.String())
+	if err != nil {
+		frontendURL := fmt.Sprintf("%s?error=config_error", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	token, err := googleConfig.Exchange(context.Background(), code)
+	if err != nil {
+		errorMsg := url.QueryEscape(fmt.Sprintf("Could not retrieve token: %v", err))
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	_, appErr := h.Service.HandleGoogleLinkCallback(appID, state.UserID, token.AccessToken)
+	if appErr != nil {
+		errorMsg := url.QueryEscape(appErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log the link activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	parsedUserID, _ := uuid.Parse(state.UserID)
+	log.LogSocialAccountLinked(appID, parsedUserID, ipAddress, userAgent, "google")
+
+	successURL := fmt.Sprintf("%s?linked=true&provider=google", redirectURI)
+	c.Redirect(http.StatusFound, successURL)
+}
+
+// FacebookLink godoc
+// @Summary      Link Facebook account
+// @Description  Initiates OAuth flow to link a Facebook account to the authenticated user
+// @Tags         social
+// @Produce      json
+// @Security     ApiKeyAuth
+// @Param        redirect_uri query string false "Frontend callback URL"
+// @Success      307 {string} string "Redirect"
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /auth/facebook/link [get]
+func (h *Handler) FacebookLink(c *gin.Context) {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, userExists := c.Get("userID")
+	if !userExists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	facebookConfig, err := h.getFacebookConfig(appID.String())
+	if err != nil {
+		stdlog.Printf("Failed to get Facebook OAuth config for app %s: %v", appID.String(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "OAuth configuration error"})
+		return
+	}
+
+	redirectURI := c.Query("redirect_uri")
+	if redirectURI == "" {
+		redirectURI = GetDefaultRedirectURI()
+	}
+
+	state, err := CreateOAuthLinkState(redirectURI, appID.String(), userID.(string))
+	if err != nil {
+		stdlog.Printf("Invalid OAuth redirect URI for Facebook link: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid redirect URI"})
+		return
+	}
+
+	oauthURL := facebookConfig.AuthCodeURL(state)
+	c.Redirect(http.StatusTemporaryRedirect, oauthURL)
+}
+
+// FacebookLinkCallback godoc
+// @Summary      Facebook link callback
+// @Description  Handles callback from Facebook OAuth to link account to existing user
+// @Tags         social
+// @Produce      json
+// @Param        state query string true "State token"
+// @Param        code  query string true "Authorization code"
+// @Success      302 {string} string "Redirect with linked=true"
+// @Failure      302 {string} string "Redirect with error"
+// @Router       /auth/facebook/link/callback [get]
+func (h *Handler) FacebookLinkCallback(c *gin.Context) {
+	encodedState := c.Query("state")
+	if encodedState == "" {
+		frontendURL := fmt.Sprintf("%s?error=missing_state", GetDefaultRedirectURI())
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	state, err := ParseOAuthState(encodedState)
+	if err != nil {
+		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
+		frontendURL := fmt.Sprintf("%s?error=%s", GetDefaultRedirectURI(), errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	if state.Flow != "link" || state.UserID == "" {
+		frontendURL := fmt.Sprintf("%s?error=invalid_link_state", state.RedirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	code := c.Query("code")
+	if code == "" {
+		frontendURL := fmt.Sprintf("%s?error=authorization_code_missing", state.RedirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	redirectURI := state.RedirectURI
+
+	var appID uuid.UUID
+	if state.AppID != "" {
+		parsedAppID, err := uuid.Parse(state.AppID)
+		if err != nil {
+			frontendURL := fmt.Sprintf("%s?error=invalid_app_id_state", redirectURI)
+			c.Redirect(http.StatusFound, frontendURL)
+			return
+		}
+		appID = parsedAppID
+	} else {
+		frontendURL := fmt.Sprintf("%s?error=app_id_missing", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	facebookConfig, err := h.getFacebookConfig(appID.String())
+	if err != nil {
+		frontendURL := fmt.Sprintf("%s?error=config_error", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	token, err := facebookConfig.Exchange(context.Background(), code)
+	if err != nil {
+		errorMsg := url.QueryEscape(fmt.Sprintf("Could not retrieve token: %v", err))
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	_, appErr := h.Service.HandleFacebookLinkCallback(appID, state.UserID, token.AccessToken)
+	if appErr != nil {
+		errorMsg := url.QueryEscape(appErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log the link activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	parsedUserID, _ := uuid.Parse(state.UserID)
+	log.LogSocialAccountLinked(appID, parsedUserID, ipAddress, userAgent, "facebook")
+
+	successURL := fmt.Sprintf("%s?linked=true&provider=facebook", redirectURI)
+	c.Redirect(http.StatusFound, successURL)
+}
+
+// GithubLink godoc
+// @Summary      Link GitHub account
+// @Description  Initiates OAuth flow to link a GitHub account to the authenticated user
+// @Tags         social
+// @Produce      json
+// @Security     ApiKeyAuth
+// @Param        redirect_uri query string false "Frontend callback URL"
+// @Success      307 {string} string "Redirect"
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /auth/github/link [get]
+func (h *Handler) GithubLink(c *gin.Context) {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, userExists := c.Get("userID")
+	if !userExists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authentication required"})
+		return
+	}
+
+	githubConfig, err := h.getGithubConfig(appID.String())
+	if err != nil {
+		stdlog.Printf("Failed to get GitHub OAuth config for app %s: %v", appID.String(), err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "OAuth configuration error"})
+		return
+	}
+
+	redirectURI := c.Query("redirect_uri")
+	if redirectURI == "" {
+		redirectURI = GetDefaultRedirectURI()
+	}
+
+	state, err := CreateOAuthLinkState(redirectURI, appID.String(), userID.(string))
+	if err != nil {
+		stdlog.Printf("Invalid OAuth redirect URI for GitHub link: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid redirect URI"})
+		return
+	}
+
+	oauthURL := githubConfig.AuthCodeURL(state)
+	c.Redirect(http.StatusTemporaryRedirect, oauthURL)
+}
+
+// GithubLinkCallback godoc
+// @Summary      GitHub link callback
+// @Description  Handles callback from GitHub OAuth to link account to existing user
+// @Tags         social
+// @Produce      json
+// @Param        state query string true "State token"
+// @Param        code  query string true "Authorization code"
+// @Success      302 {string} string "Redirect with linked=true"
+// @Failure      302 {string} string "Redirect with error"
+// @Router       /auth/github/link/callback [get]
+func (h *Handler) GithubLinkCallback(c *gin.Context) {
+	encodedState := c.Query("state")
+	if encodedState == "" {
+		frontendURL := fmt.Sprintf("%s?error=missing_state", GetDefaultRedirectURI())
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	state, err := ParseOAuthState(encodedState)
+	if err != nil {
+		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
+		frontendURL := fmt.Sprintf("%s?error=%s", GetDefaultRedirectURI(), errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	if state.Flow != "link" || state.UserID == "" {
+		frontendURL := fmt.Sprintf("%s?error=invalid_link_state", state.RedirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	code := c.Query("code")
+	if code == "" {
+		frontendURL := fmt.Sprintf("%s?error=authorization_code_missing", state.RedirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	redirectURI := state.RedirectURI
+
+	var appID uuid.UUID
+	if state.AppID != "" {
+		parsedAppID, err := uuid.Parse(state.AppID)
+		if err != nil {
+			frontendURL := fmt.Sprintf("%s?error=invalid_app_id_state", redirectURI)
+			c.Redirect(http.StatusFound, frontendURL)
+			return
+		}
+		appID = parsedAppID
+	} else {
+		frontendURL := fmt.Sprintf("%s?error=app_id_missing", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	githubConfig, err := h.getGithubConfig(appID.String())
+	if err != nil {
+		frontendURL := fmt.Sprintf("%s?error=config_error", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	token, err := githubConfig.Exchange(context.Background(), code)
+	if err != nil {
+		errorMsg := url.QueryEscape(fmt.Sprintf("Could not retrieve token: %v", err))
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	_, appErr := h.Service.HandleGithubLinkCallback(appID, state.UserID, token.AccessToken)
+	if appErr != nil {
+		errorMsg := url.QueryEscape(appErr.Message)
+		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	// Log the link activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	parsedUserID, _ := uuid.Parse(state.UserID)
+	log.LogSocialAccountLinked(appID, parsedUserID, ipAddress, userAgent, "github")
+
+	successURL := fmt.Sprintf("%s?linked=true&provider=github", redirectURI)
+	c.Redirect(http.StatusFound, successURL)
 }

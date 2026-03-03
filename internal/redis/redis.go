@@ -71,10 +71,16 @@ func IsRefreshTokenRevoked(appID, userID, token string) (bool, error) {
 	return val != token, nil // If value doesn't match, it means a new token was issued, old one is implicitly revoked
 }
 
-// SetEmailVerificationToken stores an email verification token
+// SetEmailVerificationToken stores an email verification token and a reverse lookup key (userID → token).
+// The reverse lookup allows invalidating old tokens when a new one is issued.
 func SetEmailVerificationToken(appID, userID, token string, expiration time.Duration) error {
 	key := fmt.Sprintf("app:%s:email_verify:%s", appID, token)
-	return Rdb.Set(ctx, key, userID, expiration).Err()
+	if err := Rdb.Set(ctx, key, userID, expiration).Err(); err != nil {
+		return err
+	}
+	// Store reverse lookup: userID → token (so we can find and invalidate old tokens)
+	reverseKey := fmt.Sprintf("app:%s:email_verify_user:%s", appID, userID)
+	return Rdb.Set(ctx, reverseKey, token, expiration).Err()
 }
 
 // GetEmailVerificationToken retrieves an email verification token
@@ -83,9 +89,21 @@ func GetEmailVerificationToken(appID, token string) (string, error) {
 	return Rdb.Get(ctx, key).Result()
 }
 
-// DeleteEmailVerificationToken deletes an email verification token
+// GetEmailVerificationTokenByUserID retrieves the current verification token for a user (reverse lookup).
+func GetEmailVerificationTokenByUserID(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:email_verify_user:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteEmailVerificationToken deletes an email verification token and its reverse lookup key.
 func DeleteEmailVerificationToken(appID, token string) error {
 	key := fmt.Sprintf("app:%s:email_verify:%s", appID, token)
+	// Look up the userID so we can also clean up the reverse key
+	userID, err := Rdb.Get(ctx, key).Result()
+	if err == nil && userID != "" {
+		reverseKey := fmt.Sprintf("app:%s:email_verify_user:%s", appID, userID)
+		Rdb.Del(ctx, reverseKey) // Best-effort cleanup
+	}
 	return Rdb.Del(ctx, key).Err()
 }
 
@@ -104,6 +122,46 @@ func GetPasswordResetToken(appID, token string) (string, error) {
 // DeletePasswordResetToken deletes a password reset token
 func DeletePasswordResetToken(appID, token string) error {
 	key := fmt.Sprintf("app:%s:password_reset:%s", appID, token)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// Magic Link related functions
+
+// SetMagicLinkToken stores a magic link token and a reverse lookup key (userID → token).
+// The reverse lookup allows invalidating old tokens when a new one is issued.
+func SetMagicLinkToken(appID, userID, token string, expiration time.Duration) error {
+	// Invalidate any existing magic link token for this user (only one active at a time)
+	reverseKey := fmt.Sprintf("app:%s:magic_link_user:%s", appID, userID)
+	oldToken, err := Rdb.Get(ctx, reverseKey).Result()
+	if err == nil && oldToken != "" {
+		oldKey := fmt.Sprintf("app:%s:magic_link:%s", appID, oldToken)
+		Rdb.Del(ctx, oldKey) // Best-effort cleanup of old token
+	}
+
+	// Store token → userID mapping
+	key := fmt.Sprintf("app:%s:magic_link:%s", appID, token)
+	if err := Rdb.Set(ctx, key, userID, expiration).Err(); err != nil {
+		return err
+	}
+	// Store reverse lookup: userID → token
+	return Rdb.Set(ctx, reverseKey, token, expiration).Err()
+}
+
+// GetMagicLinkToken retrieves the userID associated with a magic link token
+func GetMagicLinkToken(appID, token string) (string, error) {
+	key := fmt.Sprintf("app:%s:magic_link:%s", appID, token)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteMagicLinkToken deletes a magic link token and its reverse lookup key (single-use).
+func DeleteMagicLinkToken(appID, token string) error {
+	key := fmt.Sprintf("app:%s:magic_link:%s", appID, token)
+	// Look up the userID so we can also clean up the reverse key
+	userID, err := Rdb.Get(ctx, key).Result()
+	if err == nil && userID != "" {
+		reverseKey := fmt.Sprintf("app:%s:magic_link_user:%s", appID, userID)
+		Rdb.Del(ctx, reverseKey) // Best-effort cleanup
+	}
 	return Rdb.Del(ctx, key).Err()
 }
 
@@ -181,6 +239,214 @@ func IsUserTokensBlacklisted(appID, userID string) (bool, error) {
 		return false, err // Redis error
 	}
 	return true, nil // All user tokens are blacklisted
+}
+
+// ==================== Session Management Functions ====================
+
+// CreateSession stores a new session as a Redis Hash with metadata.
+// Key pattern: app:{appID}:session:{sessionID}
+// Also adds the sessionID to the user's session index set.
+func CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent string, ttl time.Duration) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	fields := map[string]interface{}{
+		"user_id":       userID,
+		"refresh_token": refreshToken,
+		"ip":            ip,
+		"user_agent":    userAgent,
+		"created_at":    time.Now().UTC().Format(time.RFC3339),
+		"last_active":   time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := Rdb.HSet(ctx, key, fields).Err(); err != nil {
+		return err
+	}
+	if err := Rdb.Expire(ctx, key, ttl).Err(); err != nil {
+		return err
+	}
+	// Add to user session index
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	if err := Rdb.SAdd(ctx, indexKey, sessionID).Err(); err != nil {
+		return err
+	}
+	// Set a generous TTL on the index (longer than any single session) to prevent stale keys
+	Rdb.Expire(ctx, indexKey, ttl+24*time.Hour)
+
+	// Add to app-level session index (for admin dashboard enumeration)
+	appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+	Rdb.SAdd(ctx, appIndexKey, sessionID)
+	Rdb.Expire(ctx, appIndexKey, ttl+24*time.Hour)
+
+	return nil
+}
+
+// GetSession retrieves all fields of a session hash.
+func GetSession(appID, sessionID string) (map[string]string, error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	result, err := Rdb.HGetAll(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(result) == 0 {
+		return nil, redis.Nil
+	}
+	return result, nil
+}
+
+// GetSessionRefreshToken retrieves only the refresh_token field from a session.
+func GetSessionRefreshToken(appID, sessionID string) (string, error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HGet(ctx, key, "refresh_token").Result()
+}
+
+// UpdateSessionRefreshToken updates the refresh token stored in a session hash.
+func UpdateSessionRefreshToken(appID, sessionID, newRefreshToken string) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HSet(ctx, key, "refresh_token", newRefreshToken).Err()
+}
+
+// TouchSession updates the last_active timestamp of a session.
+func TouchSession(appID, sessionID string) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HSet(ctx, key, "last_active", time.Now().UTC().Format(time.RFC3339)).Err()
+}
+
+// DeleteSession removes a session hash and removes it from the user and app session indexes.
+func DeleteSession(appID, sessionID, userID string) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	if err := Rdb.Del(ctx, key).Err(); err != nil {
+		return err
+	}
+	// Remove from user session index
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	Rdb.SRem(ctx, indexKey, sessionID)
+	// Remove from app-level session index
+	appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+	Rdb.SRem(ctx, appIndexKey, sessionID)
+	return nil
+}
+
+// GetUserSessionIDs returns all session IDs for a user from the session index set.
+// It performs lazy cleanup: any session ID in the set that no longer exists in Redis is removed.
+func GetUserSessionIDs(appID, userID string) ([]string, error) {
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	sessionIDs, err := Rdb.SMembers(ctx, indexKey).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// Lazy cleanup: verify each session still exists
+	var validIDs []string
+	for _, sid := range sessionIDs {
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		exists, err := Rdb.Exists(ctx, sessionKey).Result()
+		if err != nil {
+			continue // Skip on error, don't remove
+		}
+		if exists == 0 {
+			// Session expired, remove from index
+			Rdb.SRem(ctx, indexKey, sid)
+			continue
+		}
+		validIDs = append(validIDs, sid)
+	}
+
+	return validIDs, nil
+}
+
+// DeleteAllUserSessions removes all sessions for a user except the one specified by exceptSessionID.
+// If exceptSessionID is empty, all sessions are removed.
+func DeleteAllUserSessions(appID, userID, exceptSessionID string) error {
+	sessionIDs, err := GetUserSessionIDs(appID, userID)
+	if err != nil {
+		return err
+	}
+
+	for _, sid := range sessionIDs {
+		if sid == exceptSessionID {
+			continue
+		}
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		Rdb.Del(ctx, sessionKey)
+		// Remove from app-level session index
+		appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+		Rdb.SRem(ctx, appIndexKey, sid)
+	}
+
+	// Clean up the index
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	if exceptSessionID == "" {
+		Rdb.Del(ctx, indexKey)
+	} else {
+		// Rebuild the set with only the excepted session
+		Rdb.Del(ctx, indexKey)
+		Rdb.SAdd(ctx, indexKey, exceptSessionID)
+	}
+
+	return nil
+}
+
+// SessionExists checks whether a session hash key exists in Redis.
+func SessionExists(appID, sessionID string) (bool, error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	exists, err := Rdb.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+	return exists > 0, nil
+}
+
+// GetAppSessionIDs returns all session IDs for an app from the app-level session index.
+// Performs lazy cleanup: removes IDs whose session hash has expired.
+func GetAppSessionIDs(appID string) ([]string, error) {
+	indexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+	sessionIDs, err := Rdb.SMembers(ctx, indexKey).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var validIDs []string
+	for _, sid := range sessionIDs {
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		exists, err := Rdb.Exists(ctx, sessionKey).Result()
+		if err != nil {
+			continue
+		}
+		if exists == 0 {
+			Rdb.SRem(ctx, indexKey, sid)
+			continue
+		}
+		validIDs = append(validIDs, sid)
+	}
+	return validIDs, nil
+}
+
+// CountAppSessions returns the count of entries in the app-level session index.
+// Note: may include stale entries until lazy cleanup runs via GetAppSessionIDs.
+func CountAppSessions(appID string) (int64, error) {
+	indexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+	return Rdb.SCard(ctx, indexKey).Result()
+}
+
+// GetAllSessionsForApp returns full session metadata for all active sessions in an app.
+// Each returned map contains: session_id, user_id, ip, user_agent, created_at, last_active.
+// The refresh_token field is intentionally excluded for security.
+func GetAllSessionsForApp(appID string) ([]map[string]string, error) {
+	sessionIDs, err := GetAppSessionIDs(appID)
+	if err != nil {
+		return nil, err
+	}
+
+	var sessions []map[string]string
+	for _, sid := range sessionIDs {
+		data, err := GetSession(appID, sid)
+		if err != nil {
+			continue
+		}
+		data["session_id"] = sid
+		// Remove refresh_token from admin-visible data
+		delete(data, "refresh_token")
+		sessions = append(sessions, data)
+	}
+	return sessions, nil
 }
 
 // Admin Session Functions
@@ -297,6 +563,45 @@ func ClearRateLimitKeys(keyPrefix, identifier string) error {
 	return Rdb.Del(ctx, attemptsKey, lockoutKey).Err()
 }
 
+// WebAuthn Challenge Functions
+
+// SetWebAuthnRegistrationChallenge stores a WebAuthn registration challenge session in Redis.
+func SetWebAuthnRegistrationChallenge(appID, userID, sessionJSON string, expiration time.Duration) error {
+	key := fmt.Sprintf("app:%s:webauthn_reg:%s", appID, userID)
+	return Rdb.Set(ctx, key, sessionJSON, expiration).Err()
+}
+
+// GetWebAuthnRegistrationChallenge retrieves a WebAuthn registration challenge session from Redis.
+func GetWebAuthnRegistrationChallenge(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:webauthn_reg:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteWebAuthnRegistrationChallenge removes a WebAuthn registration challenge session from Redis.
+func DeleteWebAuthnRegistrationChallenge(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:webauthn_reg:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// SetWebAuthnLoginChallenge stores a WebAuthn login/assertion challenge session in Redis.
+// The identifier can be a userID (for 2FA) or a sessionID (for passwordless).
+func SetWebAuthnLoginChallenge(appID, identifier, sessionJSON string, expiration time.Duration) error {
+	key := fmt.Sprintf("app:%s:webauthn_login:%s", appID, identifier)
+	return Rdb.Set(ctx, key, sessionJSON, expiration).Err()
+}
+
+// GetWebAuthnLoginChallenge retrieves a WebAuthn login/assertion challenge session from Redis.
+func GetWebAuthnLoginChallenge(appID, identifier string) (string, error) {
+	key := fmt.Sprintf("app:%s:webauthn_login:%s", appID, identifier)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteWebAuthnLoginChallenge removes a WebAuthn login/assertion challenge session from Redis.
+func DeleteWebAuthnLoginChallenge(appID, identifier string) error {
+	key := fmt.Sprintf("app:%s:webauthn_login:%s", appID, identifier)
+	return Rdb.Del(ctx, key).Err()
+}
+
 // Admin 2FA Functions
 
 // SetAdmin2FATempSecret stores a temporary TOTP secret during admin 2FA setup (10-minute TTL).
@@ -351,5 +656,45 @@ func GetAdmin2FAEmailCode(adminID string) (string, error) {
 // DeleteAdmin2FAEmailCode removes a 2FA email verification code after successful verification.
 func DeleteAdmin2FAEmailCode(adminID string) error {
 	key := fmt.Sprintf("admin:2fa_email:%s", adminID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// Admin Magic Link Functions
+
+// SetAdminMagicLinkToken stores a magic link token and a reverse lookup key (adminID → token).
+// The reverse lookup allows invalidating old tokens when a new one is issued.
+func SetAdminMagicLinkToken(adminID, token string, expiration time.Duration) error {
+	// Invalidate any existing magic link token for this admin (only one active at a time)
+	reverseKey := fmt.Sprintf("admin:magic_link_user:%s", adminID)
+	oldToken, err := Rdb.Get(ctx, reverseKey).Result()
+	if err == nil && oldToken != "" {
+		oldKey := fmt.Sprintf("admin:magic_link:%s", oldToken)
+		Rdb.Del(ctx, oldKey) // Best-effort cleanup of old token
+	}
+
+	// Store token → adminID mapping
+	key := fmt.Sprintf("admin:magic_link:%s", token)
+	if err := Rdb.Set(ctx, key, adminID, expiration).Err(); err != nil {
+		return err
+	}
+	// Store reverse lookup: adminID → token
+	return Rdb.Set(ctx, reverseKey, token, expiration).Err()
+}
+
+// GetAdminMagicLinkToken retrieves the adminID associated with a magic link token.
+func GetAdminMagicLinkToken(token string) (string, error) {
+	key := fmt.Sprintf("admin:magic_link:%s", token)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteAdminMagicLinkToken deletes a magic link token and its reverse lookup key (single-use).
+func DeleteAdminMagicLinkToken(token string) error {
+	key := fmt.Sprintf("admin:magic_link:%s", token)
+	// Look up the adminID so we can also clean up the reverse key
+	adminID, err := Rdb.Get(ctx, key).Result()
+	if err == nil && adminID != "" {
+		reverseKey := fmt.Sprintf("admin:magic_link_user:%s", adminID)
+		Rdb.Del(ctx, reverseKey) // Best-effort cleanup
+	}
 	return Rdb.Del(ctx, key).Err()
 }

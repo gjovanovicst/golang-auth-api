@@ -1,0 +1,34 @@
+{{define "social_unlink_confirm"}}
+<div class="modal-body">
+    <p>Are you sure you want to unlink the <strong>{{.Provider}}</strong> social account
+        {{if .Email}}(<strong>{{.Email}}</strong>){{end}}
+        from user <strong>{{.UserEmail}}</strong>?</p>
+    {{if .IsLockoutRisk}}
+    <div class="alert alert-warning small mb-0">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        <strong>Warning:</strong> This user has no password set and this is their only linked social account.
+        Unlinking it will lock them out of their account. They must set a password first.
+    </div>
+    {{else}}
+    <p class="text-muted small mb-0">
+        <i class="bi bi-info-circle me-1"></i>
+        The user will no longer be able to sign in with this social provider unless they link it again.
+    </p>
+    {{end}}
+</div>
+<div class="modal-footer border-0">
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+    {{if .IsLockoutRisk}}
+    <button type="button" class="btn btn-danger btn-sm" disabled title="Cannot unlink — user would be locked out">
+        <i class="bi bi-x-circle me-1"></i>Unlink Account
+    </button>
+    {{else}}
+    <button type="button" class="btn btn-danger btn-sm"
+            hx-delete="/gui/users/social-accounts/{{.SocialAccountID}}"
+            hx-target="#user-detail-container"
+            hx-swap="innerHTML">
+        <i class="bi bi-x-circle me-1"></i>Unlink Account
+    </button>
+    {{end}}
+</div>
+{{end}}

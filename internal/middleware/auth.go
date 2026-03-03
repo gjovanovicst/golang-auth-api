@@ -60,6 +60,19 @@ func AuthMiddleware() gin.HandlerFunc {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "All user tokens have been revoked"})
 				return
 			}
+
+			// Check if the session still exists in Redis (ensures revoked sessions are immediately rejected)
+			if claims.SessionID != "" {
+				sessionExists, err := redis.SessionExists(claims.AppID, claims.SessionID)
+				if err != nil {
+					c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Session validation error"})
+					return
+				}
+				if !sessionExists {
+					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Session has been revoked"})
+					return
+				}
+			}
 		} else {
 			// Redis not available - log warning in production, but allow for testing
 			// In production, this should be treated as an error

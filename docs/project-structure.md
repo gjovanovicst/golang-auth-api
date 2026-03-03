@@ -10,21 +10,24 @@ project-root/
 │   └── setup/                  # Admin account setup wizard
 │       └── main.go
 ├── internal/                   # Private application code
-│   ├── admin/                  # Admin API (tenant/app/OAuth management)
+│   ├── admin/                  # Admin API (tenant/app/OAuth management) + Admin GUI
 │   ├── auth/                   # Authentication handlers
-│   ├── user/                   # User management
-│   ├── social/                 # Social OAuth2 providers
+│   ├── user/                   # User management (includes magic link login)
+│   ├── social/                 # Social OAuth2 providers + social account linking
 │   ├── twofa/                  # Two-factor authentication
+│   ├── webauthn/               # WebAuthn/passkey registration, 2FA, and passwordless login
+│   ├── rbac/                   # Role-based access control (roles, permissions, user-roles)
+│   ├── session/                # Session management (list/revoke active sessions)
 │   ├── log/                    # Activity logging system
 │   ├── email/                  # Email verification & reset
-│   ├── middleware/             # JWT auth, AppID, CORS, rate limiting, security headers
+│   ├── middleware/             # JWT auth, AppID, CORS, rate limiting, security headers, session validation
 │   ├── database/               # Database connection & migrations
 │   ├── redis/                  # Redis connection & operations
 │   ├── config/                 # Configuration management
 │   └── util/                   # Utility functions
 ├── pkg/                        # Public packages
-│   ├── models/                 # Database models (GORM)
-│   ├── dto/                    # Data transfer objects
+│   ├── models/                 # Database models (GORM) — includes WebAuthn credentials, roles, permissions
+│   ├── dto/                    # Data transfer objects — includes WebAuthn, RBAC, session, magic link DTOs
 │   ├── errors/                 # Custom error types
 │   └── jwt/                    # JWT token utilities
 ├── web/                        # Shared web context keys and interfaces
@@ -60,7 +63,12 @@ project-root/
 |------|---------|
 | `cmd/api/main.go` | Entry point -- dependency injection and route setup |
 | `pkg/models/` | GORM database models |
+| `pkg/models/webauthn_credential.go` | WebAuthn/passkey credential model |
+| `pkg/models/role.go` | Role, Permission, and UserRole models |
 | `pkg/dto/` | API request/response data transfer objects |
+| `pkg/dto/webauthn.go` | Passkey registration/login DTOs |
+| `pkg/dto/rbac.go` | RBAC DTOs (roles, permissions, user-roles) |
+| `pkg/dto/session.go` | Session management DTOs |
 | `pkg/errors/errors.go` | Custom error types |
 | `pkg/jwt/jwt.go` | JWT token creation and validation |
 | `.env.example` | Environment variable template |

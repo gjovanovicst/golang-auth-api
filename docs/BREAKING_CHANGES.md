@@ -126,6 +126,85 @@ All changes are additive with defaults. No code or configuration changes require
 
 ---
 
+## WebAuthn / Passkeys
+
+**Impact:** Non-breaking (new feature, opt-in)
+
+- New database table: `webauthn_credentials` (created automatically by GORM AutoMigrate)
+- New fields on `applications` table: `passkey_2fa_enabled`, `passkey_login_enabled`
+- New environment variables: `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME`, `WEBAUTHN_RP_ORIGINS`
+- New API endpoints under `/passkey/*` and `/2fa/passkey/*`
+
+**Action required:** Set the `WEBAUTHN_*` environment variables in `.env` if you want to enable passkey support. No migration script needed -- GORM handles the schema automatically.
+
+---
+
+## Role-Based Access Control (RBAC)
+
+**Impact:** Potentially breaking for JWT consumers
+
+- New database tables: `roles`, `permissions`, `user_roles` (SQL migration required)
+- JWT tokens now include a `roles` claim (array of role names)
+- Default system roles `admin` and `member` are seeded automatically
+- All existing users are assigned the `member` role via backfill migration
+
+**Action required:**
+1. Run `make migrate-up` to apply RBAC migrations (`20260301_add_rbac.sql`, `20260301_seed_rbac_defaults.sql`, `20260302_backfill_member_role.sql`)
+2. If your application parses JWT claims, update it to handle the new `roles` array
+
+---
+
+## Session Management + Auth Middleware Hardening
+
+**Impact:** Potentially breaking for long-lived sessions
+
+- Auth middleware now validates session existence in Redis on every authenticated request
+- If a session is revoked or expired in Redis, the request is rejected even if the JWT is still valid
+- New API endpoints: `GET /sessions`, `DELETE /sessions/:id`, `DELETE /sessions`
+
+**Action required:** No migration needed. Be aware that revoking a session now immediately invalidates all requests using that session's token, rather than waiting for JWT expiry.
+
+---
+
+## Magic Link Login
+
+**Impact:** Non-breaking (new feature, opt-in)
+
+- New application setting: `magic_link_enabled` (default: disabled)
+- New admin account field: `magic_link_enabled`
+- New API endpoints: `POST /magic-link/request`, `POST /magic-link/verify`
+- SQL migrations required for the magic link email type and settings
+
+**Action required:** Run `make migrate-up` to apply magic link migrations (`20260303_add_admin_magic_link.sql`, `20260303_add_magic_link_settings.sql`, `20260303_seed_magic_link_email_type.sql`). Enable per-application via Admin API.
+
+---
+
+## Social Account Linking
+
+**Impact:** Non-breaking (new feature)
+
+- Users can now link/unlink additional social accounts to their existing profile
+- New API endpoints: `GET /profile/social-accounts`, `DELETE /profile/social-accounts`, `/auth/{provider}/link`, `/auth/{provider}/link/callback`
+
+**Action required:** None. Feature is available immediately after upgrade.
+
+---
+
+## Application Model Changes
+
+**Impact:** Non-breaking (additive)
+
+New fields added to the `applications` table (managed by GORM AutoMigrate):
+- `passkey_2fa_enabled` -- Enable passkey as a 2FA method
+- `passkey_login_enabled` -- Enable passwordless passkey login
+- `magic_link_enabled` -- Enable magic link email login
+- `email_2fa_enabled` -- Enable email-based 2FA
+- `two_fa_methods` -- Configured 2FA methods
+
+**Action required:** None. All fields have safe defaults and are added automatically on startup.
+
+---
+
 ## Migration Strategy
 
 ### For Users

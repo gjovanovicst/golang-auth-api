@@ -12,7 +12,9 @@ For the complete implementation details, see [Activity Logging Guide](features/A
 |----------|--------|-----------|---------------|
 | **Critical** | LOGIN, LOGOUT, PASSWORD_CHANGE, 2FA_ENABLE/DISABLE | 1 year | Yes |
 | **Important** | REGISTER, EMAIL_VERIFY, SOCIAL_LOGIN, PROFILE_UPDATE | 6 months | Yes |
-| **Informational** | TOKEN_REFRESH, PROFILE_ACCESS | 3 months | Only on anomalies |
+| **Informational** | TOKEN_REFRESH, PROFILE_ACCESS, PASSKEY_REGISTER, PASSKEY_DELETE, PASSKEY_LOGIN, MAGIC_LINK_REQUESTED, MAGIC_LINK_LOGIN, MAGIC_LINK_FAILED, EMAIL_VERIFY_RESEND, SOCIAL_ACCOUNT_LINKED, SOCIAL_ACCOUNT_UNLINKED | 3 months | Only on anomalies |
+
+> **Note:** The new event types added for passkeys, magic link, social account linking, and email verification resend default to **Informational** severity. They are always enabled but follow the same anomaly detection rules as other informational events.
 
 ---
 

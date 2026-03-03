@@ -24,6 +24,8 @@ Complete documentation for the Authentication API.
 | [Activity Logging](activity-logging.md) | Smart logging, anomaly detection, retention policies |
 | [Swagger UI](http://localhost:8080/swagger/index.html) | Interactive API docs (when running) |
 
+> **New in this release:** WebAuthn/passkeys, magic link login, RBAC, session management, and social account linking endpoints are all documented in the [API Endpoints](api-endpoints.md) and [API Reference](API.md).
+
 ---
 
 ## Development
@@ -100,6 +102,11 @@ Complete documentation for the Authentication API.
 | Configure environment | [Configuration](configuration.md) |
 | See API endpoints | [API Endpoints](api-endpoints.md) |
 | Set up social login | [Configuration - OAuth](configuration.md#social-authentication) |
+| Set up passkeys/WebAuthn | [Configuration - WebAuthn](configuration.md#webauthn--passkeys) |
+| Set up magic link login | [API Endpoints - Magic Link](api-endpoints.md#magic-link-login) |
+| Manage roles & permissions | [API Endpoints - RBAC](api-endpoints.md#rbac-administration) |
+| Manage sessions | [API Endpoints - Sessions](api-endpoints.md#session-management) |
+| Link social accounts | [API Endpoints - Social Linking](api-endpoints.md#social-account-linking) |
 | Manage tenants/apps | [Multi-Tenancy](multi-tenancy.md) |
 | Use the admin panel | [Admin GUI](admin-gui.md) |
 | Run database migrations | [Database Migrations](database-migrations.md) |

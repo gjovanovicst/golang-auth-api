@@ -104,11 +104,29 @@ For more details, see the [Multi-App OAuth Config Guide](guides/multi-app-oauth-
 
 ---
 
+## WebAuthn / Passkeys
+
+```bash
+WEBAUTHN_RP_ID=localhost                    # Relying Party ID (your domain)
+WEBAUTHN_RP_NAME=Auth API                   # Display name shown in browser prompts
+WEBAUTHN_RP_ORIGINS=http://localhost:8080   # Comma-separated allowed origins
+```
+
+> **Production example:**
+> ```bash
+> WEBAUTHN_RP_ID=example.com
+> WEBAUTHN_RP_NAME=My App
+> WEBAUTHN_RP_ORIGINS=https://example.com,https://app.example.com
+> ```
+
+---
+
 ## Server
 
 ```bash
 PORT=8080
 GIN_MODE=debug          # Use 'release' for production
+ADMIN_URL=http://localhost:8080  # Base URL for admin GUI (used in magic link emails)
 ```
 
 ---

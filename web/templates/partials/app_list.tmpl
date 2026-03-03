@@ -45,6 +45,9 @@
                             {{if .PasskeyLoginEnabled}}
                             <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-key-fill me-1"></i>Passwordless</span>
                             {{end}}
+                            {{if .MagicLinkEnabled}}
+                            <span class="badge bg-purple bg-opacity-10 text-purple"><i class="bi bi-envelope-arrow-up me-1"></i>Magic Link</span>
+                            {{end}}
                         </td>
                         <td>
                             <span class="badge bg-info bg-opacity-10 text-info">{{.OAuthConfigCount}} config{{if ne .OAuthConfigCount 1}}s{{end}}</span>

@@ -38,6 +38,9 @@ const (
 	EventPasskeyRegister       = "PASSKEY_REGISTER"
 	EventPasskeyDelete         = "PASSKEY_DELETE"
 	EventPasskeyLogin          = "PASSKEY_LOGIN"
+	EventMagicLinkRequested    = "MAGIC_LINK_REQUESTED"
+	EventMagicLinkLogin        = "MAGIC_LINK_LOGIN"
+	EventMagicLinkFailed       = "MAGIC_LINK_FAILED"
 )
 
 // LogEntry represents a log entry to be processed
@@ -400,4 +403,22 @@ func LogPasskeyDelete(appID, userID uuid.UUID, ipAddress, userAgent string) {
 // LogPasskeyLogin logs a successful passwordless login via passkey
 func LogPasskeyLogin(appID, userID uuid.UUID, ipAddress, userAgent string) {
 	GetLogService().LogActivity(appID, userID, EventPasskeyLogin, ipAddress, userAgent, nil)
+}
+
+// LogMagicLinkRequested logs when a magic link login is requested
+func LogMagicLinkRequested(appID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, uuid.Nil, EventMagicLinkRequested, ipAddress, userAgent, nil)
+}
+
+// LogMagicLinkLogin logs a successful magic link login
+func LogMagicLinkLogin(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	GetLogService().LogActivity(appID, userID, EventMagicLinkLogin, ipAddress, userAgent, nil)
+}
+
+// LogMagicLinkFailed logs a failed magic link verification attempt
+func LogMagicLinkFailed(appID uuid.UUID, ipAddress, userAgent string, reason string) {
+	details := map[string]interface{}{
+		"reason": reason,
+	}
+	GetLogService().LogActivity(appID, uuid.Nil, EventMagicLinkFailed, ipAddress, userAgent, details)
 }

@@ -774,3 +774,99 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Account deleted successfully. We're sorry to see you go."})
 }
+
+// @Summary Request a magic link login email
+// @Description Send a magic link to the user's email for passwordless authentication. Always returns 200 regardless of whether the email exists (to prevent enumeration).
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param   request  body      dto.MagicLinkRequest  true  "Magic Link Request Data"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /magic-link/request [post]
+func (h *Handler) RequestMagicLink(c *gin.Context) {
+	var req dto.MagicLinkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if err := h.Service.RequestMagicLink(appID, req.Email); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Log activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogMagicLinkRequested(appID, ipAddress, userAgent)
+
+	// Always return success to prevent email enumeration
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "If an account exists with that email, a magic link has been sent."})
+}
+
+// @Summary Verify a magic link token and log in
+// @Description Verify the magic link token from the email and return access/refresh tokens. The token is single-use and expires after 10 minutes.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param   request  body      dto.MagicLinkVerifyRequest  true  "Magic Link Verification Data"
+// @Success 200 {object}  dto.LoginResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse
+// @Failure 403 {object}  dto.ErrorResponse
+// @Failure 429 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /magic-link/verify [post]
+func (h *Handler) VerifyMagicLink(c *gin.Context) {
+	var req dto.MagicLinkVerifyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	result, err := h.Service.VerifyMagicLink(appID, req.Token, ipAddress, userAgent)
+	if err != nil {
+		// Log failed attempt
+		log.LogMagicLinkFailed(appID, ipAddress, userAgent, err.Message)
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Log successful magic link login
+	log.LogMagicLinkLogin(appID, result.UserID, ipAddress, userAgent)
+
+	c.JSON(http.StatusOK, dto.LoginResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+	})
+}

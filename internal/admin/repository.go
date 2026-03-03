@@ -207,6 +207,7 @@ type AppListItem struct {
 	TwoFARequired       bool
 	Passkey2FAEnabled   bool
 	PasskeyLoginEnabled bool
+	MagicLinkEnabled    bool
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }
@@ -232,6 +233,7 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 			applications.created_at, applications.updated_at,
 			applications.two_fa_enabled, applications.two_fa_required,
 			applications.passkey2_fa_enabled, applications.passkey_login_enabled,
+			applications.magic_link_enabled,
 			tenants.name as tenant_name,
 			COUNT(oauth_provider_configs.id) as o_auth_config_count`).
 		Joins("LEFT JOIN tenants ON tenants.id = applications.tenant_id").
@@ -252,7 +254,7 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 	return items, total, nil
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool) error {
+func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool) error {
 	return r.DB.Model(&models.Application{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
@@ -263,6 +265,7 @@ func (r *Repository) UpdateApp(id string, name string, description string, twoFA
 			"two_fa_required":       twoFARequired,
 			"passkey2_fa_enabled":   passkey2FAEnabled,
 			"passkey_login_enabled": passkeyLoginEnabled,
+			"magic_link_enabled":    magicLinkEnabled,
 		}).Error
 }
 

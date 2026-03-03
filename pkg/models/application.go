@@ -18,6 +18,7 @@ type Application struct {
 	Email2FAEnabled      bool                  `gorm:"default:false" json:"email_2fa_enabled"`                 // Allow email-based 2FA for this application
 	Passkey2FAEnabled    bool                  `gorm:"default:false" json:"passkey_2fa_enabled"`               // Allow passkey as a 2FA method
 	PasskeyLoginEnabled  bool                  `gorm:"default:false" json:"passkey_login_enabled"`             // Allow fully passwordless login via passkey
+	MagicLinkEnabled     bool                  `gorm:"default:false" json:"magic_link_enabled"`                // Allow passwordless login via email magic link
 	TwoFAMethods         string                `gorm:"type:varchar(100);default:'totp'" json:"two_fa_methods"` // Comma-separated available methods: "totp", "email", "passkey", or combinations
 	CreatedAt            time.Time             `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt            time.Time             `gorm:"autoUpdateTime" json:"updated_at"`

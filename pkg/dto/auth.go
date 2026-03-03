@@ -175,3 +175,13 @@ type LinkSocialAccountResponse struct {
 type UnlinkSocialAccountResponse struct {
 	Message string `json:"message"`
 }
+
+// MagicLinkRequest represents the request payload for requesting a magic link login email
+type MagicLinkRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// MagicLinkVerifyRequest represents the request payload for verifying a magic link token
+type MagicLinkVerifyRequest struct {
+	Token string `json:"token" validate:"required"` // #nosec G101 -- This is a DTO field, not a hardcoded credential
+}

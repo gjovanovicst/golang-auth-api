@@ -24,6 +24,9 @@ type AdminAccount struct {
 	TwoFAMethod        string         `gorm:"type:varchar(20)" json:"two_fa_method"`
 	TwoFASecret        string         `gorm:"type:text" json:"-"`
 	TwoFARecoveryCodes datatypes.JSON `gorm:"type:jsonb" json:"-"`
+
+	// Magic Link authentication
+	MagicLinkEnabled bool `gorm:"default:false" json:"magic_link_enabled"`
 }
 
 // TableName overrides the default table name

@@ -125,6 +125,46 @@ func DeletePasswordResetToken(appID, token string) error {
 	return Rdb.Del(ctx, key).Err()
 }
 
+// Magic Link related functions
+
+// SetMagicLinkToken stores a magic link token and a reverse lookup key (userID → token).
+// The reverse lookup allows invalidating old tokens when a new one is issued.
+func SetMagicLinkToken(appID, userID, token string, expiration time.Duration) error {
+	// Invalidate any existing magic link token for this user (only one active at a time)
+	reverseKey := fmt.Sprintf("app:%s:magic_link_user:%s", appID, userID)
+	oldToken, err := Rdb.Get(ctx, reverseKey).Result()
+	if err == nil && oldToken != "" {
+		oldKey := fmt.Sprintf("app:%s:magic_link:%s", appID, oldToken)
+		Rdb.Del(ctx, oldKey) // Best-effort cleanup of old token
+	}
+
+	// Store token → userID mapping
+	key := fmt.Sprintf("app:%s:magic_link:%s", appID, token)
+	if err := Rdb.Set(ctx, key, userID, expiration).Err(); err != nil {
+		return err
+	}
+	// Store reverse lookup: userID → token
+	return Rdb.Set(ctx, reverseKey, token, expiration).Err()
+}
+
+// GetMagicLinkToken retrieves the userID associated with a magic link token
+func GetMagicLinkToken(appID, token string) (string, error) {
+	key := fmt.Sprintf("app:%s:magic_link:%s", appID, token)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteMagicLinkToken deletes a magic link token and its reverse lookup key (single-use).
+func DeleteMagicLinkToken(appID, token string) error {
+	key := fmt.Sprintf("app:%s:magic_link:%s", appID, token)
+	// Look up the userID so we can also clean up the reverse key
+	userID, err := Rdb.Get(ctx, key).Result()
+	if err == nil && userID != "" {
+		reverseKey := fmt.Sprintf("app:%s:magic_link_user:%s", appID, userID)
+		Rdb.Del(ctx, reverseKey) // Best-effort cleanup
+	}
+	return Rdb.Del(ctx, key).Err()
+}
+
 // 2FA related functions
 
 // SetTempTwoFASecret stores a temporary 2FA secret during setup
@@ -616,5 +656,45 @@ func GetAdmin2FAEmailCode(adminID string) (string, error) {
 // DeleteAdmin2FAEmailCode removes a 2FA email verification code after successful verification.
 func DeleteAdmin2FAEmailCode(adminID string) error {
 	key := fmt.Sprintf("admin:2fa_email:%s", adminID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// Admin Magic Link Functions
+
+// SetAdminMagicLinkToken stores a magic link token and a reverse lookup key (adminID → token).
+// The reverse lookup allows invalidating old tokens when a new one is issued.
+func SetAdminMagicLinkToken(adminID, token string, expiration time.Duration) error {
+	// Invalidate any existing magic link token for this admin (only one active at a time)
+	reverseKey := fmt.Sprintf("admin:magic_link_user:%s", adminID)
+	oldToken, err := Rdb.Get(ctx, reverseKey).Result()
+	if err == nil && oldToken != "" {
+		oldKey := fmt.Sprintf("admin:magic_link:%s", oldToken)
+		Rdb.Del(ctx, oldKey) // Best-effort cleanup of old token
+	}
+
+	// Store token → adminID mapping
+	key := fmt.Sprintf("admin:magic_link:%s", token)
+	if err := Rdb.Set(ctx, key, adminID, expiration).Err(); err != nil {
+		return err
+	}
+	// Store reverse lookup: adminID → token
+	return Rdb.Set(ctx, reverseKey, token, expiration).Err()
+}
+
+// GetAdminMagicLinkToken retrieves the adminID associated with a magic link token.
+func GetAdminMagicLinkToken(token string) (string, error) {
+	key := fmt.Sprintf("admin:magic_link:%s", token)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteAdminMagicLinkToken deletes a magic link token and its reverse lookup key (single-use).
+func DeleteAdminMagicLinkToken(token string) error {
+	key := fmt.Sprintf("admin:magic_link:%s", token)
+	// Look up the adminID so we can also clean up the reverse key
+	adminID, err := Rdb.Get(ctx, key).Result()
+	if err == nil && adminID != "" {
+		reverseKey := fmt.Sprintf("admin:magic_link_user:%s", adminID)
+		Rdb.Del(ctx, reverseKey) // Best-effort cleanup
+	}
 	return Rdb.Del(ctx, key).Err()
 }

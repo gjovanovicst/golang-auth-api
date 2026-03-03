@@ -482,6 +482,7 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		TwoFARequired       bool
 		Passkey2FAEnabled   bool
 		PasskeyLoginEnabled bool
+		MagicLinkEnabled    bool
 		Tenants             []models.Tenant
 		IsEdit              bool
 	}
@@ -502,6 +503,7 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	twoFARequired := c.PostForm("two_fa_required") == "on"
 	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
 	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
+	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -530,6 +532,7 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 		TwoFARequired:       twoFARequired,
 		Passkey2FAEnabled:   passkey2FAEnabled,
 		PasskeyLoginEnabled: passkeyLoginEnabled,
+		MagicLinkEnabled:    magicLinkEnabled,
 	}
 	if err := h.Repo.CreateApp(app); err != nil {
 		c.String(http.StatusInternalServerError,
@@ -573,6 +576,7 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		TwoFARequired       bool
 		Passkey2FAEnabled   bool
 		PasskeyLoginEnabled bool
+		MagicLinkEnabled    bool
 		Tenants             []models.Tenant
 		IsEdit              bool
 	}
@@ -586,6 +590,7 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		TwoFARequired:       app.TwoFARequired,
 		Passkey2FAEnabled:   app.Passkey2FAEnabled,
 		PasskeyLoginEnabled: app.PasskeyLoginEnabled,
+		MagicLinkEnabled:    app.MagicLinkEnabled,
 		Tenants:             tenants,
 		IsEdit:              true,
 	})
@@ -602,6 +607,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	twoFARequired := c.PostForm("two_fa_required") == "on"
 	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
 	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
+	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -609,7 +615,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 		return
 	}
 
-	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled); err != nil {
+	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
@@ -4411,6 +4417,187 @@ func (h *GUIHandler) PasskeyLoginFinish(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"redirect": "/gui/"})
+}
+
+// ============================================================
+// Magic Link (My Account - Admin self-service toggle)
+// ============================================================
+
+// MyAccountMagicLinkData holds data for the admin magic link status template.
+type MyAccountMagicLinkData struct {
+	MagicLinkEnabled bool
+}
+
+// MyAccountMagicLinkStatus returns the current magic link status as an HTMX partial.
+// GET /gui/my-account/magic-link/status
+func (h *GUIHandler) MyAccountMagicLinkStatus(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to load account.</small></div>`)
+		return
+	}
+
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: MyAccountMagicLinkData{
+			MagicLinkEnabled: account.MagicLinkEnabled,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_magic_link_status", data)
+}
+
+// MyAccountMagicLinkToggle enables or disables magic link login for the current admin.
+// POST /gui/my-account/magic-link/toggle
+func (h *GUIHandler) MyAccountMagicLinkToggle(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to load account.</small></div>`)
+		return
+	}
+
+	// Toggle the current state
+	newState := !account.MagicLinkEnabled
+
+	// Admin must have an email address to enable magic link login
+	if newState && account.Email == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-warning py-2"><small>You must set an email address before enabling magic link login.</small></div>`)
+		return
+	}
+
+	if err := h.AccountService.Repo.UpdateMagicLinkEnabled(adminID, newState); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2"><small>Failed to update magic link setting.</small></div>`)
+		return
+	}
+
+	// Re-render the status partial with the updated state
+	data := web.TemplateData{
+		CSRFToken: c.GetString(web.CSRFTokenKey),
+		Data: MyAccountMagicLinkData{
+			MagicLinkEnabled: newState,
+		},
+	}
+	c.HTML(http.StatusOK, "admin_magic_link_status", data)
+}
+
+// ============================================================
+// Magic Link Login (Passwordless Admin Login via Email Link)
+// ============================================================
+
+// MagicLinkLoginRequest handles the magic link login request from the login page.
+// It looks up the admin by email, checks if magic link is enabled, generates a token,
+// sends the email, and returns a generic success message (to prevent email enumeration).
+// POST /gui/magic-link-login
+func (h *GUIHandler) MagicLinkLoginRequest(c *gin.Context) {
+	// Check if rate limiter already blocked the request
+	if errMsg, exists := c.Get(web.RateLimitErrorKey); exists {
+		msg, _ := errMsg.(string)
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": msg})
+		return
+	}
+
+	email := strings.TrimSpace(c.PostForm("email"))
+	if email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email is required"})
+		return
+	}
+
+	// Always respond with success to prevent email enumeration.
+	// Perform the lookup and send silently.
+	account, err := h.AccountService.Repo.GetByEmail(email)
+	if err == nil && account != nil && account.MagicLinkEnabled && account.Email != "" {
+		// Generate magic link token
+		magicToken := uuid.New().String()
+
+		// Store in Redis with 10-minute expiration (invalidates any previous token)
+		if storeErr := redis.SetAdminMagicLinkToken(account.ID.String(), magicToken, 10*time.Minute); storeErr == nil {
+			// Build the magic link URL
+			baseURL := viper.GetString("ADMIN_BASE_URL")
+			if baseURL == "" {
+				baseURL = fmt.Sprintf("%s://%s", schemeFromRequest(c), c.Request.Host)
+			}
+			magicLink := fmt.Sprintf("%s/gui/magic-link-login/verify?token=%s", baseURL, magicToken)
+
+			// Send the email (best-effort — don't expose failures)
+			_ = h.EmailService.SendAdminMagicLinkEmail(account.Email, magicLink, account.Username)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "If that email is associated with an admin account with magic link enabled, a login link has been sent."})
+}
+
+// MagicLinkLoginVerify handles the magic link verification callback.
+// On success, creates a full admin session (bypassing 2FA like passkey login) and redirects.
+// GET /gui/magic-link-login/verify
+func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.HTML(http.StatusBadRequest, "login", web.TemplateData{
+			Error: "Invalid or missing magic link token.",
+		})
+		return
+	}
+
+	// Look up token in Redis
+	adminID, err := redis.GetAdminMagicLinkToken(token)
+	if err != nil || adminID == "" {
+		c.HTML(http.StatusUnauthorized, "login", web.TemplateData{
+			Error: "This magic link is invalid or has expired. Please request a new one.",
+		})
+		return
+	}
+
+	// Delete token immediately (single-use)
+	_ = redis.DeleteAdminMagicLinkToken(token)
+
+	// Verify the admin account still exists
+	account, accErr := h.AccountService.Repo.GetByID(adminID)
+	if accErr != nil || account == nil {
+		c.HTML(http.StatusUnauthorized, "login", web.TemplateData{
+			Error: "Account not found. Please contact an administrator.",
+		})
+		return
+	}
+
+	// Update last login timestamp (best effort)
+	_ = h.AccountService.Repo.UpdateLastLogin(adminID)
+
+	// Create full session (magic link login bypasses 2FA entirely, like passkey login)
+	sessionID, sessErr := h.AccountService.CreateSession(adminID)
+	if sessErr != nil {
+		c.HTML(http.StatusInternalServerError, "login", web.TemplateData{
+			Error: "Failed to create session. Please try again.",
+		})
+		return
+	}
+
+	// Set session cookie
+	maxAge := sessionMaxAgeSeconds()
+	web.SetSessionCookie(c, sessionID, maxAge)
+
+	// Clear rate limit counters on successful login
+	_ = redis.ClearRateLimitKeys("gui:magic-link", c.ClientIP())
+	if web.ClearRateLimitFallback != nil {
+		web.ClearRateLimitFallback("gui:magic-link", c.ClientIP())
+	}
+
+	// Redirect to admin dashboard
+	c.Redirect(http.StatusFound, "/gui/")
+}
+
+// schemeFromRequest returns "https" or "http" based on the incoming request.
+func schemeFromRequest(c *gin.Context) string {
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		return "https"
+	}
+	return "http"
 }
 
 // ============================================================

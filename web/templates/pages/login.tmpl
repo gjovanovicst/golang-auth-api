@@ -95,6 +95,22 @@
                         <i class="bi bi-fingerprint me-1"></i>Sign in with Passkey
                     </button>
                 </div>
+
+                <div id="magic-link-section">
+                    <div class="divider"><span>or</span></div>
+
+                    <div id="magic-link-form">
+                        <div class="input-group">
+                            <input type="email" class="form-control" id="magic-link-email"
+                                   placeholder="Enter your email address" autocomplete="email">
+                            <button type="button" class="btn btn-outline-primary" id="magic-link-btn"
+                                    onclick="requestMagicLink()">
+                                <i class="bi bi-link-45deg me-1"></i>Magic Link
+                            </button>
+                        </div>
+                    </div>
+                    <div id="magic-link-result" class="mt-2"></div>
+                </div>
             </div>
         </div>
 
@@ -215,6 +231,41 @@
             } else {
                 showPasskeyError(err.message || 'Passkey login failed. Please try again.');
             }
+            btn.disabled = false;
+        }
+    }
+
+    async function requestMagicLink() {
+        var btn = document.getElementById('magic-link-btn');
+        var emailInput = document.getElementById('magic-link-email');
+        var resultDiv = document.getElementById('magic-link-result');
+        var email = emailInput.value.trim();
+
+        if (!email) {
+            resultDiv.innerHTML = '<div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>Please enter your email address.</div>';
+            return;
+        }
+
+        btn.disabled = true;
+        resultDiv.innerHTML = '<div class="alert alert-info py-2 small"><i class="bi bi-hourglass-split me-1"></i>Sending magic link...</div>';
+
+        try {
+            var resp = await fetch('/gui/magic-link-login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: 'email=' + encodeURIComponent(email)
+            });
+
+            var data = await resp.json();
+
+            if (resp.ok) {
+                resultDiv.innerHTML = '<div class="alert alert-success py-2 small"><i class="bi bi-check-circle me-1"></i>' + data.message + '</div>';
+            } else {
+                resultDiv.innerHTML = '<div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>' + (data.error || 'Request failed. Please try again.') + '</div>';
+                btn.disabled = false;
+            }
+        } catch (err) {
+            resultDiv.innerHTML = '<div class="alert alert-danger py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>Request failed. Please try again.</div>';
             btn.disabled = false;
         }
     }

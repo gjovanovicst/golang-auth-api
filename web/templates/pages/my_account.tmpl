@@ -105,6 +105,21 @@
                 </div>
             </div>
         </div>
+
+        <!-- Magic Link Section (HTMX-driven) -->
+        <div id="magic-link-section" class="mt-4"
+             hx-get="/gui/my-account/magic-link/status"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <span class="ms-2 text-muted small">Loading magic link status...</span>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {{end}}

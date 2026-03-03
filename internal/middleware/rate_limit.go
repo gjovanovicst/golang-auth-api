@@ -425,6 +425,26 @@ func APIPasskey2FARateLimit() gin.HandlerFunc {
 	})
 }
 
+// APIMagicLinkRateLimit — 5 requests per 15 minutes per IP
+// Magic links are sensitive (email-based auth), so use a tighter window.
+func APIMagicLinkRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "api:magic-link",
+		MaxAttempts: 5,
+		Window:      15 * time.Minute,
+	})
+}
+
+// GUIMagicLinkRateLimit — 3 requests per 15 minutes per IP.
+// Magic links are sensitive (email-based auth), so use a tight window.
+func GUIMagicLinkRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "gui:magic-link",
+		MaxAttempts: 3,
+		Window:      15 * time.Minute,
+	})
+}
+
 // GUIPasskeyLoginRateLimit — 10 requests/min per IP, lockout after 20
 // (two-step ceremony means each login attempt uses 2 requests: begin + finish)
 func GUIPasskeyLoginRateLimit() gin.HandlerFunc {

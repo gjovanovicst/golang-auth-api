@@ -1,0 +1,36 @@
+{{define "admin_magic_link_status"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-transparent border-bottom d-flex align-items-center justify-content-between">
+        <h6 class="mb-0 fw-semibold"><i class="bi bi-link-45deg me-2"></i>Magic Link Login</h6>
+        {{if .Data.MagicLinkEnabled}}
+        <span class="badge bg-success">Enabled</span>
+        {{else}}
+        <span class="badge bg-secondary">Disabled</span>
+        {{end}}
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Magic link lets you sign in via a one-time link sent to your email address, without entering a password.
+        </p>
+
+        {{if .Data.MagicLinkEnabled}}
+        <button type="button" class="btn btn-outline-danger btn-sm w-100"
+                hx-post="/gui/my-account/magic-link/toggle"
+                hx-target="#magic-link-section"
+                hx-swap="innerHTML"
+                hx-vals='{"_csrf": "{{.CSRFToken}}"}'
+                hx-confirm="Disable magic link login? You will need to use your password to sign in.">
+            <i class="bi bi-x-circle me-1"></i>Disable Magic Link Login
+        </button>
+        {{else}}
+        <button type="button" class="btn btn-primary btn-sm w-100"
+                hx-post="/gui/my-account/magic-link/toggle"
+                hx-target="#magic-link-section"
+                hx-swap="innerHTML"
+                hx-vals='{"_csrf": "{{.CSRFToken}}"}'>
+            <i class="bi bi-check-circle me-1"></i>Enable Magic Link Login
+        </button>
+        {{end}}
+    </div>
+</div>
+{{end}}

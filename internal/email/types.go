@@ -10,6 +10,7 @@ const (
 	TypeWelcome            = "welcome"
 	TypeAccountDeactivated = "account_deactivated"
 	TypePasswordChanged    = "password_changed"
+	TypeMagicLink          = "magic_link"
 )
 
 // Template variable names used across email types
@@ -28,6 +29,7 @@ const (
 	VarCode              = "code"
 	VarExpirationMinutes = "expiration_minutes"
 	VarChangeTime        = "change_time"
+	VarMagicLink         = "magic_link"
 )
 
 // WellKnownVariables is the registry of all variables the system can auto-resolve.
@@ -55,6 +57,7 @@ var WellKnownVariables = []models.EmailTypeVariable{
 	{Name: VarCode, Description: "2FA verification code", Source: models.VarSourceExplicit},
 	{Name: VarExpirationMinutes, Description: "Expiration time in minutes", Source: models.VarSourceExplicit},
 	{Name: VarChangeTime, Description: "Timestamp when the change occurred", Source: models.VarSourceExplicit},
+	{Name: VarMagicLink, Description: "Magic link login URL", Source: models.VarSourceExplicit},
 }
 
 // SMTPConfig holds the resolved SMTP configuration for sending emails.

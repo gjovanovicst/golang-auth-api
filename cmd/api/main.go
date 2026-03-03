@@ -184,6 +184,10 @@ func main() {
 		// Passwordless passkey login (public)
 		public.POST("/passkey/login/begin", middleware.APIPasskeyLoginRateLimit(), webauthnHandler.BeginPasswordlessLogin)
 		public.POST("/passkey/login/finish", middleware.APIPasskeyLoginRateLimit(), webauthnHandler.FinishPasswordlessLogin)
+
+		// Magic link passwordless login (public)
+		public.POST("/magic-link/request", middleware.APIMagicLinkRateLimit(), userHandler.RequestMagicLink)
+		public.POST("/magic-link/verify", middleware.APIMagicLinkRateLimit(), userHandler.VerifyMagicLink)
 	}
 
 	// Social authentication routes
@@ -352,6 +356,10 @@ func main() {
 		// Passkey login (passwordless via discoverable credentials, no auth required)
 		gui.POST("/passkey-login/begin", middleware.GUIPasskeyLoginRateLimit(), guiHandler.PasskeyLoginBegin)
 		gui.POST("/passkey-login/finish", middleware.GUIPasskeyLoginRateLimit(), guiHandler.PasskeyLoginFinish)
+
+		// Magic link login (passwordless via email link, no auth required)
+		gui.POST("/magic-link-login", middleware.GUIMagicLinkRateLimit(), guiHandler.MagicLinkLoginRequest)
+		gui.GET("/magic-link-login/verify", guiHandler.MagicLinkLoginVerify)
 
 		// 2FA verification during login (no auth required — uses temp token)
 		gui.GET("/2fa-verify", guiHandler.TwoFAVerifyPage)
@@ -528,6 +536,10 @@ func main() {
 			guiAuth.POST("/my-account/passkeys/register/finish", guiHandler.MyAccountPasskeyFinishRegister)
 			guiAuth.DELETE("/my-account/passkeys/:id", guiHandler.MyAccountPasskeyDelete)
 			guiAuth.POST("/my-account/passkeys/:id/rename", guiHandler.MyAccountPasskeyRename)
+
+			// Magic link management (admin self-service)
+			guiAuth.GET("/my-account/magic-link/status", guiHandler.MyAccountMagicLinkStatus)
+			guiAuth.POST("/my-account/magic-link/toggle", guiHandler.MyAccountMagicLinkToggle)
 		}
 	}
 

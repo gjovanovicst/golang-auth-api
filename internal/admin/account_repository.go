@@ -115,3 +115,17 @@ func (r *AccountRepository) Disable2FA(id string) error {
 func (r *AccountRepository) UpdateRecoveryCodes(id string, codes []byte) error {
 	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).Update("two_fa_recovery_codes", codes).Error
 }
+
+// UpdateMagicLinkEnabled sets the magic_link_enabled flag for an admin account.
+func (r *AccountRepository) UpdateMagicLinkEnabled(id string, enabled bool) error {
+	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).Update("magic_link_enabled", enabled).Error
+}
+
+// GetByEmail retrieves an admin account by email address.
+func (r *AccountRepository) GetByEmail(email string) (*models.AdminAccount, error) {
+	var account models.AdminAccount
+	if err := r.DB.Where("email = ?", email).First(&account).Error; err != nil {
+		return nil, err
+	}
+	return &account, nil
+}

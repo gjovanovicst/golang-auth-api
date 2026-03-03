@@ -55,6 +55,8 @@ definitions:
     properties:
       description:
         type: string
+      magic_link_enabled:
+        type: boolean
       name:
         type: string
       tenant_id:
@@ -377,6 +379,21 @@ definitions:
     required:
     - access_token
     - refresh_token
+    type: object
+  dto.MagicLinkRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  dto.MagicLinkVerifyRequest:
+    properties:
+      token:
+        description: '#nosec G101 -- This is a DTO field, not a hardcoded credential'
+        type: string
+    required:
+    - token
     type: object
   dto.MessageResponse:
     properties:
@@ -3231,6 +3248,84 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: User logout
+      tags:
+      - Auth
+  /magic-link/request:
+    post:
+      consumes:
+      - application/json
+      description: Send a magic link to the user's email for passwordless authentication.
+        Always returns 200 regardless of whether the email exists (to prevent enumeration).
+      parameters:
+      - description: Magic Link Request Data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.MagicLinkRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Request a magic link login email
+      tags:
+      - Auth
+  /magic-link/verify:
+    post:
+      consumes:
+      - application/json
+      description: Verify the magic link token from the email and return access/refresh
+        tokens. The token is single-use and expires after 10 minutes.
+      parameters:
+      - description: Magic Link Verification Data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.MagicLinkVerifyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Verify a magic link token and log in
       tags:
       - Auth
   /passkey/login/begin:

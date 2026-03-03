@@ -15,6 +15,7 @@ import (
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
+	"github.com/spf13/viper"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -624,4 +625,115 @@ func generateSecure6DigitCode() string {
 		panic(fmt.Sprintf("Failed to generate secure random number for 2FA code: %v", err))
 	}
 	return fmt.Sprintf("%06d", n.Int64())
+}
+
+// RequestMagicLink generates a magic link token and sends it via email.
+// Returns nil even if the user is not found (to prevent email enumeration).
+func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppError {
+	// Check if magic link is enabled for this application
+	var app models.Application
+	if err := s.DB.Select("magic_link_enabled").First(&app, "id = ?", appID).Error; err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to load application settings")
+	}
+	if !app.MagicLinkEnabled {
+		return errors.NewAppError(errors.ErrBadRequest, "Magic link login is not enabled for this application")
+	}
+
+	user, err := s.Repo.GetUserByEmail(appID.String(), email)
+	if err != nil {
+		// User not found — return nil to prevent email enumeration
+		return nil
+	}
+
+	// Check if account is active
+	if !user.IsActive {
+		// Return nil to prevent email enumeration
+		return nil
+	}
+
+	// Check if email is verified
+	if !user.EmailVerified {
+		// Return nil to prevent email enumeration
+		return nil
+	}
+
+	// Generate magic link token
+	magicToken := uuid.New().String()
+
+	// Store in Redis with 10-minute expiration (invalidates any previous token for this user)
+	if err := redis.SetMagicLinkToken(appID.String(), user.ID.String(), magicToken, 10*time.Minute); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to generate magic link")
+	}
+
+	// Build the magic link URL using the frontend URL from config (same as verification email)
+	frontendURL := viper.GetString("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:8080"
+	}
+	magicLink := fmt.Sprintf("%s/magic-link?token=%s", frontendURL, magicToken)
+
+	if err := s.EmailService.SendMagicLinkEmail(appID, user.Email, magicLink, &user.ID); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to send magic link email")
+	}
+
+	return nil
+}
+
+// VerifyMagicLink verifies a magic link token and creates a session (passwordless login).
+// 2FA is skipped since the magic link itself serves as email-based verification.
+func (s *Service) VerifyMagicLink(appID uuid.UUID, token, ip, userAgent string) (*LoginResult, *errors.AppError) {
+	// Check if magic link is enabled for this application
+	var app models.Application
+	if err := s.DB.Select("magic_link_enabled").First(&app, "id = ?", appID).Error; err != nil {
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to load application settings")
+	}
+	if !app.MagicLinkEnabled {
+		return nil, errors.NewAppError(errors.ErrBadRequest, "Magic link login is not enabled for this application")
+	}
+
+	// Retrieve userID from Redis
+	userID, err := redis.GetMagicLinkToken(appID.String(), token)
+	if err != nil || userID == "" {
+		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired magic link")
+	}
+
+	// Delete token immediately — magic links are single-use
+	if delErr := redis.DeleteMagicLinkToken(appID.String(), token); delErr != nil {
+		log.Printf("Warning: Failed to delete used magic link token from Redis: %v\n", delErr)
+	}
+
+	// Fetch user from DB
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return nil, errors.NewAppError(errors.ErrInternal, "Invalid user ID format")
+	}
+
+	user, err := s.Repo.GetUserByID(userUUID.String())
+	if err != nil {
+		return nil, errors.NewAppError(errors.ErrUnauthorized, "User not found")
+	}
+
+	// Verify account is still active
+	if !user.IsActive {
+		return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+	}
+
+	// Verify email is still verified
+	if !user.EmailVerified {
+		return nil, errors.NewAppError(errors.ErrForbidden, "Email not verified.")
+	}
+
+	// Create session (skip 2FA — magic link is itself an email-based verification factor)
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+	if appErr != nil {
+		return nil, appErr
+	}
+
+	return &LoginResult{
+		RequiresTwoFA: false,
+		UserID:        user.ID,
+		AccessToken:   accessToken,
+		RefreshToken:  refreshToken,
+		SessionID:     sessionID,
+	}, nil
 }

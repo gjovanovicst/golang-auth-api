@@ -21,9 +21,10 @@ type TenantResponse struct {
 
 // CreateAppRequest represents the payload for creating a new application
 type CreateAppRequest struct {
-	TenantID    string `json:"tenant_id" binding:"required"`
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	TenantID         string `json:"tenant_id" binding:"required"`
+	Name             string `json:"name" binding:"required"`
+	Description      string `json:"description"`
+	MagicLinkEnabled bool   `json:"magic_link_enabled"`
 }
 
 // AppResponse represents the application data returned to clients

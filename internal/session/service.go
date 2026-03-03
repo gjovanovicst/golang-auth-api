@@ -88,7 +88,9 @@ func (s *Service) RefreshSession(oldRefreshToken string) (string, string, string
 	if err := redis.UpdateSessionRefreshToken(claims.AppID, claims.SessionID, newRefreshToken); err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to update session")
 	}
-	redis.TouchSession(claims.AppID, claims.SessionID)
+	if err := redis.TouchSession(claims.AppID, claims.SessionID); err != nil {
+		log.Printf("Warning: Failed to touch session: %v\n", err)
+	}
 
 	return newAccessToken, newRefreshToken, claims.UserID, nil
 }

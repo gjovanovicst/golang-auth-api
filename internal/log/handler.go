@@ -156,23 +156,52 @@ func (h *Handler) GetAllActivityLogs(c *gin.Context) {
 // @Router /activity-logs/event-types [get]
 func (h *Handler) GetEventTypes(c *gin.Context) {
 	eventTypes := []string{
+		// Authentication
 		EventLogin,
+		EventLoginFailed,
 		EventLogout,
 		EventRegister,
+		EventTokenRefresh,
+
+		// Password management
 		EventPasswordChange,
 		EventPasswordReset,
+
+		// Email
 		EventEmailVerify,
+		EventEmailVerifyResend,
 		EventEmailChange,
+
+		// Two-factor authentication
 		Event2FAEnable,
 		Event2FADisable,
 		Event2FALogin,
-		EventTokenRefresh,
+		EventRecoveryCodeUsed,
+		EventRecoveryCodeGen,
+
+		// Social authentication
 		EventSocialLogin,
+		EventSocialAccountLinked,
+		EventSocialAccountUnlinked,
+
+		// Passkey / WebAuthn
+		EventPasskeyRegister,
+		EventPasskeyDelete,
+		EventPasskeyLogin,
+
+		// Magic link
+		EventMagicLinkRequested,
+		EventMagicLinkLogin,
+		EventMagicLinkFailed,
+
+		// Profile & account
 		EventProfileAccess,
 		EventProfileUpdate,
 		EventAccountDeletion,
-		EventRecoveryCodeUsed,
-		EventRecoveryCodeGen,
+
+		// Security events
+		EventBruteForceDetected,
+		EventIPBlocked,
 	}
 
 	c.JSON(http.StatusOK, gin.H{

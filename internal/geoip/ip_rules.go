@@ -264,11 +264,17 @@ func ValidateRule(rule *models.IPRule) error {
 	// Validate match type and value
 	switch rule.MatchType {
 	case models.IPMatchTypeIP:
+		if strings.Contains(rule.Value, "/") {
+			return fmt.Errorf("value contains '/' — did you mean to select 'CIDR Range' as the match type? For a single IP use e.g. 192.168.1.1")
+		}
 		if net.ParseIP(rule.Value) == nil {
-			return fmt.Errorf("invalid IP address: %s", rule.Value)
+			return fmt.Errorf("invalid IP address: %s (expected format: 192.168.1.1 or 2001:db8::1)", rule.Value)
 		}
 
 	case models.IPMatchTypeCIDR:
+		if !strings.Contains(rule.Value, "/") {
+			return fmt.Errorf("value has no CIDR prefix (e.g. /24) — did you mean to select 'IP Address' as the match type? For a range use e.g. 10.0.0.0/8")
+		}
 		_, _, err := net.ParseCIDR(rule.Value)
 		if err != nil {
 			return fmt.Errorf("invalid CIDR notation: %s (%v)", rule.Value, err)
@@ -277,7 +283,7 @@ func ValidateRule(rule *models.IPRule) error {
 	case models.IPMatchTypeCountry:
 		// Basic validation: 2-letter ISO country code
 		if len(rule.Value) != 2 {
-			return fmt.Errorf("invalid country code: must be 2-letter ISO code (e.g., 'US')")
+			return fmt.Errorf("invalid country code: must be a 2-letter ISO code (e.g. US, DE, JP)")
 		}
 		rule.Value = strings.ToUpper(rule.Value)
 

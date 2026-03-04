@@ -5042,13 +5042,20 @@ func (h *GUIHandler) IPRuleCreateForm(c *gin.Context) {
 	appID := c.Query("app_id")
 
 	type formData struct {
-		IsEdit bool
-		AppID  string
+		IsEdit      bool
+		AppID       string
+		ID          string
+		RuleType    string
+		MatchType   string
+		Value       string
+		Description string
+		IsActive    bool
 	}
 
 	c.HTML(http.StatusOK, "ip_rule_form", formData{
-		IsEdit: false,
-		AppID:  appID,
+		IsEdit:   false,
+		AppID:    appID,
+		IsActive: true,
 	})
 }
 

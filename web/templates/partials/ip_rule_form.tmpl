@@ -27,7 +27,8 @@
                 </div>
                 <div class="col-md-3">
                     <label for="matchType" class="form-label small text-muted">Match Type</label>
-                    <select class="form-select" id="matchType" name="match_type" required>
+                    <select class="form-select" id="matchType" name="match_type" required
+                            onchange="updateRuleValueHint(this.value)">
                         <option value="ip"{{if eq .MatchType "ip"}} selected{{end}}>IP Address</option>
                         <option value="cidr"{{if eq .MatchType "cidr"}} selected{{end}}>CIDR Range</option>
                         <option value="country"{{if eq .MatchType "country"}} selected{{end}}>Country Code</option>
@@ -37,8 +38,8 @@
                 <div class="col-md-3">
                     <label for="ruleValue" class="form-label small text-muted">Value</label>
                     <input type="text" class="form-control" id="ruleValue" name="value"
-                           value="{{.Value}}" placeholder="e.g., 192.168.1.1 or 10.0.0.0/8 or US" required>
-                    <div class="form-text small">IP, CIDR notation, or ISO 3166-1 alpha-2 country code.</div>
+                           value="{{.Value}}" placeholder="e.g., 192.168.1.1" required>
+                    <div class="form-text small" id="ruleValueHint">A single IPv4 or IPv6 address.</div>
                 </div>
                 <div class="col-md-3">
                     <label for="ruleDescription" class="form-label small text-muted">Description <span class="text-muted">(optional)</span></label>
@@ -69,4 +70,29 @@
         </form>
     </div>
 </div>
+<script>
+function updateRuleValueHint(matchType) {
+    var input = document.getElementById('ruleValue');
+    var hint = document.getElementById('ruleValueHint');
+    switch (matchType) {
+        case 'ip':
+            input.placeholder = 'e.g., 192.168.1.1';
+            hint.textContent = 'A single IPv4 or IPv6 address.';
+            break;
+        case 'cidr':
+            input.placeholder = 'e.g., 10.0.0.0/8 or 172.19.0.0/16';
+            hint.textContent = 'A network range in CIDR notation (address/prefix).';
+            break;
+        case 'country':
+            input.placeholder = 'e.g., US, DE, JP';
+            hint.textContent = 'A 2-letter ISO 3166-1 alpha-2 country code.';
+            break;
+    }
+}
+// Set initial hint based on current selection
+(function() {
+    var sel = document.getElementById('matchType');
+    if (sel) updateRuleValueHint(sel.value);
+})();
+</script>
 {{end}}

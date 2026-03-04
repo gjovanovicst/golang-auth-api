@@ -137,6 +137,30 @@ func (s *Service) SendMagicLinkEmail(appID uuid.UUID, toEmail, magicLink string,
 	})
 }
 
+// SendNewDeviceLoginEmail sends a notification when a login is detected from a new device or location.
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendNewDeviceLoginEmail(appID uuid.UUID, toEmail string, userID *uuid.UUID, loginIP, loginLocation, loginDevice, loginTime string) error {
+	return s.SendEmailWithContext(appID, TypeNewDeviceLogin, toEmail, userID, map[string]string{
+		VarLoginIP:       loginIP,
+		VarLoginLocation: loginLocation,
+		VarLoginDevice:   loginDevice,
+		VarLoginTime:     loginTime,
+	})
+}
+
+// SendSuspiciousActivityEmail sends a security alert when suspicious activity is detected on an account.
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendSuspiciousActivityEmail(appID uuid.UUID, toEmail string, userID *uuid.UUID, loginIP, loginLocation, loginDevice, loginTime, alertType, alertDetails string) error {
+	return s.SendEmailWithContext(appID, TypeSuspiciousActivity, toEmail, userID, map[string]string{
+		VarLoginIP:       loginIP,
+		VarLoginLocation: loginLocation,
+		VarLoginDevice:   loginDevice,
+		VarLoginTime:     loginTime,
+		VarAlertType:     alertType,
+		VarAlertDetails:  alertDetails,
+	})
+}
+
 // SendAdmin2FACodeEmail sends a 2FA verification code to an admin's email address.
 // This bypasses the app-scoped template/SMTP resolution and uses the global SMTP config
 // with a simple hardcoded template, since admin accounts are not scoped to any application.

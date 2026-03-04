@@ -11,6 +11,8 @@ const (
 	TypeAccountDeactivated = "account_deactivated"
 	TypePasswordChanged    = "password_changed"
 	TypeMagicLink          = "magic_link"
+	TypeNewDeviceLogin     = "new_device_login"
+	TypeSuspiciousActivity = "suspicious_activity"
 )
 
 // Template variable names used across email types
@@ -30,6 +32,12 @@ const (
 	VarExpirationMinutes = "expiration_minutes"
 	VarChangeTime        = "change_time"
 	VarMagicLink         = "magic_link"
+	VarLoginIP           = "login_ip"
+	VarLoginLocation     = "login_location"
+	VarLoginDevice       = "login_device"
+	VarLoginTime         = "login_time"
+	VarAlertType         = "alert_type"
+	VarAlertDetails      = "alert_details"
 )
 
 // WellKnownVariables is the registry of all variables the system can auto-resolve.
@@ -58,6 +66,12 @@ var WellKnownVariables = []models.EmailTypeVariable{
 	{Name: VarExpirationMinutes, Description: "Expiration time in minutes", Source: models.VarSourceExplicit},
 	{Name: VarChangeTime, Description: "Timestamp when the change occurred", Source: models.VarSourceExplicit},
 	{Name: VarMagicLink, Description: "Magic link login URL", Source: models.VarSourceExplicit},
+	{Name: VarLoginIP, Description: "IP address of the login attempt", Source: models.VarSourceExplicit},
+	{Name: VarLoginLocation, Description: "Geographic location of the login (e.g. city, country)", Source: models.VarSourceExplicit},
+	{Name: VarLoginDevice, Description: "Device/browser user-agent of the login", Source: models.VarSourceExplicit},
+	{Name: VarLoginTime, Description: "Timestamp of the login event", Source: models.VarSourceExplicit},
+	{Name: VarAlertType, Description: "Type of security alert (e.g. new_device, brute_force)", Source: models.VarSourceExplicit},
+	{Name: VarAlertDetails, Description: "Detailed description of the security alert", Source: models.VarSourceExplicit},
 }
 
 // SMTPConfig holds the resolved SMTP configuration for sending emails.

@@ -67,6 +67,7 @@ func MigrateDatabase() {
 		&models.Permission{},         // RBAC permissions (global)
 		&models.UserRole{},           // RBAC user-role assignments
 		&models.WebAuthnCredential{}, // WebAuthn/Passkey credentials
+		&models.IPRule{},             // IP-based access rules (per-app)
 	)
 
 	if err != nil {

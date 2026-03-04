@@ -7,14 +7,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/email"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 )
 
 type Handler struct {
-	Repo         *Repository
-	EmailService *email.Service
+	Repo            *Repository
+	EmailService    *email.Service
+	IPRuleRepo      *geoip.IPRuleRepository // IP rule repository (nil = IP rules disabled)
+	IPRuleEvaluator *geoip.IPRuleEvaluator  // IP rule evaluator for cache invalidation (nil = disabled)
+	GeoIPService    *geoip.Service          // GeoIP service for IP access checks (nil = disabled)
 }
 
 func NewHandler(r *Repository, emailService *email.Service) *Handler {
@@ -1143,4 +1147,365 @@ func (h *Handler) ListWellKnownVariables(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// ============================================================================
+// IP Rules CRUD (per-application)
+// ============================================================================
+
+// ListIPRules lists all IP rules for an application
+// @Summary List IP rules for an application
+// @Description Retrieve all IP access rules (allow/block) for a specific application
+// @Tags Admin - IP Rules
+// @Produce json
+// @Param id path string true "Application ID"
+// @Param include_inactive query bool false "Include inactive rules" default(false)
+// @Success 200 {object} dto.IPRuleListResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/apps/{id}/ip-rules [get]
+func (h *Handler) ListIPRules(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "IP rules feature is not configured"})
+		return
+	}
+
+	appID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid application ID"})
+		return
+	}
+
+	includeInactive := c.DefaultQuery("include_inactive", "false") == "true"
+
+	var rules []models.IPRule
+	if includeInactive {
+		rules, err = h.IPRuleRepo.ListAllByApp(appID)
+	} else {
+		rules, err = h.IPRuleRepo.ListByApp(appID)
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to list IP rules"})
+		return
+	}
+
+	response := make([]dto.IPRuleResponse, len(rules))
+	for i, rule := range rules {
+		response[i] = toIPRuleResponse(rule)
+	}
+
+	c.JSON(http.StatusOK, dto.IPRuleListResponse{
+		Rules: response,
+		Total: len(response),
+	})
+}
+
+// CreateIPRule creates a new IP rule for an application
+// @Summary Create an IP rule
+// @Description Add a new IP access rule (allow or block) for a specific application
+// @Tags Admin - IP Rules
+// @Accept json
+// @Produce json
+// @Param id path string true "Application ID"
+// @Param request body dto.IPRuleCreateRequest true "IP rule data"
+// @Success 201 {object} dto.IPRuleResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/apps/{id}/ip-rules [post]
+func (h *Handler) CreateIPRule(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "IP rules feature is not configured"})
+		return
+	}
+
+	appID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid application ID"})
+		return
+	}
+
+	var req dto.IPRuleCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	rule := &models.IPRule{
+		AppID:       appID,
+		RuleType:    req.RuleType,
+		MatchType:   req.MatchType,
+		Value:       req.Value,
+		Description: req.Description,
+		IsActive:    req.IsActive,
+	}
+
+	// Validate rule
+	if err := geoip.ValidateRule(rule); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.IPRuleRepo.Create(rule); err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to create IP rule"})
+		return
+	}
+
+	// Invalidate cache for this app
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(appID)
+	}
+
+	c.JSON(http.StatusCreated, toIPRuleResponse(*rule))
+}
+
+// GetIPRule retrieves a specific IP rule by ID
+// @Summary Get an IP rule
+// @Description Retrieve a specific IP access rule by its ID
+// @Tags Admin - IP Rules
+// @Produce json
+// @Param id path string true "Application ID"
+// @Param rule_id path string true "IP Rule ID"
+// @Success 200 {object} dto.IPRuleResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/apps/{id}/ip-rules/{rule_id} [get]
+func (h *Handler) GetIPRule(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "IP rules feature is not configured"})
+		return
+	}
+
+	appID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid application ID"})
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("rule_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid rule ID"})
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "IP rule not found"})
+		return
+	}
+
+	// Verify the rule belongs to the specified app
+	if rule.AppID != appID {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "IP rule not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, toIPRuleResponse(*rule))
+}
+
+// UpdateIPRule updates an existing IP rule
+// @Summary Update an IP rule
+// @Description Update an existing IP access rule by its ID
+// @Tags Admin - IP Rules
+// @Accept json
+// @Produce json
+// @Param id path string true "Application ID"
+// @Param rule_id path string true "IP Rule ID"
+// @Param request body dto.IPRuleUpdateRequest true "Updated IP rule data"
+// @Success 200 {object} dto.IPRuleResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/apps/{id}/ip-rules/{rule_id} [put]
+func (h *Handler) UpdateIPRule(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "IP rules feature is not configured"})
+		return
+	}
+
+	appID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid application ID"})
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("rule_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid rule ID"})
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "IP rule not found"})
+		return
+	}
+
+	// Verify the rule belongs to the specified app
+	if rule.AppID != appID {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "IP rule not found"})
+		return
+	}
+
+	var req dto.IPRuleUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	// Apply partial updates
+	if req.RuleType != nil {
+		rule.RuleType = *req.RuleType
+	}
+	if req.MatchType != nil {
+		rule.MatchType = *req.MatchType
+	}
+	if req.Value != nil {
+		rule.Value = *req.Value
+	}
+	if req.Description != nil {
+		rule.Description = *req.Description
+	}
+	if req.IsActive != nil {
+		rule.IsActive = *req.IsActive
+	}
+
+	// Validate rule after updates
+	if err := geoip.ValidateRule(rule); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.IPRuleRepo.Update(rule); err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to update IP rule"})
+		return
+	}
+
+	// Invalidate cache for this app
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(appID)
+	}
+
+	c.JSON(http.StatusOK, toIPRuleResponse(*rule))
+}
+
+// DeleteIPRule deletes an IP rule
+// @Summary Delete an IP rule
+// @Description Remove an IP access rule by its ID
+// @Tags Admin - IP Rules
+// @Produce json
+// @Param id path string true "Application ID"
+// @Param rule_id path string true "IP Rule ID"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/apps/{id}/ip-rules/{rule_id} [delete]
+func (h *Handler) DeleteIPRule(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "IP rules feature is not configured"})
+		return
+	}
+
+	appID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid application ID"})
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("rule_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid rule ID"})
+		return
+	}
+
+	// Verify the rule exists and belongs to the specified app
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "IP rule not found"})
+		return
+	}
+	if rule.AppID != appID {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "IP rule not found"})
+		return
+	}
+
+	if err := h.IPRuleRepo.Delete(ruleID); err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to delete IP rule"})
+		return
+	}
+
+	// Invalidate cache for this app
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(appID)
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "IP rule deleted successfully"})
+}
+
+// CheckIPAccess checks whether an IP address is allowed to access an application
+// @Summary Check IP access
+// @Description Evaluate whether a specific IP address is allowed to access an application based on its IP rules
+// @Tags Admin - IP Rules
+// @Accept json
+// @Produce json
+// @Param id path string true "Application ID"
+// @Param request body dto.IPAccessCheckRequest true "IP address to check"
+// @Success 200 {object} dto.IPAccessCheckResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 503 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/apps/{id}/ip-rules/check [post]
+func (h *Handler) CheckIPAccess(c *gin.Context) {
+	if h.IPRuleEvaluator == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "IP rules feature is not configured"})
+		return
+	}
+
+	appID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid application ID"})
+		return
+	}
+
+	var req dto.IPAccessCheckRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, req.IPAddress)
+
+	response := dto.IPAccessCheckResponse{
+		Allowed: result.Allowed,
+		Reason:  result.Reason,
+	}
+	if result.GeoInfo != nil {
+		response.Country = result.GeoInfo.Country
+		response.CountryName = result.GeoInfo.CountryName
+		response.City = result.GeoInfo.City
+	} else if result.Country != "" {
+		response.Country = result.Country
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// toIPRuleResponse converts a model to a response DTO
+func toIPRuleResponse(rule models.IPRule) dto.IPRuleResponse {
+	return dto.IPRuleResponse{
+		ID:          rule.ID.String(),
+		AppID:       rule.AppID.String(),
+		RuleType:    rule.RuleType,
+		MatchType:   rule.MatchType,
+		Value:       rule.Value,
+		Description: rule.Description,
+		IsActive:    rule.IsActive,
+		CreatedAt:   rule.CreatedAt,
+		UpdatedAt:   rule.UpdatedAt,
+	}
 }

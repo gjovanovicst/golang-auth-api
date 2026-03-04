@@ -5,8 +5,11 @@ import (
 	stdlog "log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/config"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
@@ -28,7 +31,9 @@ type Handler struct {
 	Service           *Service
 	SessionService    *session.Service // Session management for creating sessions on passkey login
 	LookupRoles       RoleLookupFunc
-	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no self-healing role assignment
+	AssignDefaultRole AssignDefaultRoleFunc  // Optional: if nil, no self-healing role assignment
+	IPRuleEvaluator   *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
 }
 
 // NewHandler creates a new WebAuthn handler.
@@ -65,6 +70,65 @@ func (h *Handler) getUserRoles(appID, userID string) []string {
 	}
 
 	return roles
+}
+
+// checkIPAccess evaluates IP-based access rules for the given app.
+// Returns true if access is allowed. If blocked, sends a 403 JSON response.
+func (h *Handler) checkIPAccess(c *gin.Context, appID uuid.UUID, ipAddress, userAgent string) bool {
+	if h.IPRuleEvaluator == nil {
+		return true
+	}
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, ipAddress)
+	if !result.Allowed {
+		log.LogIPBlocked(appID, ipAddress, userAgent, map[string]interface{}{
+			"reason":  result.Reason,
+			"country": result.Country,
+		})
+		c.JSON(http.StatusForbidden, dto.ErrorResponse{Error: "Access denied from your location"})
+		return false
+	}
+	return true
+}
+
+// runLoginAnomalyDetection runs anomaly detection for a successful passkey login and logs with the result.
+func (h *Handler) runLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAddress, userAgent, eventType string) {
+	if h.AnomalyDetector == nil {
+		// Fall back to standard logging based on event type
+		if eventType == log.EventPasskeyLogin {
+			log.LogPasskeyLogin(appID, userID, ipAddress, userAgent)
+		} else {
+			log.Log2FALogin(appID, userID, ipAddress, userAgent, "passkey")
+		}
+		return
+	}
+
+	cfg := config.GetLoggingConfig()
+	ctx := log.UserContext{
+		UserID:    userID,
+		AppID:     appID,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		Timestamp: time.Now().UTC(),
+	}
+	anomalyCfg := log.AnomalyConfig{
+		Enabled:                cfg.AnomalyDetection.Enabled,
+		LogOnNewIP:             cfg.AnomalyDetection.LogOnNewIP,
+		LogOnNewUserAgent:      cfg.AnomalyDetection.LogOnNewUserAgent,
+		LogOnGeographicChange:  cfg.AnomalyDetection.LogOnGeographicChange,
+		LogOnUnusualTimeAccess: cfg.AnomalyDetection.LogOnUnusualTimeAccess,
+		SessionWindow:          cfg.AnomalyDetection.SessionWindow,
+		BruteForceEnabled:      cfg.AnomalyDetection.BruteForceEnabled,
+		BruteForceThreshold:    cfg.AnomalyDetection.BruteForceThreshold,
+		BruteForceWindow:       cfg.AnomalyDetection.BruteForceWindow,
+		NotifyOnBruteForce:     cfg.AnomalyDetection.NotifyOnBruteForce,
+		NotifyOnNewDevice:      cfg.AnomalyDetection.NotifyOnNewDevice,
+		NotifyOnGeoChange:      cfg.AnomalyDetection.NotifyOnGeoChange,
+		NotificationCooldown:   cfg.AnomalyDetection.NotificationCooldown,
+	}
+	anomalyResult := h.AnomalyDetector.DetectAnomaly(ctx, anomalyCfg)
+
+	details := map[string]interface{}{"method": "passkey"}
+	log.GetLogService().LogActivityWithAnomalyResult(appID, userID, email, eventType, ipAddress, userAgent, details, &anomalyResult)
 }
 
 // ============================================================================
@@ -317,6 +381,14 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
+	// Get client info early for IP blocking check
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	// Check IP-based access rules before processing 2FA verification
+	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
+		return
+	}
+
 	// Get userID from temporary session
 	userIDStr, err := redis.GetTempUserSession(appID.String(), req.TempToken)
 	if err != nil {
@@ -337,7 +409,6 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 	}
 
 	// Generate final tokens (via session if available, else legacy)
-	ipAddress, userAgent := util.GetClientInfo(c)
 	roles := h.getUserRoles(appID.String(), userIDStr)
 	accessToken, refreshToken, tokenErr := h.createSessionOrTokens(appID.String(), userIDStr, ipAddress, userAgent, roles)
 	if tokenErr != nil {
@@ -345,8 +416,14 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 		return
 	}
 
-	// Log successful 2FA login via passkey
-	log.Log2FALogin(appID, userID, ipAddress, userAgent, "passkey")
+	// Look up user email for anomaly detection notifications
+	userEmail := ""
+	if user, lookupErr := h.Service.UserRepo.GetUserByID(userIDStr); lookupErr == nil {
+		userEmail = user.Email
+	}
+
+	// Log successful 2FA login via passkey with anomaly detection
+	h.runLoginAnomalyDetection(appID, userID, userEmail, ipAddress, userAgent, log.Event2FALogin)
 
 	// Clear temporary session
 	clearTempSession(appID.String(), req.TempToken)
@@ -414,6 +491,14 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
+	// Get client info early for IP blocking check
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	// Check IP-based access rules before processing passwordless login
+	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
+		return
+	}
+
 	userIDStr, appErr := h.Service.FinishPasswordlessLogin(appID, req.SessionID, req.Credential)
 	if appErr != nil {
 		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
@@ -427,7 +512,6 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 	}
 
 	// Generate tokens (via session if available, else legacy)
-	ipAddress, userAgent := util.GetClientInfo(c)
 	roles := h.getUserRoles(appID.String(), userIDStr)
 	accessToken, refreshToken, tokenErr := h.createSessionOrTokens(appID.String(), userIDStr, ipAddress, userAgent, roles)
 	if tokenErr != nil {
@@ -435,8 +519,14 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 		return
 	}
 
-	// Log passwordless login
-	log.LogPasskeyLogin(appID, userID, ipAddress, userAgent)
+	// Look up user email for anomaly detection notifications
+	userEmail := ""
+	if user, lookupErr := h.Service.UserRepo.GetUserByID(userIDStr); lookupErr == nil {
+		userEmail = user.Email
+	}
+
+	// Log passwordless login with anomaly detection
+	h.runLoginAnomalyDetection(appID, userID, userEmail, ipAddress, userAgent, log.EventPasskeyLogin)
 
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,

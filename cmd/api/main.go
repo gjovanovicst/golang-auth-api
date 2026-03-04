@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/admin"
 	"github.com/gjovanovicst/auth_api/internal/database"
 	"github.com/gjovanovicst/auth_api/internal/email"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
 	logService "github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/middleware"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
@@ -83,8 +85,18 @@ func main() {
 	// Run database migrations
 	database.MigrateDatabase()
 
+	// Initialize GeoIP service (graceful degradation if not configured)
+	geoIPService := geoip.NewService(viper.GetString("GEOIP_DB_PATH"))
+
+	// Initialize Anomaly Detector (uses GeoIP if available)
+	anomalyDetector := logService.NewAnomalyDetector(database.DB, geoIPService)
+
 	// Initialize Activity Log Service
-	logService.InitializeLogService()
+	logSvc := logService.InitializeLogService(database.DB, anomalyDetector)
+
+	// Initialize IP Rule infrastructure
+	ipRuleRepo := geoip.NewIPRuleRepository(database.DB)
+	ipRuleEvaluator := geoip.NewIPRuleEvaluator(ipRuleRepo, geoIPService)
 
 	// Initialize Activity Log Cleanup Service
 	cleanupService := logService.InitializeCleanupService(database.DB)
@@ -142,6 +154,44 @@ func main() {
 
 	// Wire admin lookup for passkey discoverable login
 	webauthnService.AdminLookup = accountRepo.GetByID
+
+	// Wire IP rule evaluator and anomaly detector on login handlers
+	userHandler.IPRuleEvaluator = ipRuleEvaluator
+	userHandler.AnomalyDetector = anomalyDetector
+	socialHandler.IPRuleEvaluator = ipRuleEvaluator
+	socialHandler.AnomalyDetector = anomalyDetector
+	twofaHandler.IPRuleEvaluator = ipRuleEvaluator
+	twofaHandler.AnomalyDetector = anomalyDetector
+	webauthnHandler.IPRuleEvaluator = ipRuleEvaluator
+	webauthnHandler.AnomalyDetector = anomalyDetector
+
+	// Wire IP rule management on admin handlers
+	adminHandler.IPRuleRepo = ipRuleRepo
+	adminHandler.IPRuleEvaluator = ipRuleEvaluator
+	adminHandler.GeoIPService = geoIPService
+	guiHandler.IPRuleRepo = ipRuleRepo
+	guiHandler.IPRuleEvaluator = ipRuleEvaluator
+	guiHandler.GeoIPService = geoIPService
+
+	// Wire anomaly notification callback: sends emails when anomalies are detected
+	logSvc.SetAnomalyCallback(func(appID, userID uuid.UUID, userEmail string, result logService.AnomalyResult) {
+		if result.NotificationDetails == nil {
+			return
+		}
+		nd := result.NotificationDetails
+		switch result.NotificationType {
+		case "new_device_login":
+			if err := emailService.SendNewDeviceLoginEmail(appID, userEmail, &userID,
+				nd.IPAddress, nd.Location, nd.Device, nd.LoginTime); err != nil {
+				log.Printf("Anomaly notification (new_device_login) failed for user %s: %v", userEmail, err)
+			}
+		case "suspicious_activity":
+			if err := emailService.SendSuspiciousActivityEmail(appID, userEmail, &userID,
+				nd.IPAddress, nd.Location, nd.Device, nd.LoginTime, nd.AlertType, nd.Details); err != nil {
+				log.Printf("Anomaly notification (suspicious_activity) failed for user %s: %v", userEmail, err)
+			}
+		}
+	})
 
 	// Setup Gin Router
 	r := gin.Default()
@@ -323,6 +373,14 @@ func main() {
 		adminRoutes.POST("/rbac/user-roles", rbacHandler.AssignRole)
 		adminRoutes.DELETE("/rbac/user-roles", rbacHandler.RevokeRole)
 		adminRoutes.GET("/rbac/user-roles/user", rbacHandler.GetUserRoles)
+
+		// IP Rule Management
+		adminRoutes.GET("/apps/:id/ip-rules", adminHandler.ListIPRules)
+		adminRoutes.POST("/apps/:id/ip-rules", adminHandler.CreateIPRule)
+		adminRoutes.GET("/apps/:id/ip-rules/:rule_id", adminHandler.GetIPRule)
+		adminRoutes.PUT("/apps/:id/ip-rules/:rule_id", adminHandler.UpdateIPRule)
+		adminRoutes.DELETE("/apps/:id/ip-rules/:rule_id", adminHandler.DeleteIPRule)
+		adminRoutes.POST("/apps/:id/ip-rules/check", adminHandler.CheckIPAccess)
 	}
 
 	// App API routes (protected by per-application API key)
@@ -518,6 +576,18 @@ func main() {
 			guiAuth.DELETE("/sessions/:app_id/:session_id", guiHandler.SessionRevoke)
 			guiAuth.DELETE("/sessions/revoke-all-user", guiHandler.SessionRevokeAllForUser)
 			guiAuth.GET("/users/:id/sessions", guiHandler.UserSessions)
+
+			// IP Rule management
+			guiAuth.GET("/ip-rules", guiHandler.IPRulePage)
+			guiAuth.GET("/ip-rules/list", guiHandler.IPRuleList)
+			guiAuth.GET("/ip-rules/new", guiHandler.IPRuleCreateForm)
+			guiAuth.POST("/ip-rules", guiHandler.IPRuleCreate)
+			guiAuth.GET("/ip-rules/form-cancel", guiHandler.IPRuleFormCancel)
+			guiAuth.GET("/ip-rules/:id/edit", guiHandler.IPRuleEditForm)
+			guiAuth.PUT("/ip-rules/:id", guiHandler.IPRuleUpdate)
+			guiAuth.GET("/ip-rules/:id/delete", guiHandler.IPRuleDeleteConfirm)
+			guiAuth.DELETE("/ip-rules/:id", guiHandler.IPRuleDelete)
+			guiAuth.POST("/ip-rules/check", guiHandler.IPRuleCheckAccess)
 
 			// My Account & 2FA management
 			guiAuth.GET("/my-account", guiHandler.MyAccountPage)

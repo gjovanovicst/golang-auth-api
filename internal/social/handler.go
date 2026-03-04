@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/config"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/util"
@@ -19,13 +21,72 @@ import (
 )
 
 type Handler struct {
-	Service *Service
+	Service         *Service
+	IPRuleEvaluator *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
 }
 
 func NewHandler(s *Service) *Handler {
 	return &Handler{
 		Service: s,
 	}
+}
+
+// checkIPAccessRedirect evaluates IP rules for the given app and IP address.
+// Returns true if access is allowed, false if blocked.
+// When blocked, it redirects with an error parameter and logs the event.
+func (h *Handler) checkIPAccessRedirect(c *gin.Context, appID uuid.UUID, ipAddress, userAgent, redirectURI string) bool {
+	if h.IPRuleEvaluator == nil {
+		return true // No evaluator configured, allow by default
+	}
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, ipAddress)
+	if !result.Allowed {
+		log.LogIPBlocked(appID, ipAddress, userAgent, map[string]interface{}{
+			"reason":  result.Reason,
+			"country": result.Country,
+		})
+		frontendURL := fmt.Sprintf("%s?error=ip_blocked", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return false
+	}
+	return true
+}
+
+// runSocialLoginAnomalyDetection runs anomaly detection for a successful social login.
+func (h *Handler) runSocialLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAddress, userAgent, provider string) {
+	if h.AnomalyDetector == nil {
+		// Fall back to standard logging
+		log.LogSocialLogin(appID, userID, ipAddress, userAgent, provider)
+		return
+	}
+
+	cfg := config.GetLoggingConfig()
+	ctx := log.UserContext{
+		UserID:    userID,
+		AppID:     appID,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		Timestamp: time.Now().UTC(),
+	}
+	anomalyCfg := log.AnomalyConfig{
+		Enabled:                cfg.AnomalyDetection.Enabled,
+		LogOnNewIP:             cfg.AnomalyDetection.LogOnNewIP,
+		LogOnNewUserAgent:      cfg.AnomalyDetection.LogOnNewUserAgent,
+		LogOnGeographicChange:  cfg.AnomalyDetection.LogOnGeographicChange,
+		LogOnUnusualTimeAccess: cfg.AnomalyDetection.LogOnUnusualTimeAccess,
+		SessionWindow:          cfg.AnomalyDetection.SessionWindow,
+		BruteForceEnabled:      cfg.AnomalyDetection.BruteForceEnabled,
+		BruteForceThreshold:    cfg.AnomalyDetection.BruteForceThreshold,
+		BruteForceWindow:       cfg.AnomalyDetection.BruteForceWindow,
+		NotifyOnBruteForce:     cfg.AnomalyDetection.NotifyOnBruteForce,
+		NotifyOnNewDevice:      cfg.AnomalyDetection.NotifyOnNewDevice,
+		NotifyOnGeoChange:      cfg.AnomalyDetection.NotifyOnGeoChange,
+		NotificationCooldown:   cfg.AnomalyDetection.NotificationCooldown,
+	}
+	anomalyResult := h.AnomalyDetector.DetectAnomaly(ctx, anomalyCfg)
+	log.GetLogService().LogActivityWithAnomalyResult(appID, userID, email, log.EventSocialLogin, ipAddress, userAgent, map[string]interface{}{
+		"provider": provider,
+	}, &anomalyResult)
 }
 
 func (h *Handler) getGoogleConfig(appID string) (*oauth2.Config, error) {
@@ -244,6 +305,12 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 
 	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+
+	// Check IP-based access rules before completing login
+	if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+		return
+	}
+
 	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
@@ -252,8 +319,8 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	// Log social login activity
-	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "google")
+	// Log social login activity with anomaly detection
+	h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "google")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=google",
@@ -421,6 +488,12 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 
 	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+
+	// Check IP-based access rules before completing login
+	if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+		return
+	}
+
 	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
@@ -429,8 +502,8 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	// Log social login activity
-	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "facebook")
+	// Log social login activity with anomaly detection
+	h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "facebook")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=facebook",
@@ -598,6 +671,12 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 
 	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+
+	// Check IP-based access rules before completing login
+	if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+		return
+	}
+
 	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
@@ -606,8 +685,8 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	// Log social login activity
-	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "github")
+	// Log social login activity with anomaly detection
+	h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "github")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=github",

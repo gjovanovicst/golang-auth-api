@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gjovanovicst/auth_api/internal/config"
-	"github.com/gjovanovicst/auth_api/internal/database"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // Event types constants for consistency
@@ -41,7 +41,15 @@ const (
 	EventMagicLinkRequested    = "MAGIC_LINK_REQUESTED"
 	EventMagicLinkLogin        = "MAGIC_LINK_LOGIN"
 	EventMagicLinkFailed       = "MAGIC_LINK_FAILED"
+	EventLoginFailed           = "LOGIN_FAILED"
+	EventBruteForceDetected    = "BRUTE_FORCE_DETECTED"
+	EventIPBlocked             = "IP_BLOCKED"
 )
+
+// AnomalyCallback is invoked asynchronously after an anomaly is detected and logged.
+// It receives the anomaly result and context so the caller (typically main.go) can
+// wire it to the email service for sending notifications without creating an import cycle.
+type AnomalyCallback func(appID, userID uuid.UUID, email string, result AnomalyResult)
 
 // LogEntry represents a log entry to be processed
 type LogEntry struct {
@@ -53,19 +61,25 @@ type LogEntry struct {
 	Details   map[string]interface{}
 	Timestamp time.Time
 	IsAnomaly bool
+	Severity  string // "low", "medium", "high", "critical" — from anomaly detection
 }
 
 // Service handles asynchronous activity logging
 type Service struct {
-	logChannel chan LogEntry
-	ctx        context.Context
-	cancel     context.CancelFunc
+	db              *gorm.DB
+	logChannel      chan LogEntry
+	ctx             context.Context
+	cancel          context.CancelFunc
+	anomalyDetector *AnomalyDetector
+	anomalyCallback AnomalyCallback
 }
 
 var serviceInstance *Service
 
-// InitializeLogService initializes the global log service
-func InitializeLogService() *Service {
+// InitializeLogService initializes the global log service.
+// The db parameter is used for writing log entries.
+// The anomalyDetector may be nil (anomaly detection will be skipped).
+func InitializeLogService(db *gorm.DB, anomalyDetector *AnomalyDetector) *Service {
 	if serviceInstance != nil {
 		return serviceInstance
 	}
@@ -73,9 +87,11 @@ func InitializeLogService() *Service {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	serviceInstance = &Service{
-		logChannel: make(chan LogEntry, 1000), // Buffer for 1000 log entries
-		ctx:        ctx,
-		cancel:     cancel,
+		db:              db,
+		logChannel:      make(chan LogEntry, 1000), // Buffer for 1000 log entries
+		ctx:             ctx,
+		cancel:          cancel,
+		anomalyDetector: anomalyDetector,
 	}
 
 	// Start the background worker
@@ -87,9 +103,16 @@ func InitializeLogService() *Service {
 // GetLogService returns the singleton log service instance
 func GetLogService() *Service {
 	if serviceInstance == nil {
-		return InitializeLogService()
+		log.Println("Warning: GetLogService called before InitializeLogService; returning nil-safe instance")
+		return InitializeLogService(nil, nil)
 	}
 	return serviceInstance
+}
+
+// SetAnomalyCallback sets the callback function invoked when an anomaly is detected.
+// This should be called from main.go after wiring up the email service.
+func (s *Service) SetAnomalyCallback(cb AnomalyCallback) {
+	s.anomalyCallback = cb
 }
 
 // LogActivity logs a user activity asynchronously with smart filtering
@@ -112,12 +135,13 @@ func (s *Service) LogActivity(appID, userID uuid.UUID, eventType, ipAddress, use
 
 	// For informational events with anomaly detection enabled, check for anomalies
 	isAnomaly := false
-	if cfg.AnomalyDetection.Enabled {
-		severity := cfg.GetEventSeverity(eventType)
-		if severity == config.SeverityInformational {
-			detector := GetAnomalyDetector()
+	severity := ""
+	if cfg.AnomalyDetection.Enabled && s.anomalyDetector != nil {
+		cfgSeverity := cfg.GetEventSeverity(eventType)
+		if cfgSeverity == config.SeverityInformational {
 			ctx := UserContext{
 				UserID:    userID,
+				AppID:     appID,
 				IPAddress: ipAddress,
 				UserAgent: userAgent,
 				Timestamp: time.Now().UTC(),
@@ -126,10 +150,18 @@ func (s *Service) LogActivity(appID, userID uuid.UUID, eventType, ipAddress, use
 				Enabled:                cfg.AnomalyDetection.Enabled,
 				LogOnNewIP:             cfg.AnomalyDetection.LogOnNewIP,
 				LogOnNewUserAgent:      cfg.AnomalyDetection.LogOnNewUserAgent,
+				LogOnGeographicChange:  cfg.AnomalyDetection.LogOnGeographicChange,
 				LogOnUnusualTimeAccess: cfg.AnomalyDetection.LogOnUnusualTimeAccess,
 				SessionWindow:          cfg.AnomalyDetection.SessionWindow,
+				BruteForceEnabled:      cfg.AnomalyDetection.BruteForceEnabled,
+				BruteForceThreshold:    cfg.AnomalyDetection.BruteForceThreshold,
+				BruteForceWindow:       cfg.AnomalyDetection.BruteForceWindow,
+				NotifyOnBruteForce:     cfg.AnomalyDetection.NotifyOnBruteForce,
+				NotifyOnNewDevice:      cfg.AnomalyDetection.NotifyOnNewDevice,
+				NotifyOnGeoChange:      cfg.AnomalyDetection.NotifyOnGeoChange,
+				NotificationCooldown:   cfg.AnomalyDetection.NotificationCooldown,
 			}
-			result := detector.DetectAnomaly(ctx, anomalyCfg)
+			result := s.anomalyDetector.DetectAnomaly(ctx, anomalyCfg)
 
 			// If no anomaly detected and this is informational, skip logging
 			if !result.ShouldLog {
@@ -137,6 +169,7 @@ func (s *Service) LogActivity(appID, userID uuid.UUID, eventType, ipAddress, use
 			}
 
 			isAnomaly = result.IsAnomaly
+			severity = result.Severity
 			if isAnomaly && details == nil {
 				details = make(map[string]interface{})
 			}
@@ -155,6 +188,7 @@ func (s *Service) LogActivity(appID, userID uuid.UUID, eventType, ipAddress, use
 		Details:   details,
 		Timestamp: time.Now().UTC(),
 		IsAnomaly: isAnomaly,
+		Severity:  severity,
 	}
 
 	// Non-blocking send to channel
@@ -164,6 +198,49 @@ func (s *Service) LogActivity(appID, userID uuid.UUID, eventType, ipAddress, use
 	default:
 		// Channel is full, log the error but don't block the main request
 		log.Printf("Warning: Activity log channel is full, dropping log entry for user %s, event %s", userID, eventType)
+	}
+}
+
+// LogActivityWithAnomalyResult logs a user activity with a pre-computed anomaly result.
+// This is used by login handlers that run anomaly detection themselves and want
+// to trigger notification callbacks.
+func (s *Service) LogActivityWithAnomalyResult(appID, userID uuid.UUID, email, eventType, ipAddress, userAgent string, details map[string]interface{}, anomalyResult *AnomalyResult) {
+	if details == nil {
+		details = make(map[string]interface{})
+	}
+
+	isAnomaly := false
+	severity := ""
+	if anomalyResult != nil && anomalyResult.IsAnomaly {
+		isAnomaly = true
+		severity = anomalyResult.Severity
+		details["anomaly_reasons"] = anomalyResult.Reasons
+	}
+
+	logEntry := LogEntry{
+		AppID:     appID,
+		UserID:    userID,
+		EventType: eventType,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		Details:   details,
+		Timestamp: time.Now().UTC(),
+		IsAnomaly: isAnomaly,
+		Severity:  severity,
+	}
+
+	// Non-blocking send to channel
+	select {
+	case s.logChannel <- logEntry:
+		// Successfully queued
+	default:
+		log.Printf("Warning: Activity log channel is full, dropping log entry for user %s, event %s", userID, eventType)
+	}
+
+	// Fire anomaly callback if applicable
+	if anomalyResult != nil && anomalyResult.NotifyUser && s.anomalyCallback != nil {
+		// Run callback asynchronously so it doesn't block the caller
+		go s.anomalyCallback(appID, userID, email, *anomalyResult)
 	}
 }
 
@@ -183,6 +260,11 @@ func (s *Service) worker() {
 
 // processLogEntry writes a single log entry to the database with retry logic
 func (s *Service) processLogEntry(entry LogEntry) {
+	if s.db == nil {
+		log.Printf("Warning: Cannot process log entry, database is nil")
+		return
+	}
+
 	const maxRetries = 3
 	const retryDelay = time.Second * 2
 
@@ -202,11 +284,17 @@ func (s *Service) processLogEntry(entry LogEntry) {
 
 	// Get logging configuration for severity and retention
 	cfg := config.GetLoggingConfig()
-	severity := cfg.GetEventSeverity(entry.EventType)
-	retentionDays := cfg.GetRetentionDays(severity)
+	cfgSeverity := cfg.GetEventSeverity(entry.EventType)
+	retentionDays := cfg.GetRetentionDays(cfgSeverity)
 
 	// Calculate expiration time
 	expiresAt := entry.Timestamp.AddDate(0, 0, retentionDays)
+
+	// Use the anomaly severity if available, otherwise use the config severity
+	logSeverity := string(cfgSeverity)
+	if entry.Severity != "" {
+		logSeverity = entry.Severity
+	}
 
 	activityLog := models.ActivityLog{
 		AppID:     entry.AppID,
@@ -216,14 +304,14 @@ func (s *Service) processLogEntry(entry LogEntry) {
 		IPAddress: entry.IPAddress,
 		UserAgent: entry.UserAgent,
 		Details:   detailsJSON,
-		Severity:  string(severity),
+		Severity:  logSeverity,
 		ExpiresAt: &expiresAt,
 		IsAnomaly: entry.IsAnomaly,
 	}
 
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		err := database.DB.Create(&activityLog).Error
+		err := s.db.Create(&activityLog).Error
 		if err == nil {
 			// Successfully logged
 			return
@@ -242,9 +330,6 @@ func (s *Service) processLogEntry(entry LogEntry) {
 	// All retries failed, log the final error
 	log.Printf("Failed to log activity after %d attempts for user %s, event %s: %v",
 		maxRetries, entry.UserID, entry.EventType, lastErr)
-
-	// In a production environment, you might want to send this to a dead letter queue
-	// or persistent error log for manual intervention
 }
 
 // Shutdown gracefully shuts down the log service
@@ -275,6 +360,21 @@ func (s *Service) Shutdown() {
 // LogLogin logs a successful login event
 func LogLogin(appID, userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
 	GetLogService().LogActivity(appID, userID, EventLogin, ipAddress, userAgent, details)
+}
+
+// LogLoginFailed logs a failed login attempt
+func LogLoginFailed(appID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(appID, uuid.Nil, EventLoginFailed, ipAddress, userAgent, details)
+}
+
+// LogBruteForceDetected logs a brute-force detection event
+func LogBruteForceDetected(appID, userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(appID, userID, EventBruteForceDetected, ipAddress, userAgent, details)
+}
+
+// LogIPBlocked logs when access is denied due to an IP rule
+func LogIPBlocked(appID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(appID, uuid.Nil, EventIPBlocked, ipAddress, userAgent, details)
 }
 
 // LogLogout logs a logout event

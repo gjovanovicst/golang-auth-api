@@ -197,5 +197,7 @@ func (s *QueryService) convertToResponse(log models.ActivityLog) dto.ActivityLog
 		IPAddress: log.IPAddress,
 		UserAgent: log.UserAgent,
 		Details:   details,
+		IsAnomaly: log.IsAnomaly,
+		Severity:  log.Severity,
 	}
 }

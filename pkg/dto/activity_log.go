@@ -9,6 +9,8 @@ type ActivityLogResponse struct {
 	IPAddress string      `json:"ip_address"`
 	UserAgent string      `json:"user_agent"`
 	Details   interface{} `json:"details" swaggertype:"object"`
+	IsAnomaly bool        `json:"is_anomaly" example:"false"`
+	Severity  string      `json:"severity" example:"INFORMATIONAL"`
 }
 
 // ActivityLogListRequest represents query parameters for listing activity logs

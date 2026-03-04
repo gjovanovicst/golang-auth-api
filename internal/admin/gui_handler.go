@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/email"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
@@ -31,6 +32,9 @@ type GUIHandler struct {
 	EmailService     *email.Service
 	RBACService      *rbac.Service
 	PasskeyService   *passkeypkg.Service
+	IPRuleRepo       *geoip.IPRuleRepository // IP rule repository (nil = IP rules disabled)
+	IPRuleEvaluator  *geoip.IPRuleEvaluator  // IP rule evaluator for cache invalidation (nil = disabled)
+	GeoIPService     *geoip.Service          // GeoIP service for IP lookups (nil = disabled)
 }
 
 // NewGUIHandler creates a new GUIHandler
@@ -4973,4 +4977,344 @@ func formatTimeAgo(t time.Time) string {
 	default:
 		return t.Format("Jan 02, 2006 15:04")
 	}
+}
+
+// ============================================================================
+// IP Rules Management
+// ============================================================================
+
+// IPRulePage renders the IP Rules management page.
+// GET /gui/ip-rules
+func (h *GUIHandler) IPRulePage(c *gin.Context) {
+	apps, _ := h.Repo.ListAllAppsWithTenantName()
+
+	c.HTML(http.StatusOK, "ip_rules", web.TemplateData{
+		ActivePage:    "ip-rules",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+		Data:          apps,
+	})
+}
+
+// IPRuleList renders the IP rules list (HTMX partial).
+// GET /gui/ip-rules/list
+func (h *GUIHandler) IPRuleList(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-warning">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	appIDStr := c.Query("app_id")
+	if appIDStr == "" {
+		c.String(http.StatusOK, `<div class="text-center py-5 text-muted"><i class="bi bi-funnel fs-1"></i><p class="mt-2 mb-0">Select an application above to view its IP rules.</p></div>`)
+		return
+	}
+
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid application ID.</div>`)
+		return
+	}
+
+	rules, err := h.IPRuleRepo.ListAllByApp(appID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Failed to load IP rules.</div>`)
+		return
+	}
+
+	type ruleListData struct {
+		Rules []models.IPRule
+		AppID string
+		Total int
+	}
+
+	c.HTML(http.StatusOK, "ip_rule_list", ruleListData{
+		Rules: rules,
+		AppID: appIDStr,
+		Total: len(rules),
+	})
+}
+
+// IPRuleCreateForm renders the IP rule create form (HTMX partial).
+// GET /gui/ip-rules/new
+func (h *GUIHandler) IPRuleCreateForm(c *gin.Context) {
+	appID := c.Query("app_id")
+
+	type formData struct {
+		IsEdit bool
+		AppID  string
+	}
+
+	c.HTML(http.StatusOK, "ip_rule_form", formData{
+		IsEdit: false,
+		AppID:  appID,
+	})
+}
+
+// IPRuleCreate handles IP rule creation.
+// POST /gui/ip-rules
+func (h *GUIHandler) IPRuleCreate(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	appIDStr := c.PostForm("app_id")
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid application ID.</div>`)
+		return
+	}
+
+	isActive := c.PostForm("is_active") == "on"
+
+	rule := &models.IPRule{
+		AppID:       appID,
+		RuleType:    c.PostForm("rule_type"),
+		MatchType:   c.PostForm("match_type"),
+		Value:       strings.TrimSpace(c.PostForm("value")),
+		Description: strings.TrimSpace(c.PostForm("description")),
+		IsActive:    isActive,
+	}
+
+	if err := geoip.ValidateRule(rule); err != nil {
+		c.String(http.StatusOK, fmt.Sprintf(`<div class="alert alert-danger">%s</div>`, escapeHTML(err.Error())))
+		return
+	}
+
+	if err := h.IPRuleRepo.Create(rule); err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Failed to create IP rule.</div>`)
+		return
+	}
+
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(appID)
+	}
+
+	c.Header("HX-Trigger", "ipRuleListRefresh")
+	c.String(http.StatusOK, `<div class="alert alert-success alert-dismissible fade show"><i class="bi bi-check-circle me-2"></i>IP rule created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// IPRuleEditForm renders the IP rule edit form (HTMX partial).
+// GET /gui/ip-rules/:id/edit
+func (h *GUIHandler) IPRuleEditForm(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid rule ID.</div>`)
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rule not found.</div>`)
+		return
+	}
+
+	type formData struct {
+		IsEdit      bool
+		AppID       string
+		ID          string
+		RuleType    string
+		MatchType   string
+		Value       string
+		Description string
+		IsActive    bool
+	}
+
+	c.HTML(http.StatusOK, "ip_rule_form", formData{
+		IsEdit:      true,
+		AppID:       rule.AppID.String(),
+		ID:          rule.ID.String(),
+		RuleType:    rule.RuleType,
+		MatchType:   rule.MatchType,
+		Value:       rule.Value,
+		Description: rule.Description,
+		IsActive:    rule.IsActive,
+	})
+}
+
+// IPRuleUpdate handles IP rule update.
+// PUT /gui/ip-rules/:id
+func (h *GUIHandler) IPRuleUpdate(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid rule ID.</div>`)
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rule not found.</div>`)
+		return
+	}
+
+	rule.RuleType = c.PostForm("rule_type")
+	rule.MatchType = c.PostForm("match_type")
+	rule.Value = strings.TrimSpace(c.PostForm("value"))
+	rule.Description = strings.TrimSpace(c.PostForm("description"))
+	rule.IsActive = c.PostForm("is_active") == "on"
+
+	if err := geoip.ValidateRule(rule); err != nil {
+		c.String(http.StatusOK, fmt.Sprintf(`<div class="alert alert-danger">%s</div>`, escapeHTML(err.Error())))
+		return
+	}
+
+	if err := h.IPRuleRepo.Update(rule); err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Failed to update IP rule.</div>`)
+		return
+	}
+
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(rule.AppID)
+	}
+
+	c.Header("HX-Trigger", "ipRuleListRefresh")
+	c.String(http.StatusOK, `<div class="alert alert-success alert-dismissible fade show"><i class="bi bi-check-circle me-2"></i>IP rule updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// IPRuleDeleteConfirm renders the IP rule delete confirmation (HTMX partial).
+// GET /gui/ip-rules/:id/delete
+func (h *GUIHandler) IPRuleDeleteConfirm(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid rule ID.</div>`)
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rule not found.</div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "ip_rule_delete_confirm", rule)
+}
+
+// IPRuleDelete handles IP rule deletion.
+// DELETE /gui/ip-rules/:id
+func (h *GUIHandler) IPRuleDelete(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid rule ID.</div>`)
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rule not found.</div>`)
+		return
+	}
+
+	appID := rule.AppID
+
+	if err := h.IPRuleRepo.Delete(ruleID); err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Failed to delete IP rule.</div>`)
+		return
+	}
+
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(appID)
+	}
+
+	c.Header("HX-Trigger", "ipRuleDeleted")
+
+	// Return the updated list
+	rules, _ := h.IPRuleRepo.ListAllByApp(appID)
+	type ruleListData struct {
+		Rules []models.IPRule
+		AppID string
+		Total int
+	}
+	c.HTML(http.StatusOK, "ip_rule_list", ruleListData{
+		Rules: rules,
+		AppID: appID.String(),
+		Total: len(rules),
+	})
+}
+
+// IPRuleFormCancel handles IP rule form cancellation (HTMX partial).
+// GET /gui/ip-rules/form-cancel
+func (h *GUIHandler) IPRuleFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// IPRuleCheckAccess checks IP access for testing purposes (HTMX partial).
+// POST /gui/ip-rules/check
+func (h *GUIHandler) IPRuleCheckAccess(c *gin.Context) {
+	if h.IPRuleEvaluator == nil {
+		c.String(http.StatusOK, `<div class="alert alert-warning">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	appIDStr := c.PostForm("app_id")
+	ipAddress := strings.TrimSpace(c.PostForm("ip_address"))
+
+	if appIDStr == "" || ipAddress == "" {
+		c.String(http.StatusOK, `<div class="alert alert-warning">Please provide both an application and an IP address.</div>`)
+		return
+	}
+
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid application ID.</div>`)
+		return
+	}
+
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, ipAddress)
+
+	// Build a nice result display
+	var icon, alertClass, statusText string
+	if result.Allowed {
+		icon = "bi-check-circle-fill"
+		alertClass = "alert-success"
+		statusText = "Allowed"
+	} else {
+		icon = "bi-x-circle-fill"
+		alertClass = "alert-danger"
+		statusText = "Blocked"
+	}
+
+	locationInfo := ""
+	if result.GeoInfo != nil {
+		locationInfo = result.GeoInfo.String()
+		if result.GeoInfo.Country != "" {
+			locationInfo += " (" + result.GeoInfo.Country + ")"
+		}
+	}
+
+	html := fmt.Sprintf(`<div class="alert %s alert-dismissible fade show">
+		<i class="bi %s me-2"></i>
+		<strong>%s</strong> &mdash; %s
+		<br><small class="text-muted">Reason: %s%s</small>
+		<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+	</div>`, alertClass, icon, ipAddress, statusText, escapeHTML(result.Reason),
+		func() string {
+			if locationInfo != "" {
+				return " | Location: " + escapeHTML(locationInfo)
+			}
+			return ""
+		}())
+
+	c.String(http.StatusOK, html)
 }

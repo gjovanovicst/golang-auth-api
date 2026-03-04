@@ -698,3 +698,59 @@ func DeleteAdminMagicLinkToken(token string) error {
 	}
 	return Rdb.Del(ctx, key).Err()
 }
+
+// ==================== Failed Login Tracking (Brute-Force Detection) ====================
+
+// IncrFailedLogin increments the failed login counter for a given app + identifier (email or IP).
+// The counter auto-expires after the given window duration.
+// Returns the new count after increment.
+func IncrFailedLogin(appID, identifier string, window time.Duration) (int64, error) {
+	key := fmt.Sprintf("app:%s:failed_login:%s", appID, identifier)
+	count, err := Rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	// Set TTL only on first attempt (when count == 1)
+	if count == 1 {
+		Rdb.Expire(ctx, key, window)
+	}
+	return count, nil
+}
+
+// GetFailedLoginCount returns the current failed login count for a given app + identifier.
+func GetFailedLoginCount(appID, identifier string) (int64, error) {
+	key := fmt.Sprintf("app:%s:failed_login:%s", appID, identifier)
+	count, err := Rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return count, err
+}
+
+// ResetFailedLogins clears the failed login counter for a given app + identifier.
+// Call this on successful login.
+func ResetFailedLogins(appID, identifier string) error {
+	key := fmt.Sprintf("app:%s:failed_login:%s", appID, identifier)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== Notification Cooldown ====================
+
+// SetNotificationCooldown sets a cooldown flag to prevent spamming notification emails.
+// Key pattern: notify_cooldown:{appID}:{userID}:{notificationType}
+func SetNotificationCooldown(appID, userID, notificationType string, cooldown time.Duration) error {
+	key := fmt.Sprintf("notify_cooldown:%s:%s:%s", appID, userID, notificationType)
+	return Rdb.Set(ctx, key, "1", cooldown).Err()
+}
+
+// IsNotificationOnCooldown checks whether a notification cooldown is active for a user.
+func IsNotificationOnCooldown(appID, userID, notificationType string) (bool, error) {
+	key := fmt.Sprintf("notify_cooldown:%s:%s:%s", appID, userID, notificationType)
+	_, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}

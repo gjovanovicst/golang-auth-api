@@ -4,9 +4,12 @@ import (
 	"fmt"
 	stdlog "log"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/config"
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
@@ -25,9 +28,11 @@ type AssignDefaultRoleFunc func(appID, userID string) error
 
 type Handler struct {
 	Service           *Service
-	SessionService    *session.Service      // Session management for creating sessions on 2FA login completion
-	LookupRoles       RoleLookupFunc        // Optional: if nil, tokens are generated without roles
-	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no self-healing role assignment
+	SessionService    *session.Service       // Session management for creating sessions on 2FA login completion
+	LookupRoles       RoleLookupFunc         // Optional: if nil, tokens are generated without roles
+	AssignDefaultRole AssignDefaultRoleFunc  // Optional: if nil, no self-healing role assignment
+	IPRuleEvaluator   *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
 }
 
 func NewHandler(s *Service) *Handler {
@@ -63,6 +68,61 @@ func (h *Handler) getUserRoles(appID, userID string) []string {
 	}
 
 	return roles
+}
+
+// checkIPAccess evaluates IP rules for the given app and IP address.
+// Returns true if access is allowed, false if blocked.
+func (h *Handler) checkIPAccess(c *gin.Context, appID uuid.UUID, ipAddress, userAgent string) bool {
+	if h.IPRuleEvaluator == nil {
+		return true
+	}
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, ipAddress)
+	if !result.Allowed {
+		log.LogIPBlocked(appID, ipAddress, userAgent, map[string]interface{}{
+			"reason":  result.Reason,
+			"country": result.Country,
+		})
+		c.JSON(http.StatusForbidden, dto.ErrorResponse{Error: "Access denied from your location"})
+		return false
+	}
+	return true
+}
+
+// runLoginAnomalyDetection runs anomaly detection for a successful 2FA login and logs with the result.
+func (h *Handler) runLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAddress, userAgent, method string) {
+	if h.AnomalyDetector == nil {
+		// Fall back to standard logging
+		log.Log2FALogin(appID, userID, ipAddress, userAgent, method)
+		return
+	}
+
+	cfg := config.GetLoggingConfig()
+	ctx := log.UserContext{
+		UserID:    userID,
+		AppID:     appID,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		Timestamp: time.Now().UTC(),
+	}
+	anomalyCfg := log.AnomalyConfig{
+		Enabled:                cfg.AnomalyDetection.Enabled,
+		LogOnNewIP:             cfg.AnomalyDetection.LogOnNewIP,
+		LogOnNewUserAgent:      cfg.AnomalyDetection.LogOnNewUserAgent,
+		LogOnGeographicChange:  cfg.AnomalyDetection.LogOnGeographicChange,
+		LogOnUnusualTimeAccess: cfg.AnomalyDetection.LogOnUnusualTimeAccess,
+		SessionWindow:          cfg.AnomalyDetection.SessionWindow,
+		BruteForceEnabled:      cfg.AnomalyDetection.BruteForceEnabled,
+		BruteForceThreshold:    cfg.AnomalyDetection.BruteForceThreshold,
+		BruteForceWindow:       cfg.AnomalyDetection.BruteForceWindow,
+		NotifyOnBruteForce:     cfg.AnomalyDetection.NotifyOnBruteForce,
+		NotifyOnNewDevice:      cfg.AnomalyDetection.NotifyOnNewDevice,
+		NotifyOnGeoChange:      cfg.AnomalyDetection.NotifyOnGeoChange,
+		NotificationCooldown:   cfg.AnomalyDetection.NotificationCooldown,
+	}
+	anomalyResult := h.AnomalyDetector.DetectAnomaly(ctx, anomalyCfg)
+	log.GetLogService().LogActivityWithAnomalyResult(appID, userID, email, log.Event2FALogin, ipAddress, userAgent, map[string]interface{}{
+		"method": method,
+	}, &anomalyResult)
 }
 
 // @Summary Generate 2FA setup
@@ -273,6 +333,14 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
+	// Get client info early for IP blocking check
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	// Check IP-based access rules before processing 2FA verification
+	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
+		return
+	}
+
 	// Get userID from temporary session
 	userID, err := getUserIDFromTempSession(appID.String(), req.TempToken)
 	if err != nil {
@@ -290,7 +358,6 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		verificationErr = h.Service.VerifyRecoveryCode(userID, req.RecoveryCode)
 
 		// Log recovery code usage
-		ipAddress, userAgent := util.GetClientInfo(c)
 		userUUID, parseErr := uuid.Parse(userID)
 		if parseErr == nil {
 			log.LogRecoveryCodeUsed(appID, userUUID, ipAddress, userAgent)
@@ -331,7 +398,6 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	}
 
 	// Generate final tokens (via session if available, else legacy)
-	ipAddress, userAgent := util.GetClientInfo(c)
 	roles := h.getUserRoles(appID.String(), userID)
 	accessToken, refreshToken, tokenErr := h.createSessionOrTokens(appID.String(), userID, ipAddress, userAgent, roles)
 	if tokenErr != nil {
@@ -339,10 +405,18 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		return
 	}
 
-	// Log successful 2FA login
+	// Look up user email for anomaly detection notifications
+	userEmail := ""
 	userUUID, parseErr := uuid.Parse(userID)
 	if parseErr == nil {
-		log.Log2FALogin(appID, userUUID, ipAddress, userAgent, method)
+		if user, lookupErr := h.Service.UserRepo.GetUserByID(userID); lookupErr == nil {
+			userEmail = user.Email
+		}
+	}
+
+	// Log successful 2FA login with anomaly detection
+	if parseErr == nil {
+		h.runLoginAnomalyDetection(appID, userUUID, userEmail, ipAddress, userAgent, method)
 	}
 
 	// Clear temporary session

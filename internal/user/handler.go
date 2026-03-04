@@ -2,8 +2,11 @@ package user
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/config"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
@@ -12,11 +15,120 @@ import (
 )
 
 type Handler struct {
-	Service *Service
+	Service         *Service
+	IPRuleEvaluator *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
 }
 
 func NewHandler(s *Service) *Handler {
 	return &Handler{Service: s}
+}
+
+// checkIPAccess evaluates IP rules for the given app and IP address.
+// Returns true if access is allowed, false if blocked.
+// When blocked, it sends the appropriate JSON error response and logs the event.
+func (h *Handler) checkIPAccess(c *gin.Context, appID uuid.UUID, ipAddress, userAgent string) bool {
+	if h.IPRuleEvaluator == nil {
+		return true // No evaluator configured, allow by default
+	}
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, ipAddress)
+	if !result.Allowed {
+		log.LogIPBlocked(appID, ipAddress, userAgent, map[string]interface{}{
+			"reason":  result.Reason,
+			"country": result.Country,
+		})
+		c.JSON(http.StatusForbidden, dto.ErrorResponse{Error: "Access denied from your location"})
+		return false
+	}
+	return true
+}
+
+// runLoginAnomalyDetection runs anomaly detection for a successful login and logs with the result.
+// It replaces the plain LogLogin call to enable anomaly-based notifications.
+func (h *Handler) runLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAddress, userAgent string, details map[string]interface{}) {
+	if h.AnomalyDetector == nil {
+		// Fall back to standard logging
+		log.LogLogin(appID, userID, ipAddress, userAgent, details)
+		return
+	}
+
+	cfg := config.GetLoggingConfig()
+	ctx := log.UserContext{
+		UserID:    userID,
+		AppID:     appID,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		Timestamp: time.Now().UTC(),
+	}
+	anomalyCfg := log.AnomalyConfig{
+		Enabled:                cfg.AnomalyDetection.Enabled,
+		LogOnNewIP:             cfg.AnomalyDetection.LogOnNewIP,
+		LogOnNewUserAgent:      cfg.AnomalyDetection.LogOnNewUserAgent,
+		LogOnGeographicChange:  cfg.AnomalyDetection.LogOnGeographicChange,
+		LogOnUnusualTimeAccess: cfg.AnomalyDetection.LogOnUnusualTimeAccess,
+		SessionWindow:          cfg.AnomalyDetection.SessionWindow,
+		BruteForceEnabled:      cfg.AnomalyDetection.BruteForceEnabled,
+		BruteForceThreshold:    cfg.AnomalyDetection.BruteForceThreshold,
+		BruteForceWindow:       cfg.AnomalyDetection.BruteForceWindow,
+		NotifyOnBruteForce:     cfg.AnomalyDetection.NotifyOnBruteForce,
+		NotifyOnNewDevice:      cfg.AnomalyDetection.NotifyOnNewDevice,
+		NotifyOnGeoChange:      cfg.AnomalyDetection.NotifyOnGeoChange,
+		NotificationCooldown:   cfg.AnomalyDetection.NotificationCooldown,
+	}
+	anomalyResult := h.AnomalyDetector.DetectAnomaly(ctx, anomalyCfg)
+	log.GetLogService().LogActivityWithAnomalyResult(appID, userID, email, log.EventLogin, ipAddress, userAgent, details, &anomalyResult)
+}
+
+// handleFailedLogin tracks a failed login attempt for brute-force detection.
+func (h *Handler) handleFailedLogin(appID uuid.UUID, email, ipAddress, userAgent string) {
+	// Log the failed attempt
+	log.LogLoginFailed(appID, ipAddress, userAgent, map[string]interface{}{
+		"email": email,
+	})
+
+	// Brute-force tracking
+	if h.AnomalyDetector == nil {
+		return
+	}
+	cfg := config.GetLoggingConfig()
+	if !cfg.AnomalyDetection.BruteForceEnabled {
+		return
+	}
+
+	count, err := h.AnomalyDetector.IncrementAndCheckBruteForce(appID, email, cfg.AnomalyDetection.BruteForceWindow)
+	if err != nil {
+		return
+	}
+
+	if count >= int64(cfg.AnomalyDetection.BruteForceThreshold) {
+		ctx := log.UserContext{
+			AppID:     appID,
+			IPAddress: ipAddress,
+			UserAgent: userAgent,
+			Timestamp: time.Now().UTC(),
+		}
+		bruteResult := h.AnomalyDetector.DetectBruteForce(ctx, log.AnomalyConfig{
+			BruteForceEnabled:    cfg.AnomalyDetection.BruteForceEnabled,
+			BruteForceThreshold:  cfg.AnomalyDetection.BruteForceThreshold,
+			BruteForceWindow:     cfg.AnomalyDetection.BruteForceWindow,
+			NotifyOnBruteForce:   cfg.AnomalyDetection.NotifyOnBruteForce,
+			NotificationCooldown: cfg.AnomalyDetection.NotificationCooldown,
+		}, count)
+
+		log.LogBruteForceDetected(appID, uuid.Nil, ipAddress, userAgent, map[string]interface{}{
+			"email":        email,
+			"failed_count": count,
+		})
+
+		// Fire anomaly callback for brute-force notification
+		if bruteResult.NotifyUser {
+			// Try to look up user to get their email for notification
+			log.GetLogService().LogActivityWithAnomalyResult(appID, uuid.Nil, email, log.EventBruteForceDetected, ipAddress, userAgent, map[string]interface{}{
+				"email":        email,
+				"failed_count": count,
+			}, &bruteResult)
+		}
+	}
 }
 
 // @Summary Register a new user
@@ -100,15 +212,27 @@ func (h *Handler) Login(c *gin.Context) {
 	// Get client info for logging and session tracking
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Check IP-based access rules before processing login
+	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
+		return
+	}
+
 	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password, ipAddress, userAgent)
 	if err != nil {
+		// Track failed login for brute-force detection
+		h.handleFailedLogin(appID, req.Email, ipAddress, userAgent)
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
 
+	// Successful credential verification — reset brute-force counter
+	if h.AnomalyDetector != nil {
+		_ = h.AnomalyDetector.ResetBruteForceCounter(appID, req.Email)
+	}
+
 	// Check if 2FA is required
 	if loginResult.RequiresTwoFA {
-		// Log partial login (2FA required)
+		// Log partial login (2FA required) — anomaly detection will run after 2FA completion
 		details := map[string]interface{}{
 			"requires_2fa": true,
 		}
@@ -127,11 +251,11 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	// Log successful login
+	// Log successful login with anomaly detection
 	details := map[string]interface{}{
 		"requires_2fa": false,
 	}
-	log.LogLogin(appID, loginResult.UserID, ipAddress, userAgent, details)
+	h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, details)
 
 	// Standard login response
 	c.JSON(http.StatusOK, dto.LoginResponse{
@@ -854,6 +978,11 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Check IP-based access rules before processing magic link
+	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
+		return
+	}
+
 	result, err := h.Service.VerifyMagicLink(appID, req.Token, ipAddress, userAgent)
 	if err != nil {
 		// Log failed attempt
@@ -862,8 +991,16 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 		return
 	}
 
-	// Log successful magic link login
-	log.LogMagicLinkLogin(appID, result.UserID, ipAddress, userAgent)
+	// Look up user email for anomaly detection notifications
+	userEmail := ""
+	if user, lookupErr := h.Service.Repo.GetUserByID(result.UserID.String()); lookupErr == nil {
+		userEmail = user.Email
+	}
+
+	// Log successful magic link login with anomaly detection
+	h.runLoginAnomalyDetection(appID, result.UserID, userEmail, ipAddress, userAgent, map[string]interface{}{
+		"login_method": "magic_link",
+	})
 
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  result.AccessToken,

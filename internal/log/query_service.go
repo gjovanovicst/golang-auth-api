@@ -11,6 +11,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// ExportMaxRows is the hard cap applied to every export request.
+const ExportMaxRows = 10_000
+
 type QueryService struct {
 	Repo *Repository
 }
@@ -19,68 +22,68 @@ func NewQueryService(repo *Repository) *QueryService {
 	return &QueryService{Repo: repo}
 }
 
-// ListUserActivityLogs retrieves activity logs for a specific user with pagination and filtering
+// parseDateFilters parses optional start/end date strings (YYYY-MM-DD) and validates the range.
+func parseDateFilters(startDateStr, endDateStr string) (*time.Time, *time.Time, *errors.AppError) {
+	var startDate, endDate *time.Time
+
+	if startDateStr != "" {
+		parsed, err := time.Parse("2006-01-02", startDateStr)
+		if err != nil {
+			return nil, nil, errors.NewAppError(errors.ErrBadRequest, "Invalid start_date format. Use YYYY-MM-DD")
+		}
+		startDate = &parsed
+	}
+
+	if endDateStr != "" {
+		parsed, err := time.Parse("2006-01-02", endDateStr)
+		if err != nil {
+			return nil, nil, errors.NewAppError(errors.ErrBadRequest, "Invalid end_date format. Use YYYY-MM-DD")
+		}
+		endDate = &parsed
+	}
+
+	if startDate != nil && endDate != nil && startDate.After(*endDate) {
+		return nil, nil, errors.NewAppError(errors.ErrBadRequest, "start_date cannot be after end_date")
+	}
+
+	return startDate, endDate, nil
+}
+
+// ListUserActivityLogs retrieves activity logs for a specific user with pagination and filtering.
 func (s *QueryService) ListUserActivityLogs(userID uuid.UUID, req dto.ActivityLogListRequest) (*dto.ActivityLogListResponse, *errors.AppError) {
-	// Set default values
 	if req.Page <= 0 {
 		req.Page = 1
 	}
 	if req.Limit <= 0 {
-		req.Limit = 20 // Default page size
+		req.Limit = 20
 	}
 	if req.Limit > 100 {
-		req.Limit = 100 // Maximum page size
+		req.Limit = 100
 	}
 
-	// Parse date filters
-	var startDate, endDate *time.Time
-	var err error
-
-	if req.StartDate != "" {
-		if parsed, parseErr := time.Parse("2006-01-02", req.StartDate); parseErr != nil {
-			return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid start_date format. Use YYYY-MM-DD")
-		} else {
-			startDate = &parsed
-		}
+	startDate, endDate, appErr := parseDateFilters(req.StartDate, req.EndDate)
+	if appErr != nil {
+		return nil, appErr
 	}
 
-	if req.EndDate != "" {
-		if parsed, parseErr := time.Parse("2006-01-02", req.EndDate); parseErr != nil {
-			return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid end_date format. Use YYYY-MM-DD")
-		} else {
-			endDate = &parsed
-		}
-	}
-
-	// Validate date range
-	if startDate != nil && endDate != nil && startDate.After(*endDate) {
-		return nil, errors.NewAppError(errors.ErrBadRequest, "start_date cannot be after end_date")
-	}
-
-	// Get logs from repository
 	logs, totalCount, err := s.Repo.ListUserActivityLogs(userID, req.Page, req.Limit, req.EventType, startDate, endDate)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to retrieve activity logs")
 	}
 
-	// Convert to response format
 	responseData := make([]dto.ActivityLogResponse, len(logs))
 	for i, log := range logs {
 		responseData[i] = s.convertToResponse(log)
 	}
 
-	// Calculate pagination metadata
 	totalPages := int(math.Ceil(float64(totalCount) / float64(req.Limit)))
-	hasNext := req.Page < totalPages
-	hasPrevious := req.Page > 1
-
 	pagination := dto.PaginationResponse{
 		Page:         req.Page,
 		Limit:        req.Limit,
 		TotalRecords: totalCount,
 		TotalPages:   totalPages,
-		HasNext:      hasNext,
-		HasPrevious:  hasPrevious,
+		HasNext:      req.Page < totalPages,
+		HasPrevious:  req.Page > 1,
 	}
 
 	return &dto.ActivityLogListResponse{
@@ -89,68 +92,41 @@ func (s *QueryService) ListUserActivityLogs(userID uuid.UUID, req dto.ActivityLo
 	}, nil
 }
 
-// ListAllActivityLogs retrieves activity logs for all users (admin functionality)
+// ListAllActivityLogs retrieves activity logs for all users (admin) with pagination and filtering.
 func (s *QueryService) ListAllActivityLogs(req dto.ActivityLogListRequest) (*dto.ActivityLogListResponse, *errors.AppError) {
-	// Set default values
 	if req.Page <= 0 {
 		req.Page = 1
 	}
 	if req.Limit <= 0 {
-		req.Limit = 20 // Default page size
+		req.Limit = 20
 	}
 	if req.Limit > 100 {
-		req.Limit = 100 // Maximum page size
+		req.Limit = 100
 	}
 
-	// Parse date filters
-	var startDate, endDate *time.Time
-	var err error
-
-	if req.StartDate != "" {
-		if parsed, parseErr := time.Parse("2006-01-02", req.StartDate); parseErr != nil {
-			return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid start_date format. Use YYYY-MM-DD")
-		} else {
-			startDate = &parsed
-		}
+	startDate, endDate, appErr := parseDateFilters(req.StartDate, req.EndDate)
+	if appErr != nil {
+		return nil, appErr
 	}
 
-	if req.EndDate != "" {
-		if parsed, parseErr := time.Parse("2006-01-02", req.EndDate); parseErr != nil {
-			return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid end_date format. Use YYYY-MM-DD")
-		} else {
-			endDate = &parsed
-		}
-	}
-
-	// Validate date range
-	if startDate != nil && endDate != nil && startDate.After(*endDate) {
-		return nil, errors.NewAppError(errors.ErrBadRequest, "start_date cannot be after end_date")
-	}
-
-	// Get logs from repository
 	logs, totalCount, err := s.Repo.ListAllActivityLogs(req.Page, req.Limit, req.EventType, startDate, endDate)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to retrieve activity logs")
 	}
 
-	// Convert to response format
 	responseData := make([]dto.ActivityLogResponse, len(logs))
 	for i, log := range logs {
 		responseData[i] = s.convertToResponse(log)
 	}
 
-	// Calculate pagination metadata
 	totalPages := int(math.Ceil(float64(totalCount) / float64(req.Limit)))
-	hasNext := req.Page < totalPages
-	hasPrevious := req.Page > 1
-
 	pagination := dto.PaginationResponse{
 		Page:         req.Page,
 		Limit:        req.Limit,
 		TotalRecords: totalCount,
 		TotalPages:   totalPages,
-		HasNext:      hasNext,
-		HasPrevious:  hasPrevious,
+		HasNext:      req.Page < totalPages,
+		HasPrevious:  req.Page > 1,
 	}
 
 	return &dto.ActivityLogListResponse{
@@ -159,15 +135,13 @@ func (s *QueryService) ListAllActivityLogs(req dto.ActivityLogListRequest) (*dto
 	}, nil
 }
 
-// GetActivityLogByID retrieves a specific activity log by ID
+// GetActivityLogByID retrieves a specific activity log by ID.
 func (s *QueryService) GetActivityLogByID(id uuid.UUID, requestingUserID uuid.UUID) (*dto.ActivityLogResponse, *errors.AppError) {
 	log, err := s.Repo.GetActivityLogByID(id)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrNotFound, "Activity log not found")
 	}
 
-	// Check if the requesting user has permission to view this log
-	// Users can only view their own logs unless they're admin (this would need additional role checking)
 	if log.UserID != requestingUserID {
 		return nil, errors.NewAppError(errors.ErrForbidden, "Access denied to this activity log")
 	}
@@ -176,13 +150,64 @@ func (s *QueryService) GetActivityLogByID(id uuid.UUID, requestingUserID uuid.UU
 	return &response, nil
 }
 
-// convertToResponse converts a models.ActivityLog to dto.ActivityLogResponse
+// ExportUserActivityLogs returns up to ExportMaxRows logs for a specific user.
+// truncated is true when the result set was capped.
+func (s *QueryService) ExportUserActivityLogs(userID uuid.UUID, req dto.ActivityLogExportRequest) ([]dto.ActivityLogResponse, bool, *errors.AppError) {
+	startDate, endDate, appErr := parseDateFilters(req.StartDate, req.EndDate)
+	if appErr != nil {
+		return nil, false, appErr
+	}
+
+	// Fetch one extra row so we can detect truncation without a separate COUNT query.
+	logs, err := s.Repo.ExportUserActivityLogs(userID, ExportMaxRows+1, req.EventType, startDate, endDate)
+	if err != nil {
+		return nil, false, errors.NewAppError(errors.ErrInternal, "Failed to export activity logs")
+	}
+
+	truncated := len(logs) > ExportMaxRows
+	if truncated {
+		logs = logs[:ExportMaxRows]
+	}
+
+	responseData := make([]dto.ActivityLogResponse, len(logs))
+	for i, log := range logs {
+		responseData[i] = s.convertToResponse(log)
+	}
+
+	return responseData, truncated, nil
+}
+
+// ExportAllActivityLogs returns up to ExportMaxRows logs across all users (admin).
+// truncated is true when the result set was capped.
+func (s *QueryService) ExportAllActivityLogs(req dto.ActivityLogExportRequest) ([]dto.ActivityLogResponse, bool, *errors.AppError) {
+	startDate, endDate, appErr := parseDateFilters(req.StartDate, req.EndDate)
+	if appErr != nil {
+		return nil, false, appErr
+	}
+
+	logs, err := s.Repo.ExportAllActivityLogs(ExportMaxRows+1, req.EventType, startDate, endDate)
+	if err != nil {
+		return nil, false, errors.NewAppError(errors.ErrInternal, "Failed to export activity logs")
+	}
+
+	truncated := len(logs) > ExportMaxRows
+	if truncated {
+		logs = logs[:ExportMaxRows]
+	}
+
+	responseData := make([]dto.ActivityLogResponse, len(logs))
+	for i, log := range logs {
+		responseData[i] = s.convertToResponse(log)
+	}
+
+	return responseData, truncated, nil
+}
+
+// convertToResponse converts a models.ActivityLog to dto.ActivityLogResponse.
 func (s *QueryService) convertToResponse(log models.ActivityLog) dto.ActivityLogResponse {
 	var details interface{}
 	if len(log.Details) > 0 {
-		// Try to unmarshal the JSON details into a generic interface
 		if err := json.Unmarshal(log.Details, &details); err != nil {
-			// If unmarshaling fails, return empty object
 			details = map[string]interface{}{}
 		}
 	} else {

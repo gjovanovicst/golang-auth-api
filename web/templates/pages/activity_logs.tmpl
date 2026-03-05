@@ -9,6 +9,23 @@
     <h4 class="mb-0 fw-bold">
         <i class="bi bi-journal-text me-2"></i>Activity Logs
     </h4>
+    <div class="d-flex gap-2">
+        <a id="exportCsvBtn" href="/gui/logs/export?format=csv"
+           class="btn btn-sm btn-outline-success">
+            <i class="bi bi-filetype-csv me-1"></i>Export CSV
+        </a>
+        <a id="exportJsonBtn" href="/gui/logs/export?format=json"
+           class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-filetype-json me-1"></i>Export JSON
+        </a>
+    </div>
+</div>
+
+<!-- Export cap notice -->
+<div class="alert alert-info alert-dismissible fade show py-2 small mb-3" role="alert">
+    <i class="bi bi-info-circle me-1"></i>
+    Exports are capped at <strong>10,000 rows</strong>. Use the date and filter options below to narrow the range if needed.
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close" style="padding-top: 0.5rem;"></button>
 </div>
 
 <!-- Filters row -->
@@ -89,37 +106,56 @@
     // Build the list URL with current filter/search state
     function getLogListURL(page) {
         var url = '/gui/logs/list?page=' + (page || 1);
-        var search = document.getElementById('logSearch').value.trim();
+        var search    = document.getElementById('logSearch').value.trim();
         var eventType = document.getElementById('eventTypeFilter').value;
-        var severity = document.getElementById('severityFilter').value;
-        var appID = document.getElementById('appFilter').value;
+        var severity  = document.getElementById('severityFilter').value;
+        var appID     = document.getElementById('appFilter').value;
         var startDate = document.getElementById('startDate').value;
-        var endDate = document.getElementById('endDate').value;
-        if (search) url += '&search=' + encodeURIComponent(search);
+        var endDate   = document.getElementById('endDate').value;
+        if (search)    url += '&search='     + encodeURIComponent(search);
         if (eventType) url += '&event_type=' + encodeURIComponent(eventType);
-        if (severity) url += '&severity=' + encodeURIComponent(severity);
-        if (appID) url += '&app_id=' + appID;
+        if (severity)  url += '&severity='   + encodeURIComponent(severity);
+        if (appID)     url += '&app_id='     + appID;
         if (startDate) url += '&start_date=' + startDate;
-        if (endDate) url += '&end_date=' + endDate;
+        if (endDate)   url += '&end_date='   + endDate;
         return url;
     }
 
-    // Reload list when any dropdown filter changes
-    document.getElementById('eventTypeFilter').addEventListener('change', function() {
+    // Build the export URL with current filter state
+    function getExportURL(format) {
+        var url = '/gui/logs/export?format=' + format;
+        var search    = document.getElementById('logSearch').value.trim();
+        var eventType = document.getElementById('eventTypeFilter').value;
+        var severity  = document.getElementById('severityFilter').value;
+        var appID     = document.getElementById('appFilter').value;
+        var startDate = document.getElementById('startDate').value;
+        var endDate   = document.getElementById('endDate').value;
+        if (search)    url += '&search='     + encodeURIComponent(search);
+        if (eventType) url += '&event_type=' + encodeURIComponent(eventType);
+        if (severity)  url += '&severity='   + encodeURIComponent(severity);
+        if (appID)     url += '&app_id='     + appID;
+        if (startDate) url += '&start_date=' + startDate;
+        if (endDate)   url += '&end_date='   + endDate;
+        return url;
+    }
+
+    // Sync both export button hrefs to match current filter state
+    function updateExportButtons() {
+        document.getElementById('exportCsvBtn').href  = getExportURL('csv');
+        document.getElementById('exportJsonBtn').href = getExportURL('json');
+    }
+
+    // Reload list and sync export buttons when any filter changes
+    function onFilterChange() {
         htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
-    });
-    document.getElementById('severityFilter').addEventListener('change', function() {
-        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
-    });
-    document.getElementById('appFilter').addEventListener('change', function() {
-        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
-    });
-    document.getElementById('startDate').addEventListener('change', function() {
-        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
-    });
-    document.getElementById('endDate').addEventListener('change', function() {
-        htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
-    });
+        updateExportButtons();
+    }
+
+    document.getElementById('eventTypeFilter').addEventListener('change', onFilterChange);
+    document.getElementById('severityFilter').addEventListener('change', onFilterChange);
+    document.getElementById('appFilter').addEventListener('change', onFilterChange);
+    document.getElementById('startDate').addEventListener('change', onFilterChange);
+    document.getElementById('endDate').addEventListener('change', onFilterChange);
 
     // Debounced search on keyup
     var searchTimeout = null;
@@ -127,6 +163,7 @@
         if (searchTimeout) clearTimeout(searchTimeout);
         searchTimeout = setTimeout(function() {
             htmx.ajax('GET', getLogListURL(1), {target: '#log-table', swap: 'innerHTML'});
+            updateExportButtons();
         }, 300);
     });
 

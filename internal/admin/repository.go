@@ -683,6 +683,15 @@ type ActivityLogListItem struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// ActivityLogExportItem extends ActivityLogListItem with extra fields useful for compliance exports.
+type ActivityLogExportItem struct {
+	ActivityLogListItem
+	UserAgent string `json:"user_agent"`
+}
+
+// ExportActivityLogsMaxRows is the hard cap for admin GUI log exports.
+const ExportActivityLogsMaxRows = 10_000
+
 // ActivityLogDetail represents a full activity log view for the admin GUI detail panel.
 type ActivityLogDetail struct {
 	ID        uuid.UUID  `json:"id"`
@@ -809,6 +818,60 @@ func (r *Repository) ListDistinctSeverities() ([]string, error) {
 		return nil, err
 	}
 	return severities, nil
+}
+
+// ExportActivityLogs returns up to ExportActivityLogsMaxRows activity log rows including UserAgent,
+// applying the same optional filters as ListActivityLogs (no pagination).
+// The caller should check whether len(result) == ExportActivityLogsMaxRows to detect truncation;
+// the method internally fetches ExportActivityLogsMaxRows+1 rows so the caller can detect it easily.
+func (r *Repository) ExportActivityLogs(eventType, severity, appID, search, startDate, endDate string) ([]ActivityLogExportItem, bool, error) {
+	var items []ActivityLogExportItem
+
+	applyFilters := func(q *gorm.DB) *gorm.DB {
+		q = q.Joins("LEFT JOIN users ON users.id = activity_logs.user_id::uuid").
+			Joins("LEFT JOIN applications ON applications.id = activity_logs.app_id::uuid")
+		if eventType != "" {
+			q = q.Where("activity_logs.event_type = ?", eventType)
+		}
+		if severity != "" {
+			q = q.Where("activity_logs.severity = ?", severity)
+		}
+		if appID != "" {
+			q = q.Where("activity_logs.app_id = ?", appID)
+		}
+		if search != "" {
+			q = q.Where("users.email ILIKE ?", "%"+search+"%")
+		}
+		if startDate != "" {
+			q = q.Where("activity_logs.timestamp >= ?", startDate)
+		}
+		if endDate != "" {
+			q = q.Where("activity_logs.timestamp <= ?", endDate+" 23:59:59")
+		}
+		return q
+	}
+
+	limit := ExportActivityLogsMaxRows + 1
+	dataQuery := applyFilters(r.DB.Model(&models.ActivityLog{}).
+		Select(`activity_logs.id, activity_logs.app_id,
+			COALESCE(applications.name, '') as app_name,
+			activity_logs.user_id,
+			COALESCE(users.email, '') as user_email,
+			activity_logs.event_type, activity_logs.severity,
+			activity_logs.ip_address, activity_logs.user_agent,
+			activity_logs.is_anomaly,
+			activity_logs.timestamp`))
+
+	if err := dataQuery.Order("activity_logs.timestamp desc").Limit(limit).Scan(&items).Error; err != nil {
+		return nil, false, err
+	}
+
+	truncated := len(items) > ExportActivityLogsMaxRows
+	if truncated {
+		items = items[:ExportActivityLogsMaxRows]
+	}
+
+	return items, truncated, nil
 }
 
 // ============================================================

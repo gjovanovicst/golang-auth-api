@@ -2,8 +2,10 @@ package admin
 
 import (
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strconv"
@@ -1546,6 +1548,95 @@ func (h *GUIHandler) LogDetail(c *gin.Context) {
 	}
 
 	c.HTML(http.StatusOK, "activity_log_detail", detail)
+}
+
+// LogExport streams activity logs as a downloadable CSV or JSON file.
+// GET /gui/logs/export
+func (h *GUIHandler) LogExport(c *gin.Context) {
+	format := c.DefaultQuery("format", "csv")
+	if format != "csv" && format != "json" {
+		format = "csv"
+	}
+
+	eventType := c.Query("event_type")
+	severity := c.Query("severity")
+	appID := c.Query("app_id")
+	search := c.Query("search")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	items, truncated, err := h.Repo.ExportActivityLogs(eventType, severity, appID, search, startDate, endDate)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to export activity logs")
+		return
+	}
+
+	timestamp := time.Now().UTC().Format("20060102_150405")
+	truncatedVal := "false"
+	if truncated {
+		truncatedVal = "true"
+	}
+	c.Header("X-Export-Truncated", truncatedVal)
+
+	switch format {
+	case "json":
+		filename := fmt.Sprintf("activity_logs_%s.json", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+
+		type jsonExport struct {
+			Data       []ActivityLogExportItem `json:"data"`
+			Count      int                     `json:"count"`
+			Truncated  bool                    `json:"truncated"`
+			ExportedAt string                  `json:"exported_at"`
+		}
+		enc := json.NewEncoder(c.Writer)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(jsonExport{
+			Data:       items,
+			Count:      len(items),
+			Truncated:  truncated,
+			ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+
+	default: // csv
+		filename := fmt.Sprintf("activity_logs_%s.csv", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+		// Write UTF-8 BOM for Excel compatibility
+		_, _ = c.Writer.Write([]byte("\xef\xbb\xbf"))
+		writeAdminCSV(c.Writer, items)
+	}
+}
+
+// writeAdminCSV encodes a slice of ActivityLogExportItem as CSV into w.
+func writeAdminCSV(w io.Writer, items []ActivityLogExportItem) {
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{
+		"id", "app_id", "app_name",
+		"user_id", "user_email",
+		"event_type", "severity",
+		"timestamp", "ip_address", "user_agent",
+		"is_anomaly",
+	})
+	for _, item := range items {
+		_ = cw.Write([]string{
+			item.ID.String(),
+			item.AppID.String(),
+			item.AppName,
+			item.UserID.String(),
+			item.UserEmail,
+			item.EventType,
+			item.Severity,
+			item.Timestamp.UTC().Format(time.RFC3339),
+			item.IPAddress,
+			item.UserAgent,
+			fmt.Sprintf("%t", item.IsAnomaly),
+		})
+	}
+	cw.Flush()
 }
 
 // getCSRFToken reads the CSRF token from the Gin context (set by CSRFMiddleware)

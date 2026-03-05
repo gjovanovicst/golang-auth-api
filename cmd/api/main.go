@@ -316,6 +316,7 @@ func main() {
 		// Activity log routes (require log:read)
 		protected.GET("/activity-logs", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetUserActivityLogs)
 		protected.GET("/activity-logs/event-types", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetEventTypes)
+		protected.GET("/activity-logs/export", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.ExportUserActivityLogs)
 		protected.GET("/activity-logs/:id", middleware.AuthorizePermission(rbacService, "log", "read"), logHandler.GetActivityLogByID)
 
 		// Session management routes
@@ -331,6 +332,7 @@ func main() {
 	adminRoutes.Use(middleware.AdminAuthMiddleware(adminRepo))
 	{
 		adminRoutes.GET("/activity-logs", logHandler.GetAllActivityLogs)
+		adminRoutes.GET("/activity-logs/export", logHandler.ExportAllActivityLogs)
 
 		// Multi-tenancy Management
 		adminRoutes.POST("/tenants", adminHandler.CreateTenant)
@@ -490,6 +492,7 @@ func main() {
 			// Activity logs viewer
 			guiAuth.GET("/logs", guiHandler.LogsPage)
 			guiAuth.GET("/logs/list", guiHandler.LogList)
+			guiAuth.GET("/logs/export", guiHandler.LogExport)
 			guiAuth.GET("/logs/:id", guiHandler.LogDetail)
 
 			// API key management

@@ -1,5 +1,29 @@
 basePath: /
 definitions:
+  dto.AccountLockedResponse:
+    properties:
+      error:
+        type: string
+      locked_until:
+        description: ISO 8601 timestamp when the lockout expires
+        type: string
+      retry_after:
+        description: Seconds until the lockout expires
+        type: integer
+    type: object
+  dto.ActivityLogExportResponse:
+    properties:
+      count:
+        type: integer
+      data:
+        items:
+          $ref: '#/definitions/dto.ActivityLogResponse'
+        type: array
+      exported_at:
+        type: string
+      truncated:
+        type: boolean
+    type: object
   dto.ActivityLogListResponse:
     properties:
       data:
@@ -18,6 +42,12 @@ definitions:
       id:
         type: string
       ip_address:
+        type: string
+      is_anomaly:
+        example: false
+        type: boolean
+      severity:
+        example: INFORMATIONAL
         type: string
       timestamp:
         type: string
@@ -50,6 +80,19 @@ definitions:
     required:
     - role_id
     - user_id
+    type: object
+  dto.CaptchaRequiredResponse:
+    properties:
+      captcha_required:
+        type: boolean
+      error:
+        type: string
+      retry_after:
+        description: 'Advisory: seconds the client should wait before retrying'
+        type: integer
+      site_key:
+        description: reCAPTCHA site key for the client to render the widget
+        type: string
     type: object
   dto.CreateAppRequest:
     properties:
@@ -347,8 +390,128 @@ definitions:
     required:
     - email
     type: object
+  dto.IPAccessCheckRequest:
+    properties:
+      ip_address:
+        example: 203.0.113.50
+        type: string
+    required:
+    - ip_address
+    type: object
+  dto.IPAccessCheckResponse:
+    properties:
+      allowed:
+        example: true
+        type: boolean
+      city:
+        example: San Francisco
+        type: string
+      country:
+        example: US
+        type: string
+      country_name:
+        example: United States
+        type: string
+      reason:
+        example: not_in_blocklist
+        type: string
+    type: object
+  dto.IPRuleCreateRequest:
+    properties:
+      description:
+        example: Block suspicious IP
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      match_type:
+        enum:
+        - ip
+        - cidr
+        - country
+        example: ip
+        type: string
+      rule_type:
+        enum:
+        - allow
+        - block
+        example: block
+        type: string
+      value:
+        example: 192.168.1.1
+        type: string
+    required:
+    - match_type
+    - rule_type
+    - value
+    type: object
+  dto.IPRuleListResponse:
+    properties:
+      rules:
+        items:
+          $ref: '#/definitions/dto.IPRuleResponse'
+        type: array
+      total:
+        type: integer
+    type: object
+  dto.IPRuleResponse:
+    properties:
+      app_id:
+        example: 00000000-0000-0000-0000-000000000001
+        type: string
+      created_at:
+        type: string
+      description:
+        example: Block suspicious IP
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      match_type:
+        example: ip
+        type: string
+      rule_type:
+        example: block
+        type: string
+      updated_at:
+        type: string
+      value:
+        example: 192.168.1.1
+        type: string
+    type: object
+  dto.IPRuleUpdateRequest:
+    properties:
+      description:
+        example: Block entire subnet
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      match_type:
+        enum:
+        - ip
+        - cidr
+        - country
+        example: cidr
+        type: string
+      rule_type:
+        enum:
+        - allow
+        - block
+        example: block
+        type: string
+      value:
+        example: 10.0.0.0/8
+        type: string
+    type: object
   dto.LoginRequest:
     properties:
+      captcha_token:
+        description: Google reCAPTCHA response token (required when CAPTCHA is triggered)
+        type: string
       email:
         type: string
       password:
@@ -754,6 +917,8 @@ definitions:
         description: '"totp" or "email" - indicates which 2FA method the user has
           configured'
         type: string
+      requires_2fa:
+        type: boolean
       temp_token:
         type: string
     type: object
@@ -1406,6 +1571,56 @@ paths:
       summary: Get available event types
       tags:
       - Activity Logs
+  /activity-logs/export:
+    get:
+      description: Export the authenticated user's activity logs as CSV or JSON (max
+        10,000 rows). Use the X-Export-Truncated response header to detect if the
+        result was capped.
+      parameters:
+      - description: 'Export format: csv or json (default: json)'
+        enum:
+        - csv
+        - json
+        in: query
+        name: format
+        type: string
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Start date filter (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date filter (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      - text/csv
+      responses:
+        "200":
+          description: CSV export
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Export user activity logs
+      tags:
+      - Activity Logs
   /admin/activity-logs:
     get:
       description: Retrieve all users' activity logs with pagination and filtering
@@ -1460,6 +1675,55 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Get all activity logs (Admin)
+      tags:
+      - Activity Logs
+  /admin/activity-logs/export:
+    get:
+      description: Export all users' activity logs as CSV or JSON (max 10,000 rows).
+        Use the X-Export-Truncated response header to detect if the result was capped.
+      parameters:
+      - description: 'Export format: csv or json (default: json)'
+        enum:
+        - csv
+        - json
+        in: query
+        name: format
+        type: string
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Start date filter (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date filter (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      - text/csv
+      responses:
+        "200":
+          description: CSV export
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Export all activity logs (Admin)
       tags:
       - Activity Logs
   /admin/apps:
@@ -1694,6 +1958,230 @@ paths:
       summary: Send test email (app-scoped)
       tags:
       - Admin - Email
+  /admin/apps/{id}/ip-rules:
+    get:
+      description: Retrieve all IP access rules (allow/block) for a specific application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: false
+        description: Include inactive rules
+        in: query
+        name: include_inactive
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.IPRuleListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List IP rules for an application
+      tags:
+      - Admin - IP Rules
+    post:
+      consumes:
+      - application/json
+      description: Add a new IP access rule (allow or block) for a specific application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP rule data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.IPRuleCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.IPRuleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create an IP rule
+      tags:
+      - Admin - IP Rules
+  /admin/apps/{id}/ip-rules/{rule_id}:
+    delete:
+      description: Remove an IP access rule by its ID
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP Rule ID
+        in: path
+        name: rule_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete an IP rule
+      tags:
+      - Admin - IP Rules
+    get:
+      description: Retrieve a specific IP access rule by its ID
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP Rule ID
+        in: path
+        name: rule_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.IPRuleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get an IP rule
+      tags:
+      - Admin - IP Rules
+    put:
+      consumes:
+      - application/json
+      description: Update an existing IP access rule by its ID
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP Rule ID
+        in: path
+        name: rule_id
+        required: true
+        type: string
+      - description: Updated IP rule data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.IPRuleUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.IPRuleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Update an IP rule
+      tags:
+      - Admin - IP Rules
+  /admin/apps/{id}/ip-rules/check:
+    post:
+      consumes:
+      - application/json
+      description: Evaluate whether a specific IP address is allowed to access an
+        application based on its IP rules
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP address to check
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.IPAccessCheckRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.IPAccessCheckResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Check IP access
+      tags:
+      - Admin - IP Rules
   /admin/apps/{id}/oauth-config:
     post:
       consumes:
@@ -3200,13 +3688,17 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
         "401":
-          description: Unauthorized
+          description: May include retry_after (seconds) advisory field
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
-        "429":
-          description: Too Many Requests
+        "403":
+          description: CAPTCHA verification required
           schema:
-            $ref: '#/definitions/dto.ErrorResponse'
+            $ref: '#/definitions/dto.CaptchaRequiredResponse'
+        "423":
+          description: Account is locked
+          schema:
+            $ref: '#/definitions/dto.AccountLockedResponse'
         "500":
           description: Internal Server Error
           schema:

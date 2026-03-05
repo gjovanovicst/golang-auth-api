@@ -672,6 +672,80 @@ const docTemplate = `{
                 }
             }
         },
+        "/activity-logs/export": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Export the authenticated user's activity logs as CSV or JSON (max 10,000 rows). Use the X-Export-Truncated response header to detect if the result was capped.",
+                "produces": [
+                    "application/json",
+                    "text/csv"
+                ],
+                "tags": [
+                    "Activity Logs"
+                ],
+                "summary": "Export user activity logs",
+                "parameters": [
+                    {
+                        "enum": [
+                            "csv",
+                            "json"
+                        ],
+                        "type": "string",
+                        "description": "Export format: csv or json (default: json)",
+                        "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event type",
+                        "name": "event_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date filter (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date filter (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CSV export",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/activity-logs/{id}": {
             "get": {
                 "security": [
@@ -807,6 +881,80 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/activity-logs/export": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Export all users' activity logs as CSV or JSON (max 10,000 rows). Use the X-Export-Truncated response header to detect if the result was capped.",
+                "produces": [
+                    "application/json",
+                    "text/csv"
+                ],
+                "tags": [
+                    "Activity Logs"
+                ],
+                "summary": "Export all activity logs (Admin)",
+                "parameters": [
+                    {
+                        "enum": [
+                            "csv",
+                            "json"
+                        ],
+                        "type": "string",
+                        "description": "Export format: csv or json (default: json)",
+                        "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by event type",
+                        "name": "event_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date filter (YYYY-MM-DD)",
+                        "name": "start_date",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date filter (YYYY-MM-DD)",
+                        "name": "end_date",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CSV export",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -1169,6 +1317,352 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/apps/{id}/ip-rules": {
+            "get": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Retrieve all IP access rules (allow/block) for a specific application",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - IP Rules"
+                ],
+                "summary": "List IP rules for an application",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Include inactive rules",
+                        "name": "include_inactive",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.IPRuleListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Add a new IP access rule (allow or block) for a specific application",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - IP Rules"
+                ],
+                "summary": "Create an IP rule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "IP rule data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.IPRuleCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/dto.IPRuleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/apps/{id}/ip-rules/check": {
+            "post": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Evaluate whether a specific IP address is allowed to access an application based on its IP rules",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - IP Rules"
+                ],
+                "summary": "Check IP access",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "IP address to check",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.IPAccessCheckRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.IPAccessCheckResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/apps/{id}/ip-rules/{rule_id}": {
+            "get": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Retrieve a specific IP access rule by its ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - IP Rules"
+                ],
+                "summary": "Get an IP rule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "IP Rule ID",
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.IPRuleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Update an existing IP access rule by its ID",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - IP Rules"
+                ],
+                "summary": "Update an IP rule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "IP Rule ID",
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Updated IP rule data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.IPRuleUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.IPRuleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Remove an IP access rule by its ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin - IP Rules"
+                ],
+                "summary": "Delete an IP rule",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "IP Rule ID",
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -3509,15 +4003,21 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Unauthorized",
+                        "description": "May include retry_after (seconds) advisory field",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     },
-                    "429": {
-                        "description": "Too Many Requests",
+                    "403": {
+                        "description": "CAPTCHA verification required",
                         "schema": {
-                            "$ref": "#/definitions/dto.ErrorResponse"
+                            "$ref": "#/definitions/dto.CaptchaRequiredResponse"
+                        }
+                    },
+                    "423": {
+                        "description": "Account is locked",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AccountLockedResponse"
                         }
                     },
                     "500": {
@@ -4786,6 +5286,42 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "dto.AccountLockedResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "locked_until": {
+                    "description": "ISO 8601 timestamp when the lockout expires",
+                    "type": "string"
+                },
+                "retry_after": {
+                    "description": "Seconds until the lockout expires",
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.ActivityLogExportResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.ActivityLogResponse"
+                    }
+                },
+                "exported_at": {
+                    "type": "string"
+                },
+                "truncated": {
+                    "type": "boolean"
+                }
+            }
+        },
         "dto.ActivityLogListResponse": {
             "type": "object",
             "properties": {
@@ -4814,6 +5350,14 @@ const docTemplate = `{
                 },
                 "ip_address": {
                     "type": "string"
+                },
+                "is_anomaly": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "severity": {
+                    "type": "string",
+                    "example": "INFORMATIONAL"
                 },
                 "timestamp": {
                     "type": "string"
@@ -4860,6 +5404,25 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CaptchaRequiredResponse": {
+            "type": "object",
+            "properties": {
+                "captcha_required": {
+                    "type": "boolean"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "retry_after": {
+                    "description": "Advisory: seconds the client should wait before retrying",
+                    "type": "integer"
+                },
+                "site_key": {
+                    "description": "reCAPTCHA site key for the client to render the widget",
                     "type": "string"
                 }
             }
@@ -5302,6 +5865,169 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.IPAccessCheckRequest": {
+            "type": "object",
+            "required": [
+                "ip_address"
+            ],
+            "properties": {
+                "ip_address": {
+                    "type": "string",
+                    "example": "203.0.113.50"
+                }
+            }
+        },
+        "dto.IPAccessCheckResponse": {
+            "type": "object",
+            "properties": {
+                "allowed": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "city": {
+                    "type": "string",
+                    "example": "San Francisco"
+                },
+                "country": {
+                    "type": "string",
+                    "example": "US"
+                },
+                "country_name": {
+                    "type": "string",
+                    "example": "United States"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "not_in_blocklist"
+                }
+            }
+        },
+        "dto.IPRuleCreateRequest": {
+            "type": "object",
+            "required": [
+                "match_type",
+                "rule_type",
+                "value"
+            ],
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "Block suspicious IP"
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "match_type": {
+                    "type": "string",
+                    "enum": [
+                        "ip",
+                        "cidr",
+                        "country"
+                    ],
+                    "example": "ip"
+                },
+                "rule_type": {
+                    "type": "string",
+                    "enum": [
+                        "allow",
+                        "block"
+                    ],
+                    "example": "block"
+                },
+                "value": {
+                    "type": "string",
+                    "example": "192.168.1.1"
+                }
+            }
+        },
+        "dto.IPRuleListResponse": {
+            "type": "object",
+            "properties": {
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.IPRuleResponse"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.IPRuleResponse": {
+            "type": "object",
+            "properties": {
+                "app_id": {
+                    "type": "string",
+                    "example": "00000000-0000-0000-0000-000000000001"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Block suspicious IP"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "match_type": {
+                    "type": "string",
+                    "example": "ip"
+                },
+                "rule_type": {
+                    "type": "string",
+                    "example": "block"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string",
+                    "example": "192.168.1.1"
+                }
+            }
+        },
+        "dto.IPRuleUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "Block entire subnet"
+                },
+                "is_active": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "match_type": {
+                    "type": "string",
+                    "enum": [
+                        "ip",
+                        "cidr",
+                        "country"
+                    ],
+                    "example": "cidr"
+                },
+                "rule_type": {
+                    "type": "string",
+                    "enum": [
+                        "allow",
+                        "block"
+                    ],
+                    "example": "block"
+                },
+                "value": {
+                    "type": "string",
+                    "example": "10.0.0.0/8"
+                }
+            }
+        },
         "dto.LoginRequest": {
             "type": "object",
             "required": [
@@ -5309,6 +6035,10 @@ const docTemplate = `{
                 "password"
             ],
             "properties": {
+                "captcha_token": {
+                    "description": "Google reCAPTCHA response token (required when CAPTCHA is triggered)",
+                    "type": "string"
+                },
                 "email": {
                     "type": "string"
                 },
@@ -5915,6 +6645,9 @@ const docTemplate = `{
                 "method": {
                     "description": "\"totp\" or \"email\" - indicates which 2FA method the user has configured",
                     "type": "string"
+                },
+                "requires_2fa": {
+                    "type": "boolean"
                 },
                 "temp_token": {
                     "type": "string"

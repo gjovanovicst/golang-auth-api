@@ -326,7 +326,10 @@ func LoginRateLimitMiddleware() gin.HandlerFunc {
 // Pre-built configs for public API routes (used in Task 6)
 // ---------------------------------------------------------------------------
 
-// APILoginRateLimit — 5 requests/min per IP+email, lockout after 10
+// APILoginRateLimit — 15 requests/min per IP, lockout after 30.
+// This is a secondary safety net against volumetric attacks from a single IP.
+// Per-account lockout (BruteForceService, default threshold 5) fires first
+// for targeted credential-guessing attacks.
 func APILoginRateLimit() gin.HandlerFunc {
 	return RateLimitMiddleware(RateLimitConfig{
 		KeyPrefix: "api:login",
@@ -337,9 +340,9 @@ func APILoginRateLimit() gin.HandlerFunc {
 			// or callers can provide a custom KeyFunc.
 			return c.ClientIP()
 		},
-		MaxAttempts:      5,
+		MaxAttempts:      15,
 		Window:           60 * time.Second,
-		LockoutThreshold: 10,
+		LockoutThreshold: 30,
 		LockoutDuration:  15 * time.Minute,
 		UseContextKey:    false,
 	})

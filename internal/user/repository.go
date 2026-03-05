@@ -91,3 +91,12 @@ func (r *Repository) UpdateUserEmail(userID, newEmail string) error {
 		"email_verified": false,
 	}).Error
 }
+
+// ClearLockout clears the lockout fields for a user (auto-unlock on expired lockout).
+func (r *Repository) ClearLockout(userID string) error {
+	return r.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"locked_at":       nil,
+		"lock_reason":     "",
+		"lock_expires_at": nil,
+	}).Error
+}

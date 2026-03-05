@@ -138,6 +138,21 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
 	}
 
+	// Check if account is locked (before password check to avoid timing attacks)
+	if user.LockedAt != nil {
+		// Check if lock has expired (auto-unlock)
+		if user.LockExpiresAt != nil && time.Now().UTC().After(*user.LockExpiresAt) {
+			// Auto-unlock: clear lockout fields
+			s.Repo.ClearLockout(user.ID.String())
+			user.LockedAt = nil
+			user.LockReason = ""
+			user.LockExpiresAt = nil
+		} else {
+			// Account is still locked
+			return nil, errors.NewAppError(errors.ErrForbidden, "Account is temporarily locked due to too many failed login attempts")
+		}
+	}
+
 	// Compare password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
@@ -186,9 +201,10 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 			RequiresTwoFA: true,
 			UserID:        user.ID,
 			TwoFAResponse: &dto.TwoFARequiredResponse{
-				Message:   "2FA verification required",
-				TempToken: tempToken,
-				Method:    twoFAMethod,
+				RequiresTwoFA: true,
+				Message:       "2FA verification required",
+				TempToken:     tempToken,
+				Method:        twoFAMethod,
 			},
 		}, nil
 	}

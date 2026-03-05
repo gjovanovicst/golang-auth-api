@@ -254,19 +254,60 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 	return items, total, nil
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool) error {
+// BruteForceAppSettings holds per-application brute-force override values.
+// Nil pointers mean "clear override, use global default".
+type BruteForceAppSettings struct {
+	LockoutEnabled   *bool
+	LockoutThreshold *int
+	LockoutDurations *string
+	LockoutWindow    *string
+	LockoutTierTTL   *string
+	DelayEnabled     *bool
+	DelayStartAfter  *int
+	DelayMaxSeconds  *int
+	DelayTierTTL     *string
+	CaptchaEnabled   *bool
+	CaptchaSiteKey   *string
+	CaptchaSecretKey *string // empty string in form = keep existing; nil = clear override
+	CaptchaThreshold *int
+}
+
+func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, bf BruteForceAppSettings) error {
+	updates := map[string]interface{}{
+		"name":                  name,
+		"description":           description,
+		"two_fa_issuer_name":    twoFAIssuerName,
+		"two_fa_enabled":        twoFAEnabled,
+		"two_fa_required":       twoFARequired,
+		"passkey2_fa_enabled":   passkey2FAEnabled,
+		"passkey_login_enabled": passkeyLoginEnabled,
+		"magic_link_enabled":    magicLinkEnabled,
+		// Brute-force lockout overrides
+		"bf_lockout_enabled":   bf.LockoutEnabled,
+		"bf_lockout_threshold": bf.LockoutThreshold,
+		"bf_lockout_durations": bf.LockoutDurations,
+		"bf_lockout_window":    bf.LockoutWindow,
+		"bf_lockout_tier_ttl":  bf.LockoutTierTTL,
+		// Brute-force progressive delay overrides
+		"bf_delay_enabled":     bf.DelayEnabled,
+		"bf_delay_start_after": bf.DelayStartAfter,
+		"bf_delay_max_seconds": bf.DelayMaxSeconds,
+		"bf_delay_tier_ttl":    bf.DelayTierTTL,
+		// Brute-force CAPTCHA overrides
+		"bf_captcha_enabled":   bf.CaptchaEnabled,
+		"bf_captcha_site_key":  bf.CaptchaSiteKey,
+		"bf_captcha_threshold": bf.CaptchaThreshold,
+	}
+
+	// Only update CAPTCHA secret key if explicitly provided (non-nil and non-empty).
+	// nil = clear override; non-nil empty string is not sent from the handler (it means "keep existing").
+	if bf.CaptchaSecretKey != nil {
+		updates["bf_captcha_secret_key"] = bf.CaptchaSecretKey
+	}
+
 	return r.DB.Model(&models.Application{}).
 		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"name":                  name,
-			"description":           description,
-			"two_fa_issuer_name":    twoFAIssuerName,
-			"two_fa_enabled":        twoFAEnabled,
-			"two_fa_required":       twoFARequired,
-			"passkey2_fa_enabled":   passkey2FAEnabled,
-			"passkey_login_enabled": passkeyLoginEnabled,
-			"magic_link_enabled":    magicLinkEnabled,
-		}).Error
+		Updates(updates).Error
 }
 
 func (r *Repository) DeleteApp(id string) error {
@@ -441,18 +482,20 @@ func (r *Repository) ListAllAppsWithTenantName() ([]AppWithTenant, error) {
 
 // UserListItem represents a user row in the admin GUI list view
 type UserListItem struct {
-	ID                 uuid.UUID `json:"id"`
-	Email              string    `json:"email"`
-	Name               string    `json:"name"`
-	AppID              uuid.UUID `json:"app_id"`
-	AppName            string    `json:"app_name"`
-	TenantName         string    `json:"tenant_name"`
-	IsActive           bool      `json:"is_active"`
-	EmailVerified      bool      `json:"email_verified"`
-	TwoFAEnabled       bool      `json:"two_fa_enabled"`
-	HasPassword        bool      `json:"has_password"`
-	SocialAccountCount int       `json:"social_account_count"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                 uuid.UUID  `json:"id"`
+	Email              string     `json:"email"`
+	Name               string     `json:"name"`
+	AppID              uuid.UUID  `json:"app_id"`
+	AppName            string     `json:"app_name"`
+	TenantName         string     `json:"tenant_name"`
+	IsActive           bool       `json:"is_active"`
+	EmailVerified      bool       `json:"email_verified"`
+	TwoFAEnabled       bool       `json:"two_fa_enabled"`
+	HasPassword        bool       `json:"has_password"`
+	SocialAccountCount int        `json:"social_account_count"`
+	LockedAt           *time.Time `json:"locked_at"`
+	LockExpiresAt      *time.Time `json:"lock_expires_at"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 // UserDetail represents a full user view with social accounts for the admin GUI detail panel
@@ -471,6 +514,9 @@ type UserDetail struct {
 	EmailVerified       bool                        `json:"email_verified"`
 	TwoFAEnabled        bool                        `json:"two_fa_enabled"`
 	HasPassword         bool                        `json:"has_password"`
+	LockedAt            *time.Time                  `json:"locked_at"`
+	LockReason          string                      `json:"lock_reason"`
+	LockExpiresAt       *time.Time                  `json:"lock_expires_at"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
 	SocialAccounts      []models.SocialAccount      `json:"social_accounts" gorm:"-"`
@@ -518,6 +564,7 @@ func (r *Repository) ListUsersWithDetails(page, pageSize int, appID, search stri
 			users.is_active, users.email_verified, users.two_fa_enabled,
 			(users.password_hash != '') as has_password,
 			COALESCE(sa_count.count, 0) as social_account_count,
+			users.locked_at, users.lock_expires_at,
 			users.created_at`))
 
 	offset := (page - 1) * pageSize
@@ -539,6 +586,7 @@ func (r *Repository) GetUserDetailByID(id string) (*UserDetail, error) {
 			COALESCE(tenants.name, '') as tenant_name,
 			users.is_active, users.email_verified, users.two_fa_enabled,
 			(users.password_hash != '') as has_password,
+			users.locked_at, users.lock_reason, users.lock_expires_at,
 			users.created_at, users.updated_at`).
 		Joins("LEFT JOIN applications ON applications.id = users.app_id").
 		Joins("LEFT JOIN tenants ON tenants.id = applications.tenant_id").
@@ -583,6 +631,24 @@ func (r *Repository) ToggleUserActive(id string) (isActive bool, appID string, e
 	}
 
 	return newActive, user.AppID.String(), nil
+}
+
+// UnlockUser clears the lockout fields for a user and returns the user's email and app_id.
+func (r *Repository) UnlockUser(id string) (email string, appID string, err error) {
+	var user models.User
+	if err := r.DB.Select("id, email, app_id").First(&user, "id = ?", id).Error; err != nil {
+		return "", "", err
+	}
+
+	if err := r.DB.Model(&user).Updates(map[string]interface{}{
+		"locked_at":       nil,
+		"lock_reason":     "",
+		"lock_expires_at": nil,
+	}).Error; err != nil {
+		return "", "", err
+	}
+
+	return user.Email, user.AppID.String(), nil
 }
 
 // CountUsersByStatus returns the count of active and inactive users.

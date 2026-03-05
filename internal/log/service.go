@@ -44,6 +44,8 @@ const (
 	EventLoginFailed           = "LOGIN_FAILED"
 	EventBruteForceDetected    = "BRUTE_FORCE_DETECTED"
 	EventIPBlocked             = "IP_BLOCKED"
+	EventAccountLocked         = "ACCOUNT_LOCKED"
+	EventAccountUnlocked       = "ACCOUNT_UNLOCKED"
 )
 
 // AnomalyCallback is invoked asynchronously after an anomaly is detected and logged.
@@ -521,4 +523,14 @@ func LogMagicLinkFailed(appID uuid.UUID, ipAddress, userAgent string, reason str
 		"reason": reason,
 	}
 	GetLogService().LogActivity(appID, uuid.Nil, EventMagicLinkFailed, ipAddress, userAgent, details)
+}
+
+// LogAccountLocked logs when a user account is locked due to repeated failed login attempts
+func LogAccountLocked(appID, userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(appID, userID, EventAccountLocked, ipAddress, userAgent, details)
+}
+
+// LogAccountUnlocked logs when a user account is unlocked (by admin or auto-expiry)
+func LogAccountUnlocked(appID, userID uuid.UUID, ipAddress, userAgent string, details map[string]interface{}) {
+	GetLogService().LogActivity(appID, userID, EventAccountUnlocked, ipAddress, userAgent, details)
 }

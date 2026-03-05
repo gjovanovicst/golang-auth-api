@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/bruteforce"
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	logService "github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
@@ -22,19 +24,39 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Brute-force form defaults — match the hardcoded defaults in bruteforce.ResolveConfig().
+// These are used to pre-fill the GUI form fields so admins see the effective values.
+const (
+	bfDefaultLockoutEnabled   = true
+	bfDefaultLockoutThreshold = "5"
+	bfDefaultLockoutDurations = "15m,30m,1h,24h"
+	bfDefaultLockoutWindow    = "15m"
+	bfDefaultLockoutTierTTL   = "24h"
+
+	bfDefaultDelayEnabled    = true
+	bfDefaultDelayStartAfter = "2"
+	bfDefaultDelayMaxSeconds = "16"
+	bfDefaultDelayTierTTL    = "30m"
+
+	bfDefaultCaptchaEnabled   = true
+	bfDefaultCaptchaThreshold = "3"
+	bfDefaultCaptchaSiteKey   = "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"
+)
+
 // GUIHandler serves HTML pages for the Admin GUI.
 // Separate from Handler (which serves the JSON admin API).
 type GUIHandler struct {
-	AccountService   *AccountService
-	DashboardService *DashboardService
-	Repo             *Repository
-	SettingsService  *SettingsService
-	EmailService     *email.Service
-	RBACService      *rbac.Service
-	PasskeyService   *passkeypkg.Service
-	IPRuleRepo       *geoip.IPRuleRepository // IP rule repository (nil = IP rules disabled)
-	IPRuleEvaluator  *geoip.IPRuleEvaluator  // IP rule evaluator for cache invalidation (nil = disabled)
-	GeoIPService     *geoip.Service          // GeoIP service for IP lookups (nil = disabled)
+	AccountService    *AccountService
+	DashboardService  *DashboardService
+	Repo              *Repository
+	SettingsService   *SettingsService
+	EmailService      *email.Service
+	RBACService       *rbac.Service
+	PasskeyService    *passkeypkg.Service
+	IPRuleRepo        *geoip.IPRuleRepository // IP rule repository (nil = IP rules disabled)
+	IPRuleEvaluator   *geoip.IPRuleEvaluator  // IP rule evaluator for cache invalidation (nil = disabled)
+	GeoIPService      *geoip.Service          // GeoIP service for IP lookups (nil = disabled)
+	BruteForceService *bruteforce.Service     // Brute-force protection service for account unlock (nil = disabled)
 }
 
 // NewGUIHandler creates a new GUIHandler
@@ -489,10 +511,41 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		MagicLinkEnabled    bool
 		Tenants             []models.Tenant
 		IsEdit              bool
+		// Brute-force overrides (nil = use global default)
+		BfLockoutOverride  bool
+		BfLockoutEnabled   bool
+		BfLockoutThreshold string
+		BfLockoutDurations string
+		BfLockoutWindow    string
+		BfLockoutTierTTL   string
+		BfDelayOverride    bool
+		BfDelayEnabled     bool
+		BfDelayStartAfter  string
+		BfDelayMaxSeconds  string
+		BfDelayTierTTL     string
+		BfCaptchaOverride  bool
+		BfCaptchaEnabled   bool
+		BfCaptchaSiteKey   string
+		BfCaptchaThreshold string
+		BfCaptchaHasSecret bool
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
 		TwoFAEnabled: true, // Default: 2FA enabled for new apps
 		Tenants:      tenants,
+		// Brute-force defaults (override toggles stay off, but fields show defaults)
+		BfLockoutEnabled:   bfDefaultLockoutEnabled,
+		BfLockoutThreshold: bfDefaultLockoutThreshold,
+		BfLockoutDurations: bfDefaultLockoutDurations,
+		BfLockoutWindow:    bfDefaultLockoutWindow,
+		BfLockoutTierTTL:   bfDefaultLockoutTierTTL,
+		BfDelayEnabled:     bfDefaultDelayEnabled,
+		BfDelayStartAfter:  bfDefaultDelayStartAfter,
+		BfDelayMaxSeconds:  bfDefaultDelayMaxSeconds,
+		BfDelayTierTTL:     bfDefaultDelayTierTTL,
+		BfCaptchaEnabled:   bfDefaultCaptchaEnabled,
+		BfCaptchaThreshold: bfDefaultCaptchaThreshold,
+		BfCaptchaSiteKey:   bfDefaultCaptchaSiteKey,
+		BfCaptchaHasSecret: true, // System default secret key is configured
 	})
 }
 
@@ -538,6 +591,55 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 		PasskeyLoginEnabled: passkeyLoginEnabled,
 		MagicLinkEnabled:    magicLinkEnabled,
 	}
+
+	// Brute-force lockout overrides
+	if c.PostForm("bf_lockout_override") == "on" {
+		bfLockoutEnabled := c.PostForm("bf_lockout_enabled") == "on"
+		app.BfLockoutEnabled = &bfLockoutEnabled
+		if v, err := strconv.Atoi(c.PostForm("bf_lockout_threshold")); err == nil {
+			app.BfLockoutThreshold = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_durations")); v != "" {
+			app.BfLockoutDurations = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_window")); v != "" {
+			app.BfLockoutWindow = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_tier_ttl")); v != "" {
+			app.BfLockoutTierTTL = &v
+		}
+	}
+
+	// Brute-force progressive delay overrides
+	if c.PostForm("bf_delay_override") == "on" {
+		bfDelayEnabled := c.PostForm("bf_delay_enabled") == "on"
+		app.BfDelayEnabled = &bfDelayEnabled
+		if v, err := strconv.Atoi(c.PostForm("bf_delay_start_after")); err == nil {
+			app.BfDelayStartAfter = &v
+		}
+		if v, err := strconv.Atoi(c.PostForm("bf_delay_max_seconds")); err == nil {
+			app.BfDelayMaxSeconds = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_delay_tier_ttl")); v != "" {
+			app.BfDelayTierTTL = &v
+		}
+	}
+
+	// Brute-force CAPTCHA overrides
+	if c.PostForm("bf_captcha_override") == "on" {
+		bfCaptchaEnabled := c.PostForm("bf_captcha_enabled") == "on"
+		app.BfCaptchaEnabled = &bfCaptchaEnabled
+		if v := strings.TrimSpace(c.PostForm("bf_captcha_site_key")); v != "" {
+			app.BfCaptchaSiteKey = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_captcha_secret_key")); v != "" {
+			app.BfCaptchaSecretKey = &v
+		}
+		if v, err := strconv.Atoi(c.PostForm("bf_captcha_threshold")); err == nil {
+			app.BfCaptchaThreshold = &v
+		}
+	}
+
 	if err := h.Repo.CreateApp(app); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
@@ -583,8 +685,26 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		MagicLinkEnabled    bool
 		Tenants             []models.Tenant
 		IsEdit              bool
+		// Brute-force overrides
+		BfLockoutOverride  bool
+		BfLockoutEnabled   bool
+		BfLockoutThreshold string
+		BfLockoutDurations string
+		BfLockoutWindow    string
+		BfLockoutTierTTL   string
+		BfDelayOverride    bool
+		BfDelayEnabled     bool
+		BfDelayStartAfter  string
+		BfDelayMaxSeconds  string
+		BfDelayTierTTL     string
+		BfCaptchaOverride  bool
+		BfCaptchaEnabled   bool
+		BfCaptchaSiteKey   string
+		BfCaptchaThreshold string
+		BfCaptchaHasSecret bool
 	}
-	c.HTML(http.StatusOK, "app_form", formData{
+
+	fd := formData{
 		ID:                  app.ID.String(),
 		Name:                app.Name,
 		Description:         app.Description,
@@ -597,7 +717,78 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		MagicLinkEnabled:    app.MagicLinkEnabled,
 		Tenants:             tenants,
 		IsEdit:              true,
-	})
+	}
+
+	// Pre-fill brute-force defaults so fields are never blank
+	fd.BfLockoutEnabled = bfDefaultLockoutEnabled
+	fd.BfLockoutThreshold = bfDefaultLockoutThreshold
+	fd.BfLockoutDurations = bfDefaultLockoutDurations
+	fd.BfLockoutWindow = bfDefaultLockoutWindow
+	fd.BfLockoutTierTTL = bfDefaultLockoutTierTTL
+	fd.BfDelayEnabled = bfDefaultDelayEnabled
+	fd.BfDelayStartAfter = bfDefaultDelayStartAfter
+	fd.BfDelayMaxSeconds = bfDefaultDelayMaxSeconds
+	fd.BfDelayTierTTL = bfDefaultDelayTierTTL
+	fd.BfCaptchaEnabled = bfDefaultCaptchaEnabled
+	fd.BfCaptchaThreshold = bfDefaultCaptchaThreshold
+	fd.BfCaptchaSiteKey = bfDefaultCaptchaSiteKey
+	fd.BfCaptchaHasSecret = true // System default secret key is configured
+
+	// Override with saved per-app values where non-nil
+	if app.BfLockoutEnabled != nil || app.BfLockoutThreshold != nil || app.BfLockoutDurations != nil || app.BfLockoutWindow != nil || app.BfLockoutTierTTL != nil {
+		fd.BfLockoutOverride = true
+		if app.BfLockoutEnabled != nil {
+			fd.BfLockoutEnabled = *app.BfLockoutEnabled
+		}
+		if app.BfLockoutThreshold != nil {
+			fd.BfLockoutThreshold = strconv.Itoa(*app.BfLockoutThreshold)
+		}
+		if app.BfLockoutDurations != nil {
+			fd.BfLockoutDurations = *app.BfLockoutDurations
+		}
+		if app.BfLockoutWindow != nil {
+			fd.BfLockoutWindow = *app.BfLockoutWindow
+		}
+		if app.BfLockoutTierTTL != nil {
+			fd.BfLockoutTierTTL = *app.BfLockoutTierTTL
+		}
+	}
+
+	// Override with saved per-app delay values where non-nil
+	if app.BfDelayEnabled != nil || app.BfDelayStartAfter != nil || app.BfDelayMaxSeconds != nil || app.BfDelayTierTTL != nil {
+		fd.BfDelayOverride = true
+		if app.BfDelayEnabled != nil {
+			fd.BfDelayEnabled = *app.BfDelayEnabled
+		}
+		if app.BfDelayStartAfter != nil {
+			fd.BfDelayStartAfter = strconv.Itoa(*app.BfDelayStartAfter)
+		}
+		if app.BfDelayMaxSeconds != nil {
+			fd.BfDelayMaxSeconds = strconv.Itoa(*app.BfDelayMaxSeconds)
+		}
+		if app.BfDelayTierTTL != nil {
+			fd.BfDelayTierTTL = *app.BfDelayTierTTL
+		}
+	}
+
+	// Override with saved per-app CAPTCHA values where non-nil
+	if app.BfCaptchaEnabled != nil || app.BfCaptchaSiteKey != nil || app.BfCaptchaSecretKey != nil || app.BfCaptchaThreshold != nil {
+		fd.BfCaptchaOverride = true
+		if app.BfCaptchaEnabled != nil {
+			fd.BfCaptchaEnabled = *app.BfCaptchaEnabled
+		}
+		if app.BfCaptchaSiteKey != nil {
+			fd.BfCaptchaSiteKey = *app.BfCaptchaSiteKey
+		}
+		if app.BfCaptchaSecretKey != nil && *app.BfCaptchaSecretKey != "" {
+			fd.BfCaptchaHasSecret = true
+		}
+		if app.BfCaptchaThreshold != nil {
+			fd.BfCaptchaThreshold = strconv.Itoa(*app.BfCaptchaThreshold)
+		}
+	}
+
+	c.HTML(http.StatusOK, "app_form", fd)
 }
 
 // AppUpdate handles updating an application.
@@ -619,7 +810,61 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 		return
 	}
 
-	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled); err != nil {
+	// Build brute-force settings
+	var bf BruteForceAppSettings
+
+	// Lockout overrides: if override toggle is on, read values; otherwise nil (clear overrides)
+	if c.PostForm("bf_lockout_override") == "on" {
+		bfLockoutEnabled := c.PostForm("bf_lockout_enabled") == "on"
+		bf.LockoutEnabled = &bfLockoutEnabled
+		if v, err := strconv.Atoi(c.PostForm("bf_lockout_threshold")); err == nil {
+			bf.LockoutThreshold = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_durations")); v != "" {
+			bf.LockoutDurations = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_window")); v != "" {
+			bf.LockoutWindow = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_tier_ttl")); v != "" {
+			bf.LockoutTierTTL = &v
+		}
+	}
+
+	// Delay overrides
+	if c.PostForm("bf_delay_override") == "on" {
+		bfDelayEnabled := c.PostForm("bf_delay_enabled") == "on"
+		bf.DelayEnabled = &bfDelayEnabled
+		if v, err := strconv.Atoi(c.PostForm("bf_delay_start_after")); err == nil {
+			bf.DelayStartAfter = &v
+		}
+		if v, err := strconv.Atoi(c.PostForm("bf_delay_max_seconds")); err == nil {
+			bf.DelayMaxSeconds = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_delay_tier_ttl")); v != "" {
+			bf.DelayTierTTL = &v
+		}
+	}
+
+	// CAPTCHA overrides
+	if c.PostForm("bf_captcha_override") == "on" {
+		bfCaptchaEnabled := c.PostForm("bf_captcha_enabled") == "on"
+		bf.CaptchaEnabled = &bfCaptchaEnabled
+		if v := strings.TrimSpace(c.PostForm("bf_captcha_site_key")); v != "" {
+			bf.CaptchaSiteKey = &v
+		}
+		// Only update secret key if a new value was provided (non-empty)
+		if v := strings.TrimSpace(c.PostForm("bf_captcha_secret_key")); v != "" {
+			bf.CaptchaSecretKey = &v
+		}
+		// If override is on but secret_key field is empty, keep existing (don't send nil)
+		if v, err := strconv.Atoi(c.PostForm("bf_captcha_threshold")); err == nil {
+			bf.CaptchaThreshold = &v
+		}
+	}
+	// If override toggles are off, all bf fields remain nil -> clears overrides in DB
+
+	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, bf); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
@@ -1165,6 +1410,46 @@ func (h *GUIHandler) UserToggleActive(c *gin.Context) {
 				`<span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle-fill me-1"></i>`+toggleLabel+`</span>`+
 				`</div>`))
 	}
+}
+
+// UserUnlock unlocks a locked user account (HTMX fragment).
+// Clears DB lockout fields and resets all Redis brute-force counters.
+// PUT /gui/users/:id/unlock
+func (h *GUIHandler) UserUnlock(c *gin.Context) {
+	id := c.Param("id")
+
+	userEmail, appIDStr, err := h.Repo.UnlockUser(id)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to unlock user account")
+		return
+	}
+
+	// Reset Redis brute-force counters (lockout tier, delay tier, failure counter)
+	if h.BruteForceService != nil {
+		appID, parseErr := uuid.Parse(appIDStr)
+		if parseErr == nil {
+			userID, userParseErr := uuid.Parse(id)
+			if userParseErr == nil {
+				_ = h.BruteForceService.UnlockAccount(appID, userID, userEmail)
+			}
+		}
+	}
+
+	// Log the unlock event
+	appID, parseErr := uuid.Parse(appIDStr)
+	if parseErr == nil {
+		adminUser := getAdminUsername(c)
+		logService.LogAccountUnlocked(appID, uuid.Nil, "", "", map[string]interface{}{
+			"email":         userEmail,
+			"unlocked_by":   adminUser,
+			"unlock_method": "admin_gui",
+		})
+	}
+
+	// Return an inline success message — the HX-Trigger will refresh the detail view
+	c.Header("HX-Trigger", "userDetailRefresh")
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
+		`<span class="text-success"><i class="bi bi-unlock-fill me-1"></i>Account unlocked</span>`))
 }
 
 // ============================================================

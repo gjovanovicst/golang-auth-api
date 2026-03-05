@@ -5,19 +5,22 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/bruteforce"
 	"github.com/gjovanovicst/auth_api/internal/config"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
+	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 )
 
 type Handler struct {
-	Service         *Service
-	IPRuleEvaluator *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
-	AnomalyDetector *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
+	Service           *Service
+	IPRuleEvaluator   *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
+	BruteForceService *bruteforce.Service    // Brute-force protection service (lockout, delays, CAPTCHA)
 }
 
 func NewHandler(s *Service) *Handler {
@@ -80,55 +83,80 @@ func (h *Handler) runLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAdd
 }
 
 // handleFailedLogin tracks a failed login attempt for brute-force detection.
-func (h *Handler) handleFailedLogin(appID uuid.UUID, email, ipAddress, userAgent string) {
+// Returns wasLocked and lockExpiresAt if the account was locked as a result.
+func (h *Handler) handleFailedLogin(appID uuid.UUID, email, ipAddress, userAgent string, bfCfg bruteforce.BruteForceConfig) (bool, *time.Time) {
 	// Log the failed attempt
 	log.LogLoginFailed(appID, ipAddress, userAgent, map[string]interface{}{
 		"email": email,
 	})
 
-	// Brute-force tracking
-	if h.AnomalyDetector == nil {
-		return
-	}
-	cfg := config.GetLoggingConfig()
-	if !cfg.AnomalyDetection.BruteForceEnabled {
-		return
-	}
+	var wasLocked bool
+	var lockExpiresAt *time.Time
+	var failCount int64
 
-	count, err := h.AnomalyDetector.IncrementAndCheckBruteForce(appID, email, cfg.AnomalyDetection.BruteForceWindow)
-	if err != nil {
-		return
-	}
-
-	if count >= int64(cfg.AnomalyDetection.BruteForceThreshold) {
-		ctx := log.UserContext{
-			AppID:     appID,
-			IPAddress: ipAddress,
-			UserAgent: userAgent,
-			Timestamp: time.Now().UTC(),
-		}
-		bruteResult := h.AnomalyDetector.DetectBruteForce(ctx, log.AnomalyConfig{
-			BruteForceEnabled:    cfg.AnomalyDetection.BruteForceEnabled,
-			BruteForceThreshold:  cfg.AnomalyDetection.BruteForceThreshold,
-			BruteForceWindow:     cfg.AnomalyDetection.BruteForceWindow,
-			NotifyOnBruteForce:   cfg.AnomalyDetection.NotifyOnBruteForce,
-			NotificationCooldown: cfg.AnomalyDetection.NotificationCooldown,
-		}, count)
-
-		log.LogBruteForceDetected(appID, uuid.Nil, ipAddress, userAgent, map[string]interface{}{
-			"email":        email,
-			"failed_count": count,
-		})
-
-		// Fire anomaly callback for brute-force notification
-		if bruteResult.NotifyUser {
-			// Try to look up user to get their email for notification
-			log.GetLogService().LogActivityWithAnomalyResult(appID, uuid.Nil, email, log.EventBruteForceDetected, ipAddress, userAgent, map[string]interface{}{
+	// Brute-force protection: account lockout + counter increment.
+	// When BruteForceService is present, it owns the Redis counter increment
+	// to avoid double-counting with the anomaly detector.
+	if h.BruteForceService != nil {
+		var lockErr error
+		wasLocked, lockExpiresAt, failCount, lockErr = h.BruteForceService.HandleFailedLogin(appID, email, bfCfg)
+		if lockErr == nil && wasLocked {
+			log.LogAccountLocked(appID, uuid.Nil, ipAddress, userAgent, map[string]interface{}{
 				"email":        email,
-				"failed_count": count,
-			}, &bruteResult)
+				"locked_until": lockExpiresAt.Format(time.RFC3339),
+			})
+		}
+
+		// Increment delay tiers for both email and IP
+		h.BruteForceService.IncrementDelayTier(appID, email, ipAddress, bfCfg)
+	}
+
+	// Anomaly detection for brute-force notifications
+	if h.AnomalyDetector != nil {
+		cfg := config.GetLoggingConfig()
+		if cfg.AnomalyDetection.BruteForceEnabled {
+			// If BruteForceService already incremented the counter, use its count.
+			// Otherwise, increment via the anomaly detector (legacy path).
+			count := failCount
+			if h.BruteForceService == nil {
+				var err error
+				count, err = h.AnomalyDetector.IncrementAndCheckBruteForce(appID, email, cfg.AnomalyDetection.BruteForceWindow)
+				if err != nil {
+					count = 0
+				}
+			}
+
+			if count >= int64(cfg.AnomalyDetection.BruteForceThreshold) {
+				ctx := log.UserContext{
+					AppID:     appID,
+					IPAddress: ipAddress,
+					UserAgent: userAgent,
+					Timestamp: time.Now().UTC(),
+				}
+				bruteResult := h.AnomalyDetector.DetectBruteForce(ctx, log.AnomalyConfig{
+					BruteForceEnabled:    cfg.AnomalyDetection.BruteForceEnabled,
+					BruteForceThreshold:  cfg.AnomalyDetection.BruteForceThreshold,
+					BruteForceWindow:     cfg.AnomalyDetection.BruteForceWindow,
+					NotifyOnBruteForce:   cfg.AnomalyDetection.NotifyOnBruteForce,
+					NotificationCooldown: cfg.AnomalyDetection.NotificationCooldown,
+				}, count)
+
+				log.LogBruteForceDetected(appID, uuid.Nil, ipAddress, userAgent, map[string]interface{}{
+					"email":        email,
+					"failed_count": count,
+				})
+
+				if bruteResult.NotifyUser {
+					log.GetLogService().LogActivityWithAnomalyResult(appID, uuid.Nil, email, log.EventBruteForceDetected, ipAddress, userAgent, map[string]interface{}{
+						"email":        email,
+						"failed_count": count,
+					}, &bruteResult)
+				}
+			}
 		}
 	}
+
+	return wasLocked, lockExpiresAt
 }
 
 // @Summary Register a new user
@@ -185,8 +213,9 @@ func (h *Handler) Register(c *gin.Context) {
 // @Success 200 {object}  dto.LoginResponse
 // @Success 202 {object}  dto.TwoFARequiredResponse "2FA verification or setup required"
 // @Failure 400 {object}  dto.ErrorResponse
-// @Failure 401 {object}  dto.ErrorResponse
-// @Failure 429 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse "May include retry_after (seconds) advisory field"
+// @Failure 403 {object}  dto.CaptchaRequiredResponse "CAPTCHA verification required"
+// @Failure 423 {object}  dto.AccountLockedResponse "Account is locked"
 // @Failure 500 {object}  dto.ErrorResponse
 // @Router /login [post]
 func (h *Handler) Login(c *gin.Context) {
@@ -217,17 +246,99 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
+	// --- Resolve per-app brute-force configuration ---
+	// Load the Application from DB to get per-app overrides; fallback to global defaults.
+	var bfCfg bruteforce.BruteForceConfig
+	if h.BruteForceService != nil {
+		var app models.Application
+		if dbErr := h.Service.DB.Select(
+			"bf_lockout_enabled, bf_lockout_threshold, bf_lockout_durations, bf_lockout_window, bf_lockout_tier_ttl, "+
+				"bf_delay_enabled, bf_delay_start_after, bf_delay_max_seconds, bf_delay_tier_ttl, "+
+				"bf_captcha_enabled, bf_captcha_site_key, bf_captcha_secret_key, bf_captcha_threshold",
+		).First(&app, "id = ?", appID).Error; dbErr != nil {
+			// App not found or DB error — use global defaults
+			bfCfg = bruteforce.ResolveConfig(nil)
+		} else {
+			bfCfg = bruteforce.ResolveConfig(&app)
+		}
+	}
+
+	// --- Brute-force pre-auth checks ---
+	if h.BruteForceService != nil {
+		// Check CAPTCHA requirement (before any processing).
+		// CAPTCHA acts as a gate — the request is rejected until a valid token is provided.
+		captchaRequired, captchaErr := h.BruteForceService.IsCaptchaRequired(appID, req.Email, bfCfg)
+		if captchaErr == nil && captchaRequired {
+			// Compute advisory delay for the response
+			advisoryDelay, _ := h.BruteForceService.GetDelay(appID, req.Email, ipAddress, bfCfg)
+
+			if req.CaptchaToken == "" {
+				// CAPTCHA is required but no token provided — tell client to solve CAPTCHA
+				c.JSON(http.StatusForbidden, dto.CaptchaRequiredResponse{
+					Error:           "CAPTCHA verification required",
+					CaptchaRequired: true,
+					SiteKey:         bfCfg.CaptchaSiteKey,
+					RetryAfter:      advisoryDelay,
+				})
+				return
+			}
+			// Verify the provided CAPTCHA token
+			if err := bruteforce.VerifyCaptcha(req.CaptchaToken, ipAddress, bfCfg); err != nil {
+				c.JSON(http.StatusForbidden, dto.CaptchaRequiredResponse{
+					Error:           "CAPTCHA verification failed",
+					CaptchaRequired: true,
+					SiteKey:         bfCfg.CaptchaSiteKey,
+					RetryAfter:      advisoryDelay,
+				})
+				return
+			}
+		}
+	}
+
 	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password, ipAddress, userAgent)
 	if err != nil {
-		// Track failed login for brute-force detection
-		h.handleFailedLogin(appID, req.Email, ipAddress, userAgent)
+		// Only track as failed login if it was an authentication failure (401),
+		// not if the account is locked/deactivated (403) or other errors.
+		if err.Code == http.StatusUnauthorized {
+			wasLocked, lockExpiresAt := h.handleFailedLogin(appID, req.Email, ipAddress, userAgent, bfCfg)
+
+			if wasLocked && lockExpiresAt != nil {
+				retryAfter := int(time.Until(*lockExpiresAt).Seconds())
+				if retryAfter < 0 {
+					retryAfter = 0
+				}
+				c.JSON(http.StatusLocked, dto.AccountLockedResponse{
+					Error:      "Account has been locked due to too many failed login attempts",
+					LockedUtil: lockExpiresAt.Format(time.RFC3339),
+					RetryAfter: retryAfter,
+				})
+				return
+			}
+
+			// Include advisory delay info in the 401 response so the client
+			// knows how long to wait, without blocking the failure counter.
+			if h.BruteForceService != nil {
+				advisoryDelay, _ := h.BruteForceService.GetDelay(appID, req.Email, ipAddress, bfCfg)
+				if advisoryDelay > 0 {
+					c.JSON(err.Code, gin.H{
+						"error":       err.Message,
+						"retry_after": advisoryDelay,
+					})
+					return
+				}
+			}
+		}
+
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
 
-	// Successful credential verification — reset brute-force counter
+	// Successful credential verification — reset brute-force counters
 	if h.AnomalyDetector != nil {
 		_ = h.AnomalyDetector.ResetBruteForceCounter(appID, req.Email)
+	}
+	if h.BruteForceService != nil {
+		h.BruteForceService.ResetOnSuccess(appID, req.Email, ipAddress)
 	}
 
 	// Check if 2FA is required

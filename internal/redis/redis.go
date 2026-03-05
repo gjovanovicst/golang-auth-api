@@ -754,3 +754,72 @@ func IsNotificationOnCooldown(appID, userID, notificationType string) (bool, err
 	}
 	return true, nil
 }
+
+// ==================== Account Lockout Tier Tracking ====================
+
+// IncrLockoutTier increments the lockout tier for a given app + email and sets the TTL.
+// The tier determines which escalating lockout duration to use (e.g., tier 0 = 15m, tier 1 = 30m, etc.).
+// Returns the new tier value (1-based after increment).
+func IncrLockoutTier(appID, email string, ttl time.Duration) (int64, error) {
+	key := fmt.Sprintf("app:%s:lockout_tier:%s", appID, email)
+	tier, err := Rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	// Always refresh TTL on each lockout so the tier escalation window resets
+	Rdb.Expire(ctx, key, ttl)
+	return tier, nil
+}
+
+// GetLockoutTier returns the current lockout tier for a given app + email.
+// Returns 0 if no tier is set (user has not been locked out recently).
+func GetLockoutTier(appID, email string) (int64, error) {
+	key := fmt.Sprintf("app:%s:lockout_tier:%s", appID, email)
+	tier, err := Rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return tier, err
+}
+
+// ResetLockoutTier clears the lockout tier for a given app + email.
+// Called by admin when manually unlocking an account.
+func ResetLockoutTier(appID, email string) error {
+	key := fmt.Sprintf("app:%s:lockout_tier:%s", appID, email)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== Progressive Delay Tier Tracking ====================
+
+// IncrDelayTier increments the delay tier for a given app + identifier (email or IP).
+// The tier determines the exponential backoff delay applied before login processing.
+// Returns the new tier value (1-based after increment).
+func IncrDelayTier(appID, identifier string, ttl time.Duration) (int64, error) {
+	key := fmt.Sprintf("app:%s:delay_tier:%s", appID, identifier)
+	tier, err := Rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if tier == 1 {
+		Rdb.Expire(ctx, key, ttl)
+	}
+	return tier, nil
+}
+
+// GetDelayTier returns the current delay tier for a given app + identifier.
+// Returns 0 if no tier is set (no recent failed attempts).
+func GetDelayTier(appID, identifier string) (int64, error) {
+	key := fmt.Sprintf("app:%s:delay_tier:%s", appID, identifier)
+	tier, err := Rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return tier, err
+}
+
+// ResetDelayTier clears the delay tier for a given app + identifier.
+// Called on successful login to reset progressive delays.
+func ResetDelayTier(appID, identifier string) error {
+	key := fmt.Sprintf("app:%s:delay_tier:%s", appID, identifier)
+	return Rdb.Del(ctx, key).Err()
+}

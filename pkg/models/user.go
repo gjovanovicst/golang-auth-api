@@ -21,9 +21,12 @@ type User struct {
 	ProfilePicture     string          `gorm:"" json:"profile_picture"` // Profile picture URL from social login
 	Locale             string          `gorm:"" json:"locale"`          // User's locale/language preference
 	TwoFAEnabled       bool            `gorm:"default:false" json:"two_fa_enabled"`
-	TwoFAMethod        string          `gorm:"type:varchar(20);default:''" json:"two_fa_method"` // User's chosen 2FA method: "totp" or "email"
-	TwoFASecret        string          `gorm:"" json:"-"`                                        // Stored encrypted, not exposed via JSON
-	TwoFARecoveryCodes datatypes.JSON  `gorm:"type:jsonb" json:"-"`                              // Stored encrypted, not exposed via JSON
+	TwoFAMethod        string          `gorm:"type:varchar(20);default:''" json:"two_fa_method"`          // User's chosen 2FA method: "totp" or "email"
+	TwoFASecret        string          `gorm:"" json:"-"`                                                 // Stored encrypted, not exposed via JSON
+	TwoFARecoveryCodes datatypes.JSON  `gorm:"type:jsonb" json:"-"`                                       // Stored encrypted, not exposed via JSON
+	LockedAt           *time.Time      `gorm:"" json:"locked_at,omitempty"`                               // When the account was locked (nil = not locked)
+	LockReason         string          `gorm:"type:varchar(255);default:''" json:"lock_reason,omitempty"` // Reason for lockout (e.g., "Too many failed login attempts")
+	LockExpiresAt      *time.Time      `gorm:"" json:"lock_expires_at,omitempty"`                         // When the lockout expires (nil = permanent until admin unlock)
 	CreatedAt          time.Time       `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt          time.Time       `gorm:"autoUpdateTime" json:"updated_at"`
 	SocialAccounts     []SocialAccount `gorm:"foreignKey:UserID" json:"social_accounts"` // One-to-many relationship

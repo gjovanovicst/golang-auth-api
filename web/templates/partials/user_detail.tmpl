@@ -93,6 +93,31 @@
         <h6 class="fw-bold mb-2 mt-3 pt-3 border-top">
             <i class="bi bi-shield-check me-2"></i>Security
         </h6>
+
+        {{if .LockedAt}}
+        <!-- Account Lockout Alert -->
+        <div class="alert alert-danger d-flex align-items-center justify-content-between mb-3" role="alert">
+            <div>
+                <i class="bi bi-lock-fill me-2"></i>
+                <strong>Account Locked</strong>
+                {{if .LockReason}}<span class="ms-1">— {{.LockReason}}</span>{{end}}
+                {{if .LockExpiresAt}}
+                <br><small class="text-muted">Expires: {{formatDateTimeFull (deref .LockExpiresAt)}}</small>
+                {{end}}
+            </div>
+            <div id="unlock-btn-{{.ID}}">
+                <button class="btn btn-outline-danger btn-sm"
+                        hx-put="/gui/users/{{.ID}}/unlock"
+                        hx-target="#unlock-btn-{{.ID}}"
+                        hx-swap="innerHTML"
+                        hx-confirm="Unlock this user account? They will be able to log in again."
+                        title="Unlock account">
+                    <i class="bi bi-unlock me-1"></i>Unlock
+                </button>
+            </div>
+        </div>
+        {{end}}
+
         <div class="row g-3 mb-3">
             <div class="col-md-4">
                 <div class="d-flex align-items-center gap-2">

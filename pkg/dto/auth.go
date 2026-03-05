@@ -8,8 +8,9 @@ type RegisterRequest struct {
 
 // LoginRequest represents the request payload for user login
 type LoginRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,max=128"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	Email        string `json:"email" validate:"required,email"`
+	Password     string `json:"password" validate:"required,max=128"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	CaptchaToken string `json:"captcha_token,omitempty"`              // Google reCAPTCHA response token (required when CAPTCHA is triggered)
 }
 
 // RefreshTokenRequest represents the request payload for token refresh
@@ -47,9 +48,10 @@ type LoginResponse struct {
 
 // TwoFARequiredResponse represents response when 2FA is required during login
 type TwoFARequiredResponse struct {
-	Message   string `json:"message"`
-	TempToken string `json:"temp_token"`
-	Method    string `json:"method"` // "totp" or "email" - indicates which 2FA method the user has configured
+	RequiresTwoFA bool   `json:"requires_2fa"`
+	Message       string `json:"message"`
+	TempToken     string `json:"temp_token"`
+	Method        string `json:"method"` // "totp" or "email" - indicates which 2FA method the user has configured
 }
 
 // TwoFASetupRequiredResponse represents response when 2FA setup is mandatory for the application
@@ -184,4 +186,25 @@ type MagicLinkRequest struct {
 // MagicLinkVerifyRequest represents the request payload for verifying a magic link token
 type MagicLinkVerifyRequest struct {
 	Token string `json:"token" validate:"required"` // #nosec G101 -- This is a DTO field, not a hardcoded credential
+}
+
+// AccountLockedResponse represents the response when a user's account is locked
+type AccountLockedResponse struct {
+	Error      string `json:"error"`
+	LockedUtil string `json:"locked_until,omitempty"` // ISO 8601 timestamp when the lockout expires
+	RetryAfter int    `json:"retry_after,omitempty"`  // Seconds until the lockout expires
+}
+
+// CaptchaRequiredResponse represents the response when CAPTCHA verification is needed
+type CaptchaRequiredResponse struct {
+	Error           string `json:"error"`
+	CaptchaRequired bool   `json:"captcha_required"`
+	SiteKey         string `json:"site_key,omitempty"`    // reCAPTCHA site key for the client to render the widget
+	RetryAfter      int    `json:"retry_after,omitempty"` // Advisory: seconds the client should wait before retrying
+}
+
+// ProgressiveDelayResponse represents the response when a progressive delay is imposed
+type ProgressiveDelayResponse struct {
+	Error      string `json:"error"`
+	RetryAfter int    `json:"retry_after"` // Seconds the client should wait before retrying
 }

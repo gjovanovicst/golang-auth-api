@@ -48,6 +48,9 @@
                         </td>
                         <td class="text-center">
                             <span class="d-inline-flex gap-1 align-items-center">
+                                {{if .LockedAt}}
+                                <span class="badge bg-danger bg-opacity-10 text-danger" title="Account locked{{if .LockExpiresAt}} until {{formatDateTimeFull (deref .LockExpiresAt)}}{{end}}"><i class="bi bi-lock-fill"></i></span>
+                                {{end}}
                                 {{if .EmailVerified}}
                                 <span class="badge bg-info bg-opacity-10 text-info" title="Email verified"><i class="bi bi-envelope-check"></i></span>
                                 {{else}}

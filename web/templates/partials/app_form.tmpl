@@ -118,6 +118,142 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Brute-Force Protection Settings -->
+            <div class="border rounded p-3 mt-3 bg-light bg-opacity-50">
+                <h6 class="fw-semibold mb-3"><i class="bi bi-shield-exclamation me-2"></i>Brute-Force Protection</h6>
+                <p class="small text-muted mb-3">Override brute-force settings for this application. When a section is toggled off, the system defaults (shown as pre-filled values) are used.</p>
+
+                <!-- Account Lockout -->
+                <div class="border rounded p-3 mb-3 bg-white bg-opacity-75">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="bfLockoutOverride"
+                               name="bf_lockout_override" {{if .BfLockoutOverride}}checked{{end}}
+                               onchange="document.getElementById('bfLockoutFields').style.display = this.checked ? '' : 'none'">
+                        <label class="form-check-label fw-semibold small" for="bfLockoutOverride">
+                            <i class="bi bi-lock me-1"></i>Override Account Lockout Settings
+                        </label>
+                    </div>
+                    <div id="bfLockoutFields" {{if not .BfLockoutOverride}}style="display:none"{{end}}>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-4 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="bfLockoutEnabled"
+                                           name="bf_lockout_enabled" {{if .BfLockoutEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="bfLockoutEnabled">
+                                        <span class="small text-muted">Enable Lockout</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="bfLockoutThreshold" class="form-label small text-muted">Threshold (attempts)</label>
+                                <input type="number" class="form-control" id="bfLockoutThreshold" name="bf_lockout_threshold"
+                                       value="{{.BfLockoutThreshold}}" placeholder="e.g. 5" min="1">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="bfLockoutDurations" class="form-label small text-muted">Durations</label>
+                                <input type="text" class="form-control" id="bfLockoutDurations" name="bf_lockout_durations"
+                                       value="{{.BfLockoutDurations}}" placeholder="e.g. 15m,30m,1h,24h">
+                                <div class="form-text">Comma-separated escalating lockout durations.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="bfLockoutWindow" class="form-label small text-muted">Window</label>
+                                <input type="text" class="form-control" id="bfLockoutWindow" name="bf_lockout_window"
+                                       value="{{.BfLockoutWindow}}" placeholder="e.g. 15m">
+                                <div class="form-text">Sliding window for counting failed attempts.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="bfLockoutTierTTL" class="form-label small text-muted">Tier TTL</label>
+                                <input type="text" class="form-control" id="bfLockoutTierTTL" name="bf_lockout_tier_ttl"
+                                       value="{{.BfLockoutTierTTL}}" placeholder="e.g. 24h">
+                                <div class="form-text">How long the lockout tier persists before resetting.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Progressive Delay -->
+                <div class="border rounded p-3 mb-3 bg-white bg-opacity-75">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="bfDelayOverride"
+                               name="bf_delay_override" {{if .BfDelayOverride}}checked{{end}}
+                               onchange="document.getElementById('bfDelayFields').style.display = this.checked ? '' : 'none'">
+                        <label class="form-check-label fw-semibold small" for="bfDelayOverride">
+                            <i class="bi bi-hourglass-split me-1"></i>Override Progressive Delay Settings
+                        </label>
+                    </div>
+                    <div id="bfDelayFields" {{if not .BfDelayOverride}}style="display:none"{{end}}>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-3 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="bfDelayEnabled"
+                                           name="bf_delay_enabled" {{if .BfDelayEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="bfDelayEnabled">
+                                        <span class="small text-muted">Enable Delays</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="bfDelayStartAfter" class="form-label small text-muted">Start After (attempts)</label>
+                                <input type="number" class="form-control" id="bfDelayStartAfter" name="bf_delay_start_after"
+                                       value="{{.BfDelayStartAfter}}" placeholder="e.g. 2" min="1">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="bfDelayMaxSeconds" class="form-label small text-muted">Max Delay (seconds)</label>
+                                <input type="number" class="form-control" id="bfDelayMaxSeconds" name="bf_delay_max_seconds"
+                                       value="{{.BfDelayMaxSeconds}}" placeholder="e.g. 30" min="1">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="bfDelayTierTTL" class="form-label small text-muted">Tier TTL</label>
+                                <input type="text" class="form-control" id="bfDelayTierTTL" name="bf_delay_tier_ttl"
+                                       value="{{.BfDelayTierTTL}}" placeholder="e.g. 30m">
+                                <div class="form-text">Delay tier persistence.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CAPTCHA -->
+                <div class="border rounded p-3 bg-white bg-opacity-75">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" id="bfCaptchaOverride"
+                               name="bf_captcha_override" {{if .BfCaptchaOverride}}checked{{end}}
+                               onchange="document.getElementById('bfCaptchaFields').style.display = this.checked ? '' : 'none'">
+                        <label class="form-check-label fw-semibold small" for="bfCaptchaOverride">
+                            <i class="bi bi-puzzle me-1"></i>Override CAPTCHA Settings
+                        </label>
+                    </div>
+                    <div id="bfCaptchaFields" {{if not .BfCaptchaOverride}}style="display:none"{{end}}>
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-3 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="bfCaptchaEnabled"
+                                           name="bf_captcha_enabled" {{if .BfCaptchaEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="bfCaptchaEnabled">
+                                        <span class="small text-muted">Enable CAPTCHA</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="bfCaptchaThreshold" class="form-label small text-muted">Threshold (attempts)</label>
+                                <input type="number" class="form-control" id="bfCaptchaThreshold" name="bf_captcha_threshold"
+                                       value="{{.BfCaptchaThreshold}}" placeholder="e.g. 3" min="1">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bfCaptchaSiteKey" class="form-label small text-muted">reCAPTCHA Site Key</label>
+                                <input type="text" class="form-control" id="bfCaptchaSiteKey" name="bf_captcha_site_key"
+                                       value="{{.BfCaptchaSiteKey}}" placeholder="Leave empty to use global key">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="bfCaptchaSecretKey" class="form-label small text-muted">reCAPTCHA Secret Key</label>
+                                <input type="password" class="form-control" id="bfCaptchaSecretKey" name="bf_captcha_secret_key"
+                                       placeholder="{{if .BfCaptchaHasSecret}}Secret key configured (leave empty to keep){{else}}No secret key configured{{end}}">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="mt-3 d-flex gap-2">
                 <button type="submit" class="btn btn-primary">
                     <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update{{else}}Create{{end}}

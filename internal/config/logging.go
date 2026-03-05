@@ -112,6 +112,8 @@ func initializeEventSeverities() map[string]EventSeverity {
 		"LOGIN_FAILED":           SeverityImportant,
 		"BRUTE_FORCE_DETECTED":   SeverityCritical,
 		"IP_BLOCKED":             SeverityCritical,
+		"ACCOUNT_LOCKED":         SeverityCritical,
+		"ACCOUNT_UNLOCKED":       SeverityCritical,
 
 		// Informational events - routine operations
 		"TOKEN_REFRESH":  SeverityInformational,
@@ -151,6 +153,8 @@ func initializeEnabledEvents() map[string]bool {
 		"LOGIN_FAILED":           true,
 		"BRUTE_FORCE_DETECTED":   true,
 		"IP_BLOCKED":             true,
+		"ACCOUNT_LOCKED":         true,
+		"ACCOUNT_UNLOCKED":       true,
 	}
 
 	// Apply disabled events from environment

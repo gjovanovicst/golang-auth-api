@@ -68,6 +68,7 @@ func MigrateDatabase() {
 		&models.UserRole{},           // RBAC user-role assignments
 		&models.WebAuthnCredential{}, // WebAuthn/Passkey credentials
 		&models.IPRule{},             // IP-based access rules (per-app)
+		&models.ApiKeyUsage{},        // API key daily usage analytics
 	)
 
 	if err != nil {

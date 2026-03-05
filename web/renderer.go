@@ -2,6 +2,7 @@ package web
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -226,6 +227,32 @@ func defaultFuncMap() template.FuncMap {
 		},
 		"sub": func(a, b int) int {
 			return a - b
+		},
+
+		// splitScopes splits a comma-separated scope string into a []string for range iteration.
+		"splitScopes": func(s string) []string {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				return nil
+			}
+			parts := strings.Split(s, ",")
+			out := make([]string, 0, len(parts))
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					out = append(out, p)
+				}
+			}
+			return out
+		},
+
+		// toJSON marshals a value to a JSON string for use in inline <script> blocks.
+		"toJSON": func(v interface{}) template.JS {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return template.JS("null")
+			}
+			return template.JS(b) // #nosec G203 -- JSON-encoded server data only.
 		},
 	}
 }

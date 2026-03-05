@@ -885,6 +885,7 @@ type ApiKeyListItem struct {
 	Name       string     `json:"name"`
 	KeyPrefix  string     `json:"key_prefix"`
 	KeySuffix  string     `json:"key_suffix"`
+	Scopes     string     `json:"scopes"`
 	AppID      *uuid.UUID `json:"app_id"`
 	AppName    string     `json:"app_name"`
 	TenantName string     `json:"tenant_name"`
@@ -923,7 +924,7 @@ func (r *Repository) ListApiKeys(page, pageSize int, keyType string) ([]ApiKeyLi
 	// Fetch paginated results
 	dataQuery := applyFilters(r.DB.Model(&models.ApiKey{}).
 		Select(`api_keys.id, api_keys.key_type, api_keys.name,
-			api_keys.key_prefix, api_keys.key_suffix,
+			api_keys.key_prefix, api_keys.key_suffix, api_keys.scopes,
 			api_keys.app_id, api_keys.expires_at,
 			api_keys.last_used_at, api_keys.is_revoked,
 			api_keys.created_at,
@@ -982,6 +983,78 @@ func (r *Repository) FindActiveKeyByHash(keyHash string) (*models.ApiKey, error)
 func (r *Repository) UpdateApiKeyLastUsed(id uuid.UUID) {
 	// Fire-and-forget update; errors are non-critical
 	r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Update("last_used_at", time.Now())
+}
+
+// UpdateApiKeyScopes updates the name, description, and scopes for an existing key.
+func (r *Repository) UpdateApiKeyScopes(id string, name, description, scopes string) error {
+	return r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"scopes":      scopes,
+	}).Error
+}
+
+// GetKeysExpiringWithin returns all active (non-revoked) API keys expiring within `days` days.
+func (r *Repository) GetKeysExpiringWithin(days int) ([]models.ApiKey, error) {
+	var keys []models.ApiKey
+	cutoff := time.Now().UTC().Add(time.Duration(days) * 24 * time.Hour)
+	err := r.DB.Where(
+		"is_revoked = ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?",
+		false, time.Now().UTC(), cutoff,
+	).Find(&keys).Error
+	return keys, err
+}
+
+// MarkApiKeyNotified7Days sets the notified_7_days_at timestamp to now.
+func (r *Repository) MarkApiKeyNotified7Days(id uuid.UUID) error {
+	now := time.Now().UTC()
+	return r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Update("notified_7_days_at", now).Error
+}
+
+// MarkApiKeyNotified1Day sets the notified_1_day_at timestamp to now.
+func (r *Repository) MarkApiKeyNotified1Day(id uuid.UUID) error {
+	now := time.Now().UTC()
+	return r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Update("notified_1_day_at", now).Error
+}
+
+// IncrementDailyUsage upserts a daily usage row for the given API key, incrementing the count by 1.
+// Uses PostgreSQL INSERT ... ON CONFLICT DO UPDATE for atomic upsert.
+func (r *Repository) IncrementDailyUsage(keyID uuid.UUID) {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	r.DB.Exec(`
+		INSERT INTO api_key_usages (api_key_id, period_date, request_count, updated_at)
+		VALUES (?, ?, 1, NOW())
+		ON CONFLICT (api_key_id, period_date)
+		DO UPDATE SET request_count = api_key_usages.request_count + 1, updated_at = NOW()
+	`, keyID, today)
+}
+
+// ApiKeyUsagePoint is a single data point for usage analytics (one day).
+type ApiKeyUsagePoint struct {
+	PeriodDate   time.Time `json:"period_date"`
+	RequestCount int64     `json:"request_count"`
+}
+
+// GetApiKeyUsageSummary returns daily usage data for a key over the last `days` days.
+func (r *Repository) GetApiKeyUsageSummary(keyID uuid.UUID, days int) ([]ApiKeyUsagePoint, error) {
+	var points []ApiKeyUsagePoint
+	since := time.Now().UTC().Truncate(24 * time.Hour).Add(-time.Duration(days-1) * 24 * time.Hour)
+	err := r.DB.Model(&models.ApiKeyUsage{}).
+		Select("period_date, request_count").
+		Where("api_key_id = ? AND period_date >= ?", keyID, since).
+		Order("period_date asc").
+		Scan(&points).Error
+	return points, err
+}
+
+// GetApiKeyTotalUsage returns the lifetime total request count for a key.
+func (r *Repository) GetApiKeyTotalUsage(keyID uuid.UUID) (int64, error) {
+	var total int64
+	err := r.DB.Model(&models.ApiKeyUsage{}).
+		Where("api_key_id = ?", keyID).
+		Select("COALESCE(SUM(request_count), 0)").
+		Scan(&total).Error
+	return total, err
 }
 
 // ============================================================

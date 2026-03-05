@@ -43,6 +43,12 @@
                 <span class="small">{{.ExpiresAt}}</span>
             </div>
             {{end}}
+            {{if .Scopes}}
+            <div class="col-12">
+                <span class="small text-muted">Scopes:</span>
+                <code class="small">{{.Scopes}}</code>
+            </div>
+            {{end}}
         </div>
         <div class="mt-3">
             <button type="button" class="btn btn-outline-secondary btn-sm"

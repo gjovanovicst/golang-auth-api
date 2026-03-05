@@ -1724,6 +1724,7 @@ func (h *GUIHandler) ApiKeyCreate(c *gin.Context) {
 	name := strings.TrimSpace(c.PostForm("name"))
 	keyType := strings.TrimSpace(c.PostForm("key_type"))
 	description := strings.TrimSpace(c.PostForm("description"))
+	scopes := strings.TrimSpace(c.PostForm("scopes"))
 	appIDStr := strings.TrimSpace(c.PostForm("app_id"))
 	expiresAtStr := strings.TrimSpace(c.PostForm("expires_at"))
 
@@ -1798,6 +1799,7 @@ func (h *GUIHandler) ApiKeyCreate(c *gin.Context) {
 		KeyType:     keyType,
 		Name:        name,
 		Description: description,
+		Scopes:      scopes,
 		KeyHash:     keyHash,
 		KeyPrefix:   keyPrefix,
 		KeySuffix:   keySuffix,
@@ -1818,6 +1820,7 @@ func (h *GUIHandler) ApiKeyCreate(c *gin.Context) {
 		"RawKey":    rawKey,
 		"Name":      name,
 		"KeyType":   keyType,
+		"Scopes":    scopes,
 		"AppName":   appName,
 		"ExpiresAt": expiresAtDisplay,
 	})
@@ -1946,7 +1949,101 @@ func (h *GUIHandler) ApiKeyFormCancel(c *gin.Context) {
 	c.String(http.StatusOK, "")
 }
 
-// ==================== Settings Management ====================
+// ApiKeyEditForm returns the edit form partial for an existing API key.
+// GET /gui/api-keys/:id/edit
+func (h *GUIHandler) ApiKeyEditForm(c *gin.Context) {
+	id := c.Param("id")
+	apiKey, err := h.Repo.GetApiKeyByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">API key not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "api_key_edit_form", gin.H{
+		"ID":          apiKey.ID,
+		"Name":        apiKey.Name,
+		"Description": apiKey.Description,
+		"Scopes":      apiKey.Scopes,
+		"KeyType":     apiKey.KeyType,
+		"KeyPrefix":   apiKey.KeyPrefix,
+		"KeySuffix":   apiKey.KeySuffix,
+	})
+}
+
+// ApiKeyUpdate handles updating name, description, and scopes for an existing API key.
+// PUT /gui/api-keys/:id
+func (h *GUIHandler) ApiKeyUpdate(c *gin.Context) {
+	id := c.Param("id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	description := strings.TrimSpace(c.PostForm("description"))
+	scopes := strings.TrimSpace(c.PostForm("scopes"))
+
+	if name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Name is required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if err := h.Repo.UpdateApiKeyScopes(id, name, description, scopes); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update API key.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "apiKeyListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">API key updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// ApiKeyUsagePage renders the full usage analytics page for a single API key.
+// GET /gui/api-keys/:id/usage
+func (h *GUIHandler) ApiKeyUsagePage(c *gin.Context) {
+	id := c.Param("id")
+
+	parsedID, err := uuid.Parse(id)
+	if err != nil {
+		c.HTML(http.StatusBadRequest, "error", gin.H{"Error": "Invalid API key ID"})
+		return
+	}
+
+	apiKey, err := h.Repo.GetApiKeyByID(id)
+	if err != nil {
+		c.HTML(http.StatusNotFound, "error", gin.H{"Error": "API key not found"})
+		return
+	}
+
+	const days = 30
+	points, err := h.Repo.GetApiKeyUsageSummary(parsedID, days)
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "error", gin.H{"Error": "Failed to load usage data"})
+		return
+	}
+
+	total, err := h.Repo.GetApiKeyTotalUsage(parsedID)
+	if err != nil {
+		total = 0
+	}
+
+	// Build label/count slices for Chart.js
+	labels := make([]string, len(points))
+	counts := make([]int64, len(points))
+	for i, p := range points {
+		labels[i] = p.PeriodDate.Format("Jan 02")
+		counts[i] = p.RequestCount
+	}
+
+	c.HTML(http.StatusOK, "api_key_usage", gin.H{
+		"ActivePage":    "api-keys",
+		"AdminUsername": getAdminUsername(c),
+		"CSRFToken":     getCSRFToken(c),
+		"ApiKey":        apiKey,
+		"Days":          days,
+		"Labels":        labels,
+		"Counts":        counts,
+		"TotalRequests": total,
+	})
+}
 
 // SettingsPage renders the system settings page with accordion categories.
 // GET /gui/settings

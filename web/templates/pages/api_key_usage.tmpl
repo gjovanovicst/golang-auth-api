@@ -1,0 +1,108 @@
+{{define "api_key_usage"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}API Key Usage — {{.ApiKey.Name}}{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+        <a href="/gui/api-keys" class="btn btn-outline-secondary btn-sm mb-2">
+            <i class="bi bi-arrow-left me-1"></i>Back to API Keys
+        </a>
+        <h4 class="mb-0 fw-bold">
+            <i class="bi bi-bar-chart-line me-2"></i>Usage Analytics
+        </h4>
+        <p class="text-muted small mb-0">
+            <code>{{.ApiKey.KeyPrefix}}...{{.ApiKey.KeySuffix}}</code>
+            &mdash; {{.ApiKey.Name}}
+            {{if eq .ApiKey.KeyType "admin"}}
+            <span class="badge bg-danger bg-opacity-10 text-danger ms-1"><i class="bi bi-shield-lock me-1"></i>Admin</span>
+            {{else}}
+            <span class="badge bg-info bg-opacity-10 text-info ms-1"><i class="bi bi-app-indicator me-1"></i>App</span>
+            {{end}}
+        </p>
+    </div>
+    <div class="text-end">
+        <div class="display-6 fw-bold text-primary">{{.TotalRequests}}</div>
+        <div class="small text-muted">lifetime requests</div>
+    </div>
+</div>
+
+{{if .ApiKey.Scopes}}
+<div class="mb-4">
+    <span class="small text-muted me-2">Scopes:</span>
+    {{range (splitScopes .ApiKey.Scopes)}}
+    <span class="badge bg-secondary bg-opacity-10 text-secondary font-monospace me-1">{{.}}</span>
+    {{end}}
+</div>
+{{end}}
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white border-bottom">
+        <span class="fw-semibold">Requests per day — last {{.Days}} days</span>
+    </div>
+    <div class="card-body">
+        {{if .Labels}}
+        <canvas id="usageChart" height="80"></canvas>
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-bar-chart fs-1"></i>
+            <p class="mt-2 mb-0">No usage data recorded yet for this period.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+{{if .Labels}}
+<script>
+(function() {
+    var labels = {{.Labels | toJSON}};
+    var counts = {{.Counts | toJSON}};
+
+    function drawChart() {
+        var el = document.getElementById('usageChart');
+        if (!el) return;
+        new Chart(el.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Requests',
+                    data: counts,
+                    backgroundColor: 'rgba(13, 110, 253, 0.15)',
+                    borderColor: 'rgba(13, 110, 253, 0.8)',
+                    borderWidth: 1,
+                    borderRadius: 3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: { precision: 0 }
+                    }
+                }
+            }
+        });
+    }
+
+    if (window.Chart) {
+        // Already loaded (browser cache hit or previous visit this session)
+        drawChart();
+    } else {
+        var s = document.createElement('script');
+        s.src = '/gui/static/js/chart.umd.min.js';
+        s.onload = drawChart;
+        document.head.appendChild(s);
+    }
+})();
+</script>
+{{end}}
+{{end}}

@@ -42,8 +42,11 @@ func AdminAuthMiddleware(keyValidator web.ApiKeyValidator) gin.HandlerFunc {
 
 			foundKey, err := keyValidator.FindActiveKeyByHash(keyHash)
 			if err == nil && foundKey != nil && foundKey.KeyType == admin.KeyTypeAdmin {
-				// Update last_used_at asynchronously
+				// Update last_used_at and increment daily usage asynchronously
 				go keyValidator.UpdateApiKeyLastUsed(foundKey.ID)
+				go keyValidator.IncrementDailyUsage(foundKey.ID)
+				scopes := parseScopes(foundKey.Scopes)
+				c.Set(web.ApiKeyScopesKey, scopes)
 				c.Set(web.AuthTypeKey, web.AuthTypeAdmin)
 				c.Next()
 				return

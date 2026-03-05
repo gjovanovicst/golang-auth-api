@@ -42,6 +42,10 @@ const (
 
 	// AuthTypeApp indicates the request was authenticated with a per-application API key.
 	AuthTypeApp = "app"
+
+	// ApiKeyScopesKey is the Gin context key for the scopes granted by the validated API key.
+	// Value is []string; set by AppApiKeyMiddleware and AdminAuthMiddleware after successful validation.
+	ApiKeyScopesKey = "api_key_scopes"
 )
 
 // SessionValidator is the interface used by GUI middleware to validate sessions
@@ -106,4 +110,7 @@ type ApiKeyValidator interface {
 
 	// UpdateApiKeyLastUsed sets the last_used_at timestamp to now (fire-and-forget).
 	UpdateApiKeyLastUsed(id uuid.UUID)
+
+	// IncrementDailyUsage increments the daily usage counter for the key (fire-and-forget).
+	IncrementDailyUsage(id uuid.UUID)
 }

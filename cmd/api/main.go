@@ -201,6 +201,11 @@ func main() {
 		}
 	})
 
+	// Initialize and start the API key expiry notification service
+	apiKeyNotificationSvc := admin.NewApiKeyNotificationService(adminRepo, emailService)
+	apiKeyNotificationSvc.Start()
+	defer apiKeyNotificationSvc.Shutdown()
+
 	// Setup Gin Router
 	r := gin.Default()
 
@@ -501,6 +506,9 @@ func main() {
 			guiAuth.GET("/api-keys/new", guiHandler.ApiKeyCreateForm)
 			guiAuth.POST("/api-keys", guiHandler.ApiKeyCreate)
 			guiAuth.GET("/api-keys/form-cancel", guiHandler.ApiKeyFormCancel)
+			guiAuth.GET("/api-keys/:id/edit", guiHandler.ApiKeyEditForm)
+			guiAuth.PUT("/api-keys/:id", guiHandler.ApiKeyUpdate)
+			guiAuth.GET("/api-keys/:id/usage", guiHandler.ApiKeyUsagePage)
 			guiAuth.GET("/api-keys/:id/revoke", guiHandler.ApiKeyRevokeConfirm)
 			guiAuth.PUT("/api-keys/:id/revoke", guiHandler.ApiKeyRevoke)
 			guiAuth.GET("/api-keys/:id/delete", guiHandler.ApiKeyDeleteConfirm)

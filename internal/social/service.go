@@ -10,6 +10,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/user"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
@@ -23,6 +24,7 @@ type Service struct {
 	SessionService    *session.Service           // Session management for creating sessions on social login
 	LookupRoles       user.RoleLookupFunc        // Optional: if nil, tokens are generated without roles
 	AssignDefaultRole user.AssignDefaultRoleFunc // Optional: if nil, no default role on social signup
+	WebhookService    *webhook.Service           // Optional: if nil, webhook dispatch is skipped
 }
 
 func NewService(ur *user.Repository, sr *Repository) *Service {
@@ -699,6 +701,16 @@ func (s *Service) UnlinkSocialAccount(appID, userID, socialAccountID string) *er
 		return errors.NewAppError(errors.ErrInternal, "Failed to unlink social account")
 	}
 
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		parsedAppID, _ := uuid.Parse(appID)
+		s.WebhookService.Dispatch(parsedAppID, "social.unlinked", map[string]interface{}{
+			"user_id":           userID,
+			"social_account_id": socialAccountID,
+			"provider":          socialAccount.Provider,
+		})
+	}
+
 	return nil
 }
 
@@ -759,6 +771,14 @@ func (s *Service) HandleGoogleLinkCallback(appID uuid.UUID, userID string, googl
 	}
 	if err := s.SocialRepo.CreateSocialAccount(newLinkAccount); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to link Google account")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "social.linked", map[string]interface{}{
+			"user_id":  userID,
+			"provider": "google",
+		})
 	}
 
 	return newLinkAccount, nil
@@ -824,6 +844,14 @@ func (s *Service) HandleFacebookLinkCallback(appID uuid.UUID, userID string, fac
 	}
 	if err := s.SocialRepo.CreateSocialAccount(newLinkAccount); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to link Facebook account")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "social.linked", map[string]interface{}{
+			"user_id":  userID,
+			"provider": "facebook",
+		})
 	}
 
 	return newLinkAccount, nil
@@ -925,6 +953,14 @@ func (s *Service) HandleGithubLinkCallback(appID uuid.UUID, userID string, githu
 	}
 	if err := s.SocialRepo.CreateSocialAccount(newLinkAccount); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to link GitHub account")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "social.linked", map[string]interface{}{
+			"user_id":  userID,
+			"provider": "github",
+		})
 	}
 
 	return newLinkAccount, nil

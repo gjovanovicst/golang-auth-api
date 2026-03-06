@@ -292,7 +292,7 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 		}
 	}
 
-	if err := h.Service.Disable2FA(userID.(string)); err != nil {
+	if err := h.Service.Disable2FA(appID, userID.(string)); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
@@ -421,6 +421,16 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 
 	// Clear temporary session
 	clearTempSession(appID.String(), req.TempToken)
+
+	// Dispatch webhook event (non-fatal)
+	if h.Service.WebhookService != nil {
+		h.Service.WebhookService.Dispatch(appID, "user.login", map[string]interface{}{
+			"user_id": userID,
+			"email":   userEmail,
+			"ip":      ipAddress,
+			"method":  "2fa_" + method,
+		})
+	}
 
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,

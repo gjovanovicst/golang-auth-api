@@ -10,6 +10,7 @@ import (
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
@@ -38,6 +39,7 @@ type Service struct {
 	SessionService    *session.Service      // Session management for multi-device tracking
 	LookupRoles       RoleLookupFunc        // Optional: if nil, tokens are generated without roles
 	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no default role is assigned on registration
+	WebhookService    *webhook.Service      // Optional: if nil, webhook dispatch is skipped
 }
 
 func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
@@ -109,6 +111,14 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 
 	if err := s.Repo.CreateUser(user); err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create user")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.registered", map[string]interface{}{
+			"user_id": user.ID.String(),
+			"email":   user.Email,
+		})
 	}
 
 	// Assign default 'member' role to the new user (non-fatal if it fails)
@@ -237,6 +247,15 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
 	if appErr != nil {
 		return nil, appErr
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.login", map[string]interface{}{
+			"user_id": user.ID.String(),
+			"email":   user.Email,
+			"ip":      ip,
+		})
 	}
 
 	return &LoginResult{
@@ -394,6 +413,13 @@ func (s *Service) VerifyEmail(appID uuid.UUID, token string) (uuid.UUID, *errors
 	userUUID, parseErr := uuid.Parse(userID)
 	if parseErr != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Invalid user ID format")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.verified", map[string]interface{}{
+			"user_id": userUUID.String(),
+		})
 	}
 
 	return userUUID, nil
@@ -595,6 +621,13 @@ func (s *Service) UpdateUserPassword(appID uuid.UUID, userID string, req dto.Upd
 	// Revoke all existing tokens for security
 	if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
 		log.Printf("Warning: Failed to revoke all user tokens after password change: %v\n", err.Message)
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.password_changed", map[string]interface{}{
+			"user_id": userID,
+		})
 	}
 
 	return nil

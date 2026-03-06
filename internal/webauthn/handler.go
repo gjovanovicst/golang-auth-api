@@ -14,6 +14,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/util"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
@@ -34,6 +35,7 @@ type Handler struct {
 	AssignDefaultRole AssignDefaultRoleFunc  // Optional: if nil, no self-healing role assignment
 	IPRuleEvaluator   *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
 	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
+	WebhookService    *webhook.Service       // Optional: webhook dispatcher (nil = disabled)
 }
 
 // NewHandler creates a new WebAuthn handler.
@@ -428,6 +430,16 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 	// Clear temporary session
 	clearTempSession(appID.String(), req.TempToken)
 
+	// Dispatch webhook event (non-fatal)
+	if h.WebhookService != nil {
+		h.WebhookService.Dispatch(appID, "user.login", map[string]interface{}{
+			"user_id": userIDStr,
+			"email":   userEmail,
+			"ip":      ipAddress,
+			"method":  "passkey_2fa",
+		})
+	}
+
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -527,6 +539,16 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 
 	// Log passwordless login with anomaly detection
 	h.runLoginAnomalyDetection(appID, userID, userEmail, ipAddress, userAgent, log.EventPasskeyLogin)
+
+	// Dispatch webhook event (non-fatal)
+	if h.WebhookService != nil {
+		h.WebhookService.Dispatch(appID, "user.login", map[string]interface{}{
+			"user_id": userIDStr,
+			"email":   userEmail,
+			"ip":      ipAddress,
+			"method":  "passkey_passwordless",
+		})
+	}
 
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,

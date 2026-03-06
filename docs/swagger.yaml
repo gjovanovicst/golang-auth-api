@@ -161,6 +161,27 @@ definitions:
     required:
     - name
     type: object
+  dto.CreateWebhookRequest:
+    properties:
+      event_type:
+        example: user.registered
+        type: string
+      url:
+        example: https://your-app.com/webhooks/auth
+        type: string
+    required:
+    - event_type
+    - url
+    type: object
+  dto.CreateWebhookResponse:
+    properties:
+      endpoint:
+        $ref: '#/definitions/dto.WebhookEndpointResponse'
+      secret:
+        description: '#nosec G101 -- plaintext secret, shown once'
+        example: whsec_abc123...
+        type: string
+    type: object
   dto.DeleteAccountRequest:
     properties:
       confirm_deletion:
@@ -860,6 +881,12 @@ definitions:
       updated_at:
         type: string
     type: object
+  dto.ToggleWebhookRequest:
+    properties:
+      is_active:
+        example: true
+        type: boolean
+    type: object
   dto.TwoFADisableRequest:
     properties:
       code:
@@ -1078,6 +1105,100 @@ definitions:
           $ref: '#/definitions/dto.RoleResponse'
         type: array
       user_id:
+        type: string
+    type: object
+  dto.WebhookDeliveryListResponse:
+    properties:
+      deliveries:
+        items:
+          $ref: '#/definitions/dto.WebhookDeliveryResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 100
+        type: integer
+    type: object
+  dto.WebhookDeliveryResponse:
+    properties:
+      app_id:
+        example: 00000000-0000-0000-0000-000000000001
+        type: string
+      attempt:
+        example: 1
+        type: integer
+      created_at:
+        example: "2024-01-01T00:00:00Z"
+        type: string
+      endpoint_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      error_message:
+        type: string
+      event_type:
+        example: user.registered
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      latency_ms:
+        example: 120
+        type: integer
+      next_retry_at:
+        example: "2024-01-01T00:05:00Z"
+        type: string
+      response_body:
+        example: ok
+        type: string
+      status_code:
+        example: 200
+        type: integer
+      success:
+        example: true
+        type: boolean
+    type: object
+  dto.WebhookEndpointListResponse:
+    properties:
+      endpoints:
+        items:
+          $ref: '#/definitions/dto.WebhookEndpointResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 5
+        type: integer
+    type: object
+  dto.WebhookEndpointResponse:
+    properties:
+      app_id:
+        example: 00000000-0000-0000-0000-000000000001
+        type: string
+      created_at:
+        example: "2024-01-01T00:00:00Z"
+        type: string
+      event_type:
+        example: user.registered
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      updated_at:
+        example: "2024-01-01T00:00:00Z"
+        type: string
+      url:
+        example: https://your-app.com/webhooks/auth
         type: string
     type: object
   twofa.TwoFASetupResponse:
@@ -1758,6 +1879,126 @@ paths:
       summary: Create a new application
       tags:
       - Admin
+  /admin/apps/{app_id}/webhook-deliveries:
+    get:
+      description: Get paginated delivery history for all webhook endpoints of an
+        application
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookDeliveryListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List all delivery logs for an app (admin)
+      tags:
+      - Webhooks
+  /admin/apps/{app_id}/webhooks:
+    get:
+      description: Returns all webhook endpoints registered for the given application
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookEndpointListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List webhook endpoints for an app (admin)
+      tags:
+      - Webhooks
+    post:
+      consumes:
+      - application/json
+      description: Register a new webhook endpoint for an application. Returns the
+        secret only once.
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Webhook endpoint details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.CreateWebhookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create webhook endpoint (admin)
+      tags:
+      - Webhooks
   /admin/apps/{id}:
     get:
       consumes:
@@ -3253,6 +3494,318 @@ paths:
       summary: Create a new tenant
       tags:
       - Admin
+  /admin/webhooks:
+    get:
+      description: Returns all registered webhook endpoints across all applications
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookEndpointListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List all webhook endpoints (admin)
+      tags:
+      - Webhooks
+  /admin/webhooks/{id}:
+    delete:
+      description: Soft-delete a webhook endpoint
+      parameters:
+      - description: Webhook Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete webhook endpoint (admin)
+      tags:
+      - Webhooks
+  /admin/webhooks/{id}/deliveries:
+    get:
+      description: Get paginated delivery history for a specific webhook endpoint
+      parameters:
+      - description: Webhook Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookDeliveryListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List delivery logs for endpoint (admin)
+      tags:
+      - Webhooks
+  /admin/webhooks/{id}/toggle:
+    put:
+      consumes:
+      - application/json
+      description: Enable or disable a webhook endpoint
+      parameters:
+      - description: Webhook Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Active state
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ToggleWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Toggle webhook endpoint active state (admin)
+      tags:
+      - Webhooks
+  /app/{id}/webhooks:
+    get:
+      description: Returns all webhook endpoints for this application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookEndpointListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: List webhook endpoints (app API)
+      tags:
+      - Webhooks
+    post:
+      consumes:
+      - application/json
+      description: Register a new webhook endpoint for this application. Returns the
+        secret only once.
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Webhook endpoint details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.CreateWebhookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: Create webhook endpoint (app API)
+      tags:
+      - Webhooks
+  /app/{id}/webhooks/{endpoint_id}:
+    delete:
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Webhook Endpoint ID
+        in: path
+        name: endpoint_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: Delete webhook endpoint (app API)
+      tags:
+      - Webhooks
+  /app/{id}/webhooks/{endpoint_id}/deliveries:
+    get:
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Webhook Endpoint ID
+        in: path
+        name: endpoint_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookDeliveryListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: List webhook delivery logs (app API)
+      tags:
+      - Webhooks
+  /app/{id}/webhooks/{endpoint_id}/toggle:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Webhook Endpoint ID
+        in: path
+        name: endpoint_id
+        required: true
+        type: string
+      - description: Active state
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ToggleWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: Toggle webhook endpoint (app API)
+      tags:
+      - Webhooks
   /auth/facebook/callback:
     get:
       description: Handles Facebook OAuth2 callback and returns JWT tokens

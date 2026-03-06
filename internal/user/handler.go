@@ -1113,6 +1113,16 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 		"login_method": "magic_link",
 	})
 
+	// Dispatch webhook event (non-fatal)
+	if h.Service.WebhookService != nil {
+		h.Service.WebhookService.Dispatch(appID, "user.login", map[string]interface{}{
+			"user_id": result.UserID.String(),
+			"email":   userEmail,
+			"ip":      ipAddress,
+			"method":  "magic_link",
+		})
+	}
+
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,

@@ -214,6 +214,13 @@
                     </a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link sidebar-link{{if eq .ActivePage "webhooks"}} active{{end}}" href="/gui/webhooks"
+                       data-page="webhooks"
+                       hx-get="/gui/webhooks" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
+                        <i class="bi bi-broadcast"></i> Webhooks
+                    </a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link sidebar-link{{if eq .ActivePage "settings"}} active{{end}}" href="/gui/settings"
                        data-page="settings"
                        hx-get="/gui/settings" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
@@ -332,6 +339,7 @@
                 'email-types': 'Email Types',
                 'logs': 'Activity Logs',
                 'api-keys': 'API Keys',
+                'webhooks': 'Webhooks',
                 'settings': 'Settings',
                 'my-account': 'My Account'
             };

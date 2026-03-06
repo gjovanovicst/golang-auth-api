@@ -13,6 +13,7 @@ import (
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/user"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
@@ -23,9 +24,10 @@ import (
 )
 
 type Service struct {
-	UserRepo     *user.Repository
-	DB           *gorm.DB
-	EmailService *emailpkg.Service
+	UserRepo       *user.Repository
+	DB             *gorm.DB
+	EmailService   *emailpkg.Service
+	WebhookService *webhook.Service // Optional: if nil, webhook dispatch is skipped
 }
 
 func NewService(userRepo *user.Repository, db *gorm.DB, emailService *emailpkg.Service) *Service {
@@ -157,14 +159,30 @@ func (s *Service) Enable2FA(appID uuid.UUID, userID string) ([]string, *errors.A
 		log.Printf("Warning: Failed to delete temporary 2FA secret for user %s: %v", userID, err)
 	}
 
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "2fa.enabled", map[string]interface{}{
+			"user_id": userID,
+			"method":  emailpkg.TwoFAMethodTOTP,
+		})
+	}
+
 	return recoveryCodes, nil
 }
 
 // Disable2FA disables 2FA for a user
-func (s *Service) Disable2FA(userID string) *errors.AppError {
+func (s *Service) Disable2FA(appID uuid.UUID, userID string) *errors.AppError {
 	if err := s.UserRepo.Disable2FA(userID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to disable 2FA")
 	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "2fa.disabled", map[string]interface{}{
+			"user_id": userID,
+		})
+	}
+
 	return nil
 }
 
@@ -269,6 +287,14 @@ func (s *Service) EnableEmail2FA(appID uuid.UUID, userID string) ([]string, *err
 	// Enable 2FA with email method — no TOTP secret needed
 	if err := s.UserRepo.Enable2FAWithMethod(userID, "", string(recoveryCodesJSON), emailpkg.TwoFAMethodEmail); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to enable email 2FA")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "2fa.enabled", map[string]interface{}{
+			"user_id": userID,
+			"method":  emailpkg.TwoFAMethodEmail,
+		})
 	}
 
 	return recoveryCodes, nil

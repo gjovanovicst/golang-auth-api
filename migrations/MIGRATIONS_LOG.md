@@ -15,13 +15,57 @@ This file tracks all applied database migrations in chronological order.
 
 ## Current Database Version
 
-**Latest Migration:** `20240103_add_activity_log_smart_fields`  
-**Database Schema Version:** v1.1.0  
-**Compatible Application Version:** v1.1.0+
+**Latest Migration:** `20260305_add_webhooks`  
+**Database Schema Version:** v1.2.0  
+**Compatible Application Version:** v1.2.0+
 
 ---
 
 ## Applied Migrations
+
+### 2026-03-05: Webhook System
+
+| Field | Value |
+|-------|-------|
+| **Migration ID** | `20260305_add_webhooks` |
+| **Date Applied** | 2026-03-05 |
+| **App Version** | v1.2.0 |
+| **Type** | Schema Change |
+| **Breaking** | No |
+| **Status** | ✅ Applied |
+
+**Description:**
+Adds the webhook system (feature #11). Applications can register HTTP endpoint
+URLs that receive HMAC-SHA256-signed POST payloads when auth events fire.
+Delivery attempts are fully logged with retry scheduling.
+
+**Files:**
+- `migrations/20260305_add_webhooks.sql`
+- `migrations/20260305_add_webhooks_rollback.sql`
+- `migrations/20260305_add_webhooks.md`
+
+**Changes:**
+- Created `webhook_endpoints` table (one URL per app/event-type pair, soft-delete)
+- Created `webhook_deliveries` table (full delivery history + retry tracking)
+- Composite partial unique index on `(app_id, event_type) WHERE deleted_at IS NULL`
+- FK → `applications(id)` ON DELETE CASCADE on `webhook_endpoints`
+- FK → `webhook_endpoints(id)` ON DELETE CASCADE on `webhook_deliveries`
+- CHECK constraint enforcing 8 valid event types
+- 7 supporting indexes for delivery history and retry-worker queries
+
+**Impact:**
+- Database size: negligible until webhooks are actively used
+- Query performance: no regression on existing tables
+- Downtime required: None
+- Rollback available: Yes
+
+**Dependencies:**
+- `20260105_add_multi_tenancy` (requires `applications` table)
+
+**Documentation:**
+- [Migration Details](20260305_add_webhooks.md)
+
+---
 
 ### 2024-01-03: Smart Activity Logging System
 
@@ -103,6 +147,7 @@ Initial database schema for Authentication API.
 
 | # | Date | Migration ID | Version | Type | Breaking | Status |
 |---|------|--------------|---------|------|----------|--------|
+| 3 | 2026-03-05 | `20260305_add_webhooks` | v1.2.0 | Schema Change | No | ✅ |
 | 2 | 2024-01-03 | `20240103_add_activity_log_smart_fields` | v1.1.0 | Schema + Data | No | ✅ |
 | 1 | 2024-01-01 | `initial_schema` | v1.0.0 | Initial | No | ✅ |
 
@@ -113,7 +158,8 @@ Initial database schema for Authentication API.
 ```
 initial_schema (v1.0.0)
     └── 20240103_add_activity_log_smart_fields (v1.1.0)
-            └── [Future migrations will be added here]
+            └── 20260305_add_webhooks (v1.2.0)
+                    └── [Future migrations will be added here]
 ```
 
 ---

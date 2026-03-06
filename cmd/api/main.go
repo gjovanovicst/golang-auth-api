@@ -24,6 +24,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
 	passkey "github.com/gjovanovicst/auth_api/internal/webauthn"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/web"
 	"github.com/gjovanovicst/auth_api/web/static"
 	swaggerFiles "github.com/swaggo/files"
@@ -129,6 +130,17 @@ func main() {
 	socialService.SessionService = sessionService
 	twofaService := twofa.NewService(userRepo, database.DB, emailService)
 	logQueryService := logService.NewQueryService(logRepo)
+
+	// Initialize Webhook Service
+	webhookRepo := webhook.NewRepository(database.DB)
+	webhookService := webhook.NewService(webhookRepo)
+	defer webhookService.Shutdown()
+	webhookHandler := webhook.NewHandler(webhookService)
+
+	// Wire WebhookService into domain services
+	userService.WebhookService = webhookService
+	twofaService.WebhookService = webhookService
+	socialService.WebhookService = webhookService
 	userHandler := user.NewHandler(userService)
 	socialHandler := social.NewHandler(socialService)
 	twofaHandler := twofa.NewHandler(twofaService)
@@ -158,6 +170,10 @@ func main() {
 
 	// Wire admin lookup for passkey discoverable login
 	webauthnService.AdminLookup = accountRepo.GetByID
+
+	// Wire WebhookService into admin GUI handler
+	guiHandler.WebhookService = webhookService
+	webauthnHandler.WebhookService = webhookService
 
 	// Wire IP rule evaluator and anomaly detector on login handlers
 	userHandler.IPRuleEvaluator = ipRuleEvaluator
@@ -396,6 +412,15 @@ func main() {
 		adminRoutes.PUT("/apps/:id/ip-rules/:rule_id", adminHandler.UpdateIPRule)
 		adminRoutes.DELETE("/apps/:id/ip-rules/:rule_id", adminHandler.DeleteIPRule)
 		adminRoutes.POST("/apps/:id/ip-rules/check", adminHandler.CheckIPAccess)
+
+		// Webhook Management (Admin)
+		adminRoutes.GET("/webhooks", webhookHandler.AdminListEndpoints)
+		adminRoutes.GET("/webhooks/apps/:app_id", webhookHandler.AdminListEndpointsByApp)
+		adminRoutes.POST("/webhooks/apps/:app_id", webhookHandler.AdminCreateEndpoint)
+		adminRoutes.PUT("/webhooks/:id/toggle", webhookHandler.AdminToggleEndpoint)
+		adminRoutes.DELETE("/webhooks/:id", webhookHandler.AdminDeleteEndpoint)
+		adminRoutes.GET("/webhooks/:id/deliveries", webhookHandler.AdminListDeliveriesByEndpoint)
+		adminRoutes.GET("/webhooks/apps/:app_id/deliveries", webhookHandler.AdminListDeliveriesByApp)
 	}
 
 	// App API routes (protected by per-application API key)
@@ -414,6 +439,13 @@ func main() {
 		// Send emails
 		appRoutes.POST("/email-test", adminHandler.SendTestEmail)
 		appRoutes.POST("/send-email", adminHandler.SendCustomEmail)
+
+		// Webhook Management (App-scoped)
+		appRoutes.GET("/webhooks", webhookHandler.AppListEndpoints)
+		appRoutes.POST("/webhooks", webhookHandler.AppCreateEndpoint)
+		appRoutes.PUT("/webhooks/:webhook_id/toggle", webhookHandler.AppToggleEndpoint)
+		appRoutes.DELETE("/webhooks/:webhook_id", webhookHandler.AppDeleteEndpoint)
+		appRoutes.GET("/webhooks/deliveries", webhookHandler.AppListDeliveries)
 	}
 
 	// GUI routes (Admin web interface)
@@ -630,6 +662,17 @@ func main() {
 			// Magic link management (admin self-service)
 			guiAuth.GET("/my-account/magic-link/status", guiHandler.MyAccountMagicLinkStatus)
 			guiAuth.POST("/my-account/magic-link/toggle", guiHandler.MyAccountMagicLinkToggle)
+
+			// Webhook management
+			guiAuth.GET("/webhooks", guiHandler.WebhookPage)
+			guiAuth.GET("/webhooks/list", guiHandler.WebhookList)
+			guiAuth.GET("/webhooks/new", guiHandler.WebhookCreateForm)
+			guiAuth.POST("/webhooks", guiHandler.WebhookCreate)
+			guiAuth.GET("/webhooks/form-cancel", guiHandler.WebhookFormCancel)
+			guiAuth.GET("/webhooks/:id/delete", guiHandler.WebhookDeleteConfirm)
+			guiAuth.DELETE("/webhooks/:id", guiHandler.WebhookDelete)
+			guiAuth.PUT("/webhooks/:id/toggle", guiHandler.WebhookToggle)
+			guiAuth.GET("/webhooks/:id/deliveries", guiHandler.WebhookDeliveries)
 		}
 	}
 

@@ -69,6 +69,8 @@ func MigrateDatabase() {
 		&models.WebAuthnCredential{}, // WebAuthn/Passkey credentials
 		&models.IPRule{},             // IP-based access rules (per-app)
 		&models.ApiKeyUsage{},        // API key daily usage analytics
+		&models.WebhookEndpoint{},    // Webhook endpoint registrations
+		&models.WebhookDelivery{},    // Webhook delivery history and retry tracking
 	)
 
 	if err != nil {

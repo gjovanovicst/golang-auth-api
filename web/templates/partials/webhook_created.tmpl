@@ -1,0 +1,52 @@
+{{define "webhook_created"}}
+<div class="card border-0 shadow-sm border-start border-success border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3 text-success">
+            <i class="bi bi-check-circle me-2"></i>Webhook Endpoint Registered Successfully
+        </h6>
+        <div class="alert alert-warning mb-3">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>Copy this signing secret now!</strong> It will never be shown again.
+            Store it securely — your server uses it to verify webhook signatures.
+        </div>
+        <div class="mb-3">
+            <label class="form-label small text-muted">Signing Secret</label>
+            <div class="input-group">
+                <input type="text" class="form-control font-monospace bg-light" id="generatedWebhookSecret"
+                       value="{{.Secret}}" readonly>
+                <button class="btn btn-outline-primary" type="button" onclick="copyWebhookSecret()" title="Copy to clipboard">
+                    <i class="bi bi-clipboard" id="webhookCopyIcon"></i>
+                </button>
+            </div>
+            <div class="form-text">
+                Each delivery includes an <code>X-Webhook-Signature: sha256=&lt;hex&gt;</code> header signed with this secret.
+            </div>
+        </div>
+        <div class="mt-3">
+            <button type="button" class="btn btn-outline-secondary btn-sm me-2"
+                    onclick="document.getElementById('webhook-created-container').innerHTML = ''; document.getElementById('webhook-form-container').innerHTML = '';">
+                <i class="bi bi-x-lg me-1"></i>Dismiss
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm"
+                    hx-get="/gui/webhooks/list?page=1"
+                    hx-target="#webhook-table"
+                    hx-swap="innerHTML"
+                    onclick="document.getElementById('webhook-created-container').innerHTML = ''; document.getElementById('webhook-form-container').innerHTML = '';">
+                <i class="bi bi-arrow-clockwise me-1"></i>Refresh List
+            </button>
+        </div>
+    </div>
+</div>
+<script>
+    function copyWebhookSecret() {
+        var input = document.getElementById('generatedWebhookSecret');
+        navigator.clipboard.writeText(input.value).then(function() {
+            var icon = document.getElementById('webhookCopyIcon');
+            icon.className = 'bi bi-check-lg text-success';
+            setTimeout(function() {
+                icon.className = 'bi bi-clipboard';
+            }, 2000);
+        });
+    }
+</script>
+{{end}}

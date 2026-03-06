@@ -20,6 +20,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/gjovanovicst/auth_api/web"
 	"github.com/google/uuid"
@@ -59,6 +60,7 @@ type GUIHandler struct {
 	IPRuleEvaluator   *geoip.IPRuleEvaluator  // IP rule evaluator for cache invalidation (nil = disabled)
 	GeoIPService      *geoip.Service          // GeoIP service for IP lookups (nil = disabled)
 	BruteForceService *bruteforce.Service     // Brute-force protection service for account unlock (nil = disabled)
+	WebhookService    *webhook.Service        // Webhook management service (nil = webhooks disabled)
 }
 
 // NewGUIHandler creates a new GUIHandler
@@ -5797,4 +5799,256 @@ func (h *GUIHandler) IPRuleCheckAccess(c *gin.Context) {
 		}())
 
 	c.String(http.StatusOK, html)
+}
+
+// ============================================================================
+// Webhook GUI handlers
+// ============================================================================
+
+// WebhookPage renders the webhooks management page.
+// GET /gui/webhooks
+func (h *GUIHandler) WebhookPage(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.HTML(http.StatusServiceUnavailable, "error", gin.H{"Error": "Webhook service is not available"})
+		return
+	}
+	c.HTML(http.StatusOK, "webhooks", gin.H{
+		"ActivePage":    "webhooks",
+		"AdminUsername": getAdminUsername(c),
+		"CSRFToken":     getCSRFToken(c),
+	})
+}
+
+// WebhookList returns the paginated webhook endpoints list partial (HTMX fragment).
+// GET /gui/webhooks/list
+func (h *GUIHandler) WebhookList(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	appIDStr := c.Query("app_id")
+
+	var endpoints []models.WebhookEndpoint
+	var total int64
+	var err error
+
+	if appIDStr != "" {
+		appID, parseErr := uuid.Parse(appIDStr)
+		if parseErr != nil {
+			c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid app ID</div>`)
+			return
+		}
+		endpoints, total, err = h.WebhookService.ListEndpointsByApp(appID, page, 20)
+	} else {
+		endpoints, total, err = h.WebhookService.ListAllEndpoints(page, 20)
+	}
+
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "webhook_list", gin.H{
+			"Endpoints": nil,
+			"Error":     "Failed to load webhook endpoints",
+		})
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(20)))
+	apps, _ := h.Repo.ListAllAppsWithTenantName()
+
+	c.HTML(http.StatusOK, "webhook_list", gin.H{
+		"Endpoints":  endpoints,
+		"Page":       page,
+		"TotalPages": totalPages,
+		"Total":      total,
+		"AppID":      appIDStr,
+		"Apps":       apps,
+		"CSRFToken":  getCSRFToken(c),
+	})
+}
+
+// WebhookCreateForm returns the webhook creation form HTML fragment.
+// GET /gui/webhooks/new
+func (h *GUIHandler) WebhookCreateForm(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	apps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to load applications.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+	c.HTML(http.StatusOK, "webhook_form", gin.H{
+		"Apps":       apps,
+		"EventTypes": models.ValidEventTypes,
+		"CSRFToken":  getCSRFToken(c),
+	})
+}
+
+// WebhookCreate handles creating a new webhook endpoint.
+// POST /gui/webhooks
+func (h *GUIHandler) WebhookCreate(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+
+	appIDStr := strings.TrimSpace(c.PostForm("app_id"))
+	eventType := strings.TrimSpace(c.PostForm("event_type"))
+	url := strings.TrimSpace(c.PostForm("url"))
+
+	if appIDStr == "" || eventType == "" || url == "" {
+		c.HTML(http.StatusBadRequest, "webhook_form", gin.H{
+			"Error":      "App, event type, and URL are required",
+			"EventTypes": models.ValidEventTypes,
+			"CSRFToken":  getCSRFToken(c),
+		})
+		return
+	}
+
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.HTML(http.StatusBadRequest, "webhook_form", gin.H{
+			"Error":      "Invalid application ID",
+			"EventTypes": models.ValidEventTypes,
+			"CSRFToken":  getCSRFToken(c),
+		})
+		return
+	}
+
+	_, secret, svcErr := h.WebhookService.RegisterEndpoint(appID, eventType, url)
+	if svcErr != nil {
+		apps, _ := h.Repo.ListAllAppsWithTenantName()
+		c.HTML(http.StatusBadRequest, "webhook_form", gin.H{
+			"Error":      svcErr.Error(),
+			"Apps":       apps,
+			"EventTypes": models.ValidEventTypes,
+			"CSRFToken":  getCSRFToken(c),
+		})
+		return
+	}
+
+	// Show the secret once — it will never be shown again
+	c.HTML(http.StatusOK, "webhook_created", gin.H{
+		"Secret":    secret,
+		"CSRFToken": getCSRFToken(c),
+	})
+}
+
+// WebhookFormCancel returns an empty fragment to collapse the form.
+// GET /gui/webhooks/form-cancel
+func (h *GUIHandler) WebhookFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// WebhookDeleteConfirm renders the delete confirmation fragment.
+// GET /gui/webhooks/:id/delete
+func (h *GUIHandler) WebhookDeleteConfirm(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid webhook ID</div>`)
+		return
+	}
+
+	ep, svcErr := h.WebhookService.GetEndpoint(id)
+	if svcErr != nil || ep == nil {
+		c.String(http.StatusNotFound, `<div class="alert alert-danger">Webhook endpoint not found</div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "webhook_delete_confirm", gin.H{
+		"Endpoint":  ep,
+		"CSRFToken": getCSRFToken(c),
+	})
+}
+
+// WebhookDelete deletes a webhook endpoint.
+// DELETE /gui/webhooks/:id
+func (h *GUIHandler) WebhookDelete(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid webhook ID</div>`)
+		return
+	}
+	if err := h.WebhookService.DeleteEndpoint(id); err != nil {
+		c.String(http.StatusInternalServerError, `<div class="alert alert-danger">Failed to delete webhook endpoint</div>`)
+		return
+	}
+	c.String(http.StatusOK, "")
+}
+
+// WebhookToggle toggles the active state of a webhook endpoint.
+// PUT /gui/webhooks/:id/toggle
+func (h *GUIHandler) WebhookToggle(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid webhook ID</div>`)
+		return
+	}
+	active := c.PostForm("active") == "true"
+	if err := h.WebhookService.SetEndpointActive(id, active); err != nil {
+		c.String(http.StatusInternalServerError, `<div class="alert alert-danger">Failed to update webhook endpoint</div>`)
+		return
+	}
+	// Return updated badge
+	if active {
+		c.String(http.StatusOK, `<span class="badge bg-success">Active</span>`)
+	} else {
+		c.String(http.StatusOK, `<span class="badge bg-secondary">Inactive</span>`)
+	}
+}
+
+// WebhookDeliveries renders the delivery log page for a webhook endpoint.
+// GET /gui/webhooks/:id/deliveries
+func (h *GUIHandler) WebhookDeliveries(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid webhook ID</div>`)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+
+	deliveries, total, svcErr := h.WebhookService.ListDeliveriesByEndpoint(id, page, 20)
+	if svcErr != nil {
+		c.HTML(http.StatusInternalServerError, "webhook_deliveries", gin.H{
+			"Error": "Failed to load delivery history",
+		})
+		return
+	}
+
+	ep, _ := h.WebhookService.GetEndpoint(id)
+	totalPages := int(math.Ceil(float64(total) / float64(20)))
+
+	c.HTML(http.StatusOK, "webhook_deliveries", gin.H{
+		"Endpoint":   ep,
+		"Deliveries": deliveries,
+		"Page":       page,
+		"TotalPages": totalPages,
+		"Total":      total,
+		"CSRFToken":  getCSRFToken(c),
+	})
 }

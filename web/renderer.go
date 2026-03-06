@@ -246,6 +246,15 @@ func defaultFuncMap() template.FuncMap {
 			return out
 		},
 
+		// truncate shortens a string to at most n characters, appending "…" if cut.
+		"truncate": func(s string, n int) string {
+			runes := []rune(s)
+			if len(runes) <= n {
+				return s
+			}
+			return string(runes[:n]) + "…"
+		},
+
 		// toJSON marshals a value to a JSON string for use in inline <script> blocks.
 		"toJSON": func(v interface{}) template.JS {
 			b, err := json.Marshal(v)

@@ -17,6 +17,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/geoip"
 	logService "github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/middleware"
+	"github.com/gjovanovicst/auth_api/internal/oidc"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
@@ -77,6 +78,11 @@ func main() {
 	viper.SetDefault("PORT", "8080")
 	viper.SetDefault("ACCESS_TOKEN_EXPIRATION_MINUTES", 15)
 	viper.SetDefault("REFRESH_TOKEN_EXPIRATION_HOURS", 720)
+	// OIDC provider configuration
+	viper.SetDefault("OIDC_ENABLED", false)
+	viper.SetDefault("PUBLIC_URL", "http://localhost:8080")
+	viper.SetDefault("OIDC_ID_TOKEN_EXPIRATION_MINUTES", 60)
+	viper.SetDefault("OIDC_AUTH_CODE_EXPIRATION_MINUTES", 10)
 
 	// Connect to database
 	database.ConnectDatabase()
@@ -174,6 +180,15 @@ func main() {
 	// Wire WebhookService into admin GUI handler
 	guiHandler.WebhookService = webhookService
 	webauthnHandler.WebhookService = webhookService
+
+	// Initialize OIDC Provider (enabled via OIDC_ENABLED=true)
+	var oidcHandler *oidc.Handler
+	if viper.GetBool("OIDC_ENABLED") {
+		oidcRepo := oidc.NewRepository(database.DB)
+		oidcService := oidc.NewService(oidcRepo, rbacService.GetUserRoleNames)
+		oidcHandler = oidc.NewHandler(oidcService, oidcRepo)
+		guiHandler.OIDCService = oidcService
+	}
 
 	// Wire IP rule evaluator and anomaly detector on login handlers
 	userHandler.IPRuleEvaluator = ipRuleEvaluator
@@ -673,6 +688,55 @@ func main() {
 			guiAuth.DELETE("/webhooks/:id", guiHandler.WebhookDelete)
 			guiAuth.PUT("/webhooks/:id/toggle", guiHandler.WebhookToggle)
 			guiAuth.GET("/webhooks/:id/deliveries", guiHandler.WebhookDeliveries)
+
+			// OIDC client management (GUI)
+			guiAuth.GET("/oidc-clients", guiHandler.OIDCClientsPage)
+			guiAuth.GET("/oidc-clients/list", guiHandler.OIDCClientList)
+			guiAuth.GET("/oidc-clients/new", guiHandler.OIDCClientCreateForm)
+			guiAuth.POST("/oidc-clients", guiHandler.OIDCClientCreate)
+			guiAuth.GET("/oidc-clients/form-cancel", guiHandler.OIDCClientFormCancel)
+			guiAuth.GET("/oidc-clients/:id/edit", guiHandler.OIDCClientEditForm)
+			guiAuth.PUT("/oidc-clients/:id", guiHandler.OIDCClientUpdate)
+			guiAuth.GET("/oidc-clients/:id/delete", guiHandler.OIDCClientDeleteConfirm)
+			guiAuth.DELETE("/oidc-clients/:id", guiHandler.OIDCClientDelete)
+			guiAuth.POST("/oidc-clients/:id/rotate-secret", guiHandler.OIDCClientRotateSecret)
+		}
+	}
+
+	// OIDC Provider routes (enabled only when OIDC_ENABLED=true)
+	if oidcHandler != nil {
+		// Global OIDC discovery redirect to default app
+		r.GET("/.well-known/openid-configuration", func(c *gin.Context) {
+			defaultAppID := "00000000-0000-0000-0000-000000000001"
+			c.Redirect(302, "/oidc/"+defaultAppID+"/.well-known/openid-configuration")
+		})
+
+		// Per-app OIDC endpoints
+		oidcGroup := r.Group("/oidc/:app_id")
+		{
+			oidcGroup.GET("/.well-known/openid-configuration", oidcHandler.WellKnownConfiguration)
+			oidcGroup.GET("/.well-known/jwks.json", oidcHandler.JWKS)
+			oidcGroup.GET("/authorize", middleware.OIDCAuthorizeRateLimit(), oidcHandler.Authorize)
+			oidcGroup.POST("/authorize", middleware.OIDCAuthorizeRateLimit(), oidcHandler.AuthorizeSubmit)
+			oidcGroup.POST("/token", middleware.OIDCTokenRateLimit(), oidcHandler.Token)
+			oidcGroup.GET("/userinfo", middleware.OIDCUserInfoRateLimit(), oidcHandler.UserInfo)
+			oidcGroup.POST("/userinfo", middleware.OIDCUserInfoRateLimit(), oidcHandler.UserInfo)
+			oidcGroup.POST("/introspect", oidcHandler.Introspect)
+			oidcGroup.POST("/revoke", oidcHandler.Revoke)
+			oidcGroup.GET("/end_session", oidcHandler.EndSession)
+			oidcGroup.POST("/end_session", oidcHandler.EndSession)
+		}
+
+		// Admin OIDC client management (JSON API, protected by Admin API key)
+		adminOIDC := r.Group("/admin/oidc/apps/:id/clients")
+		adminOIDC.Use(middleware.AdminAuthMiddleware(adminRepo))
+		{
+			adminOIDC.POST("", oidcHandler.AdminCreateClient)
+			adminOIDC.GET("", oidcHandler.AdminListClients)
+			adminOIDC.GET("/:cid", oidcHandler.AdminGetClient)
+			adminOIDC.PUT("/:cid", oidcHandler.AdminUpdateClient)
+			adminOIDC.DELETE("/:cid", oidcHandler.AdminDeleteClient)
+			adminOIDC.POST("/:cid/rotate-secret", oidcHandler.AdminRotateClientSecret)
 		}
 	}
 

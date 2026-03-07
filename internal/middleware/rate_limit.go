@@ -459,3 +459,36 @@ func GUIPasskeyLoginRateLimit() gin.HandlerFunc {
 		LockoutDuration:  15 * time.Minute,
 	})
 }
+
+// OIDCAuthorizeRateLimit — 20 requests/min per IP on the authorize endpoint.
+// Protects against enumeration and brute-force on the login/consent form.
+func OIDCAuthorizeRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "oidc:authorize",
+		MaxAttempts:      20,
+		Window:           60 * time.Second,
+		LockoutThreshold: 40,
+		LockoutDuration:  15 * time.Minute,
+	})
+}
+
+// OIDCTokenRateLimit — 30 requests/min per IP on the token endpoint.
+// Allows normal client-side refresh traffic while limiting abuse.
+func OIDCTokenRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "oidc:token",
+		MaxAttempts:      30,
+		Window:           60 * time.Second,
+		LockoutThreshold: 60,
+		LockoutDuration:  5 * time.Minute,
+	})
+}
+
+// OIDCUserInfoRateLimit — 60 requests/min per IP on the userinfo endpoint.
+func OIDCUserInfoRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "oidc:userinfo",
+		MaxAttempts: 60,
+		Window:      60 * time.Second,
+	})
+}

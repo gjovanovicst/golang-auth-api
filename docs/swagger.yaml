@@ -130,6 +130,36 @@ definitions:
     - code
     - name
     type: object
+  dto.CreateOIDCClientRequest:
+    properties:
+      allowed_grant_types:
+        description: comma-separated
+        type: string
+      allowed_scopes:
+        description: comma-separated
+        type: string
+      description:
+        type: string
+      is_confidential:
+        type: boolean
+      logo_url:
+        type: string
+      name:
+        maxLength: 100
+        type: string
+      pkce_required:
+        type: boolean
+      redirect_uris:
+        description: JSON array string, e.g. '["https://app.example.com/cb"]'
+        type: string
+      require_consent:
+        type: boolean
+    required:
+    - allowed_grant_types
+    - allowed_scopes
+    - name
+    - redirect_uris
+    type: object
   dto.CreatePermissionRequest:
     properties:
       action:
@@ -603,6 +633,166 @@ definitions:
       updated_at:
         type: string
     type: object
+  dto.OIDCClientResponse:
+    properties:
+      allowed_grant_types:
+        type: string
+      allowed_scopes:
+        type: string
+      app_id:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G101 -- only present on create/rotate'
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      is_confidential:
+        type: boolean
+      logo_url:
+        type: string
+      name:
+        type: string
+      pkce_required:
+        type: boolean
+      redirect_uris:
+        type: string
+      require_consent:
+        type: boolean
+      updated_at:
+        type: string
+    type: object
+  dto.OIDCDiscoveryDocument:
+    properties:
+      authorization_endpoint:
+        type: string
+      claims_supported:
+        items:
+          type: string
+        type: array
+      code_challenge_methods_supported:
+        items:
+          type: string
+        type: array
+      end_session_endpoint:
+        type: string
+      grant_types_supported:
+        items:
+          type: string
+        type: array
+      id_token_signing_alg_values_supported:
+        items:
+          type: string
+        type: array
+      introspection_endpoint:
+        type: string
+      issuer:
+        type: string
+      jwks_uri:
+        type: string
+      response_types_supported:
+        items:
+          type: string
+        type: array
+      revocation_endpoint:
+        type: string
+      scopes_supported:
+        items:
+          type: string
+        type: array
+      subject_types_supported:
+        items:
+          type: string
+        type: array
+      token_endpoint:
+        type: string
+      token_endpoint_auth_methods_supported:
+        items:
+          type: string
+        type: array
+      userinfo_endpoint:
+        type: string
+    type: object
+  dto.OIDCIntrospectResponse:
+    properties:
+      active:
+        type: boolean
+      aud:
+        items:
+          type: string
+        type: array
+      client_id:
+        type: string
+      exp:
+        type: integer
+      iat:
+        type: integer
+      iss:
+        type: string
+      scope:
+        type: string
+      sub:
+        type: string
+      token_type:
+        type: string
+    type: object
+  dto.OIDCTokenErrorResponse:
+    properties:
+      error:
+        type: string
+      error_description:
+        type: string
+    type: object
+  dto.OIDCTokenResponse:
+    properties:
+      access_token:
+        description: '#nosec G101 -- DTO field'
+        type: string
+      expires_in:
+        description: seconds
+        type: integer
+      id_token:
+        description: '#nosec G101 -- DTO field'
+        type: string
+      refresh_token:
+        description: '#nosec G101 -- DTO field'
+        type: string
+      scope:
+        type: string
+      token_type:
+        description: always "Bearer"
+        type: string
+    type: object
+  dto.OIDCUserInfoResponse:
+    properties:
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      family_name:
+        type: string
+      given_name:
+        type: string
+      locale:
+        type: string
+      name:
+        type: string
+      picture:
+        type: string
+      roles:
+        items:
+          type: string
+        type: array
+      sub:
+        type: string
+    type: object
   dto.PaginationResponse:
     properties:
       has_next:
@@ -992,6 +1182,30 @@ definitions:
           $ref: '#/definitions/dto.EmailTypeVariableResponse'
         type: array
     type: object
+  dto.UpdateOIDCClientRequest:
+    properties:
+      allowed_grant_types:
+        type: string
+      allowed_scopes:
+        type: string
+      description:
+        type: string
+      is_active:
+        type: boolean
+      is_confidential:
+        type: boolean
+      logo_url:
+        type: string
+      name:
+        maxLength: 100
+        type: string
+      pkce_required:
+        type: boolean
+      redirect_uris:
+        type: string
+      require_consent:
+        type: boolean
+    type: object
   dto.UpdatePasswordRequest:
     properties:
       current_password:
@@ -1200,6 +1414,28 @@ definitions:
       url:
         example: https://your-app.com/webhooks/auth
         type: string
+    type: object
+  oidc.JWK:
+    properties:
+      alg:
+        type: string
+      e:
+        type: string
+      kid:
+        type: string
+      kty:
+        type: string
+      "n":
+        type: string
+      use:
+        type: string
+    type: object
+  oidc.JWKS:
+    properties:
+      keys:
+        items:
+          $ref: '#/definitions/oidc.JWK'
+        type: array
     type: object
   twofa.TwoFASetupResponse:
     properties:
@@ -3026,6 +3262,151 @@ paths:
       summary: List well-known email template variables
       tags:
       - Admin - Email
+  /admin/oidc/apps/{id}/clients:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.OIDCClientResponse'
+            type: array
+      security:
+      - AdminApiKey: []
+      summary: List OIDC clients for an app
+      tags:
+      - Admin OIDC
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateOIDCClientRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.OIDCClientResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create an OIDC client
+      tags:
+      - Admin OIDC
+  /admin/oidc/apps/{id}/clients/{cid}:
+    delete:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client UUID
+        in: path
+        name: cid
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - AdminApiKey: []
+      summary: Delete an OIDC client
+      tags:
+      - Admin OIDC
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client UUID
+        in: path
+        name: cid
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCClientResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get a single OIDC client
+      tags:
+      - Admin OIDC
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client UUID
+        in: path
+        name: cid
+        required: true
+        type: string
+      - description: Update data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateOIDCClientRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCClientResponse'
+      security:
+      - AdminApiKey: []
+      summary: Update an OIDC client
+      tags:
+      - Admin OIDC
+  /admin/oidc/apps/{id}/clients/{cid}/rotate-secret:
+    post:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client UUID
+        in: path
+        name: cid
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCClientResponse'
+      security:
+      - AdminApiKey: []
+      summary: Rotate client secret
+      tags:
+      - Admin OIDC
   /admin/rbac/permissions:
     get:
       description: Retrieve all available permissions in the system
@@ -4373,6 +4754,232 @@ paths:
       summary: Verify a magic link token and log in
       tags:
       - Auth
+  /oidc/{app_id}/.well-known/jwks.json:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/oidc.JWKS'
+      summary: JWKS endpoint
+      tags:
+      - OIDC
+  /oidc/{app_id}/.well-known/openid-configuration:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCDiscoveryDocument'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: OIDC discovery document
+      tags:
+      - OIDC
+  /oidc/{app_id}/authorize:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Must be 'code'
+        in: query
+        name: response_type
+        required: true
+        type: string
+      - description: OIDC client ID
+        in: query
+        name: client_id
+        required: true
+        type: string
+      - description: Registered redirect URI
+        in: query
+        name: redirect_uri
+        required: true
+        type: string
+      - description: Requested scopes (must include 'openid')
+        in: query
+        name: scope
+        required: true
+        type: string
+      - description: Opaque state value
+        in: query
+        name: state
+        type: string
+      - description: Nonce
+        in: query
+        name: nonce
+        type: string
+      - description: PKCE code challenge
+        in: query
+        name: code_challenge
+        type: string
+      - description: PKCE method (S256)
+        in: query
+        name: code_challenge_method
+        type: string
+      responses: {}
+      summary: OIDC authorization endpoint
+      tags:
+      - OIDC
+    post:
+      responses: {}
+      summary: OIDC authorize form submit
+      tags:
+      - OIDC
+  /oidc/{app_id}/end_session:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Previously-issued ID token
+        in: query
+        name: id_token_hint
+        type: string
+      - description: URI to redirect to after logout
+        in: query
+        name: post_logout_redirect_uri
+        type: string
+      - description: Opaque value returned with redirect
+        in: query
+        name: state
+        type: string
+      responses:
+        "200":
+          description: OK
+        "302":
+          description: Found
+      summary: OIDC RP-Initiated Logout
+      tags:
+      - OIDC
+  /oidc/{app_id}/introspect:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCIntrospectResponse'
+      summary: OIDC token introspection (RFC 7662)
+      tags:
+      - OIDC
+  /oidc/{app_id}/revoke:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Token to revoke
+        in: formData
+        name: token
+        required: true
+        type: string
+      - description: access_token or refresh_token
+        in: formData
+        name: token_type_hint
+        type: string
+      - description: Client ID (confidential clients)
+        in: formData
+        name: client_id
+        type: string
+      - description: Client secret (confidential clients)
+        in: formData
+        name: client_secret
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.OIDCTokenErrorResponse'
+      summary: OIDC token revocation (RFC 7009)
+      tags:
+      - OIDC
+  /oidc/{app_id}/token:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCTokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.OIDCTokenErrorResponse'
+      summary: OIDC token endpoint
+      tags:
+      - OIDC
+  /oidc/{app_id}/userinfo:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCUserInfoResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: OIDC userinfo endpoint
+      tags:
+      - OIDC
   /passkey/login/begin:
     post:
       description: Start a passwordless login ceremony using discoverable credentials

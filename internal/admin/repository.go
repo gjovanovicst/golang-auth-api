@@ -272,7 +272,7 @@ type BruteForceAppSettings struct {
 	CaptchaThreshold *int
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, bf BruteForceAppSettings) error {
+func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, bf BruteForceAppSettings) error {
 	updates := map[string]interface{}{
 		"name":                  name,
 		"description":           description,
@@ -282,6 +282,7 @@ func (r *Repository) UpdateApp(id string, name string, description string, twoFA
 		"passkey2_fa_enabled":   passkey2FAEnabled,
 		"passkey_login_enabled": passkeyLoginEnabled,
 		"magic_link_enabled":    magicLinkEnabled,
+		"oidc_enabled":          oidcEnabled,
 		// Brute-force lockout overrides
 		"bf_lockout_enabled":   bf.LockoutEnabled,
 		"bf_lockout_threshold": bf.LockoutThreshold,

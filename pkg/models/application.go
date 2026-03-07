@@ -38,8 +38,15 @@ type Application struct {
 	BfCaptchaSecretKey *string `gorm:"type:varchar(500);default:null" json:"-"`                              // Override reCAPTCHA secret key (hidden from API responses)
 	BfCaptchaThreshold *int    `gorm:"default:null" json:"bf_captcha_threshold,omitempty"`                   // Override failures before CAPTCHA required
 
+	// OIDC Provider settings — allows this application to act as an OIDC issuer
+	OIDCEnabled       bool   `gorm:"column:oidc_enabled;default:false" json:"oidc_enabled"`                      // Master switch: expose OIDC endpoints for this app
+	OIDCRSAPrivateKey string `gorm:"column:oidc_rsa_private_key;type:text;default:''" json:"-"`                  // PEM-encoded RSA private key (generated on first use, never exposed)
+	OIDCIDTokenTTL    int    `gorm:"column:oidc_id_token_ttl;default:3600" json:"oidc_id_token_ttl"`             // ID token lifetime in seconds (default 1h)
+	OIDCIssuerURL     string `gorm:"column:oidc_issuer_url;type:varchar(500);default:''" json:"oidc_issuer_url"` // Optional custom issuer URL override (empty = auto-generated)
+
 	CreatedAt            time.Time             `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt            time.Time             `gorm:"autoUpdateTime" json:"updated_at"`
 	OAuthProviderConfigs []OAuthProviderConfig `gorm:"foreignKey:AppID" json:"oauth_provider_configs"`
 	EmailServerConfig    *EmailServerConfig    `gorm:"foreignKey:AppID" json:"email_server_config,omitempty"`
+	OIDCClients          []OIDCClient          `gorm:"foreignKey:AppID" json:"oidc_clients,omitempty"`
 }

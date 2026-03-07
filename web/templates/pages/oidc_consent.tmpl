@@ -1,0 +1,87 @@
+{{define "oidc_consent"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authorize — {{.AppName}}</title>
+    <link rel="stylesheet" href="/gui/static/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/gui/static/css/bootstrap-icons.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .consent-card { width: 100%; max-width: 460px; }
+        .client-logo { width: 56px; height: 56px; object-fit: contain; }
+        .scope-icon { color: #6c757d; }
+    </style>
+</head>
+<body>
+<div class="container py-5">
+    <div class="consent-card mx-auto">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+
+                {{if .ClientLogo}}
+                <div class="text-center mb-3">
+                    <img src="{{.ClientLogo}}" alt="{{.ClientName}} logo" class="client-logo rounded">
+                </div>
+                {{end}}
+
+                <h4 class="card-title text-center mb-1">Authorize Access</h4>
+                <p class="text-muted text-center small mb-4">
+                    <strong>{{.ClientName}}</strong> is requesting permission to access your account
+                </p>
+
+                {{if .Scopes}}
+                <div class="mb-4">
+                    <p class="fw-semibold small mb-2">This application will be able to:</p>
+                    <ul class="list-unstyled">
+                        {{range .Scopes}}
+                        {{if eq . "openid"}}
+                        <li class="mb-1"><i class="bi bi-person-check scope-icon me-2"></i>Verify your identity</li>
+                        {{else if eq . "profile"}}
+                        <li class="mb-1"><i class="bi bi-person scope-icon me-2"></i>Read your basic profile (name, picture)</li>
+                        {{else if eq . "email"}}
+                        <li class="mb-1"><i class="bi bi-envelope scope-icon me-2"></i>Read your email address</li>
+                        {{else if eq . "roles"}}
+                        <li class="mb-1"><i class="bi bi-shield scope-icon me-2"></i>Read your roles</li>
+                        {{else if eq . "offline_access"}}
+                        <li class="mb-1"><i class="bi bi-arrow-repeat scope-icon me-2"></i>Stay signed in (refresh token)</li>
+                        {{else}}
+                        <li class="mb-1"><i class="bi bi-key scope-icon me-2"></i>{{.}}</li>
+                        {{end}}
+                        {{end}}
+                    </ul>
+                </div>
+                {{end}}
+
+                <form method="POST" action="/oidc/{{.AppID}}/authorize">
+                    <input type="hidden" name="consent_token" value="{{.ConsentToken}}">
+                    <input type="hidden" name="user_id" value="{{.UserID}}">
+
+                    <div class="d-grid gap-2">
+                        <button type="submit" name="action" value="approve" class="btn btn-primary">
+                            <i class="bi bi-check-circle me-1"></i>Allow
+                        </button>
+                        <button type="submit" name="action" value="deny" class="btn btn-outline-secondary">
+                            <i class="bi bi-x-circle me-1"></i>Deny
+                        </button>
+                    </div>
+                </form>
+
+                <hr class="my-4">
+                <p class="text-muted text-center" style="font-size: 0.75rem;">
+                    Powered by <strong>{{.AppName}}</strong> authentication
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+{{end}}

@@ -15,13 +15,54 @@ This file tracks all applied database migrations in chronological order.
 
 ## Current Database Version
 
-**Latest Migration:** `20260305_add_webhooks`  
-**Database Schema Version:** v1.2.0  
-**Compatible Application Version:** v1.2.0+
+**Latest Migration:** `20260306_add_oidc`  
+**Database Schema Version:** v1.3.0  
+**Compatible Application Version:** v1.3.0+
 
 ---
 
 ## Applied Migrations
+
+### 2026-03-06: OIDC Provider Support
+
+| Field | Value |
+|-------|-------|
+| **Migration ID** | `20260306_add_oidc` |
+| **Date Applied** | 2026-03-06 |
+| **App Version** | v1.3.0 |
+| **Type** | Schema Change |
+| **Breaking** | No |
+| **Status** | ✅ Applied |
+
+**Description:**
+Adds the OIDC Provider feature (feature #12). Each Application can now act as
+a standards-compliant OIDC issuer (RS256 ID tokens, Authorization Code + PKCE,
+Client Credentials). Relying-party clients are registered per application.
+
+**Files:**
+- `migrations/20260306_add_oidc.sql`
+- `migrations/20260306_add_oidc_rollback.sql`
+- `migrations/20260306_add_oidc.md`
+
+**Changes:**
+- Extended `applications` with 4 new OIDC columns: `oidc_enabled`, `oidc_rsa_private_key`, `oidc_id_token_ttl`, `oidc_issuer_url`
+- Created `oidc_clients` table (relying-party client registry, FK → `applications` ON DELETE CASCADE)
+- Created `oidc_auth_codes` table (single-use authorization codes with expiry + replay protection)
+- 6 supporting indexes across both new tables
+
+**Impact:**
+- Database size: negligible until OIDC clients are created
+- Query performance: no regression on existing tables
+- Downtime required: None
+- Rollback available: Yes (destructive — drops both tables and 4 columns)
+
+**Dependencies:**
+- `20260105_add_multi_tenancy` (requires `applications` table)
+
+**Documentation:**
+- [Migration Details](20260306_add_oidc.md)
+
+---
 
 ### 2026-03-05: Webhook System
 
@@ -147,6 +188,7 @@ Initial database schema for Authentication API.
 
 | # | Date | Migration ID | Version | Type | Breaking | Status |
 |---|------|--------------|---------|------|----------|--------|
+| 4 | 2026-03-06 | `20260306_add_oidc` | v1.3.0 | Schema Change | No | ✅ |
 | 3 | 2026-03-05 | `20260305_add_webhooks` | v1.2.0 | Schema Change | No | ✅ |
 | 2 | 2024-01-03 | `20240103_add_activity_log_smart_fields` | v1.1.0 | Schema + Data | No | ✅ |
 | 1 | 2024-01-01 | `initial_schema` | v1.0.0 | Initial | No | ✅ |
@@ -159,7 +201,8 @@ Initial database schema for Authentication API.
 initial_schema (v1.0.0)
     └── 20240103_add_activity_log_smart_fields (v1.1.0)
             └── 20260305_add_webhooks (v1.2.0)
-                    └── [Future migrations will be added here]
+                    └── 20260306_add_oidc (v1.3.0)
+                                └── [Future migrations will be added here]
 ```
 
 ---
@@ -170,6 +213,8 @@ initial_schema (v1.0.0)
 |-------------|-----------------|----------------|----------------|-------|
 | v1.0.0 | v1.0.0 | v1.0.0 | v1.0.0 | Initial release |
 | v1.1.0 | v1.1.0 | v1.0.0 | v1.1.0 | Backward compatible with v1.0.0 |
+| v1.2.0 | v1.2.0 | v1.1.0 | v1.2.0 | Backward compatible with v1.1.0 |
+| v1.3.0 | v1.3.0 | v1.2.0 | v1.3.0 | Backward compatible with v1.2.0 |
 
 ---
 
@@ -191,10 +236,6 @@ Notes: Any additional information
 ## Pending Migrations
 
 No pending migrations at this time.
-
-**Future migrations planned:**
-- Role-based access control (RBAC) - v1.2.0 (planned)
-- User preferences storage - v1.3.0 (planned)
 
 ---
 
@@ -254,20 +295,22 @@ Brief description of what this migration does.
 
 ## Statistics
 
-**Total Migrations:** 2  
-**Successful Migrations:** 2 (100%)  
+**Total Migrations:** 4  
+**Successful Migrations:** 4 (100%)  
 **Failed Migrations:** 0  
 **Rollbacks Performed:** 0  
 **Breaking Changes:** 0  
 
 **By Type:**
-- Schema Changes: 1
+- Schema Changes: 3
 - Data Migrations: 1
 - Initial Schema: 1
 
 **By Version:**
 - v1.0.0: 1 migration
 - v1.1.0: 1 migration
+- v1.2.0: 1 migration
+- v1.3.0: 1 migration
 
 ---
 
@@ -309,7 +352,7 @@ This log should be reviewed:
 
 ---
 
-*Last Updated: 2024-01-03*  
+*Last Updated: 2026-03-06*  
 *Maintained by: Project Maintainers*  
 *Review Frequency: Per Release*
 

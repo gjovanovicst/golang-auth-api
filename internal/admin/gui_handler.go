@@ -17,6 +17,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
 	logService "github.com/gjovanovicst/auth_api/internal/log"
+	oidcpkg "github.com/gjovanovicst/auth_api/internal/oidc"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
@@ -61,6 +62,7 @@ type GUIHandler struct {
 	GeoIPService      *geoip.Service          // GeoIP service for IP lookups (nil = disabled)
 	BruteForceService *bruteforce.Service     // Brute-force protection service for account unlock (nil = disabled)
 	WebhookService    *webhook.Service        // Webhook management service (nil = webhooks disabled)
+	OIDCService       *oidcpkg.Service        // OIDC provider service (nil = OIDC disabled)
 }
 
 // NewGUIHandler creates a new GUIHandler
@@ -513,6 +515,7 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		Passkey2FAEnabled   bool
 		PasskeyLoginEnabled bool
 		MagicLinkEnabled    bool
+		OIDCEnabled         bool
 		Tenants             []models.Tenant
 		IsEdit              bool
 		// Brute-force overrides (nil = use global default)
@@ -687,6 +690,7 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		Passkey2FAEnabled   bool
 		PasskeyLoginEnabled bool
 		MagicLinkEnabled    bool
+		OIDCEnabled         bool
 		Tenants             []models.Tenant
 		IsEdit              bool
 		// Brute-force overrides
@@ -719,6 +723,7 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		Passkey2FAEnabled:   app.Passkey2FAEnabled,
 		PasskeyLoginEnabled: app.PasskeyLoginEnabled,
 		MagicLinkEnabled:    app.MagicLinkEnabled,
+		OIDCEnabled:         app.OIDCEnabled,
 		Tenants:             tenants,
 		IsEdit:              true,
 	}
@@ -807,6 +812,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
 	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
 	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
+	oidcEnabled := c.PostForm("oidc_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -868,7 +874,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	}
 	// If override toggles are off, all bf fields remain nil -> clears overrides in DB
 
-	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, bf); err != nil {
+	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, bf); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return

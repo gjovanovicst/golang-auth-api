@@ -2799,6 +2799,238 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/oidc/apps/{id}/clients": {
+            "get": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "tags": [
+                    "Admin OIDC"
+                ],
+                "summary": "List OIDC clients for an app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/dto.OIDCClientResponse"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin OIDC"
+                ],
+                "summary": "Create an OIDC client",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Client data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.CreateOIDCClientRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCClientResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/oidc/apps/{id}/clients/{cid}": {
+            "get": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "tags": [
+                    "Admin OIDC"
+                ],
+                "summary": "Get a single OIDC client",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client UUID",
+                        "name": "cid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCClientResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin OIDC"
+                ],
+                "summary": "Update an OIDC client",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client UUID",
+                        "name": "cid",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Update data",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateOIDCClientRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCClientResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "tags": [
+                    "Admin OIDC"
+                ],
+                "summary": "Delete an OIDC client",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client UUID",
+                        "name": "cid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/admin/oidc/apps/{id}/clients/{cid}/rotate-secret": {
+            "post": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "tags": [
+                    "Admin OIDC"
+                ],
+                "summary": "Rotate client secret",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client UUID",
+                        "name": "cid",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCClientResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/rbac/permissions": {
             "get": {
                 "security": [
@@ -4869,6 +5101,351 @@ const docTemplate = `{
                 }
             }
         },
+        "/oidc/{app_id}/.well-known/jwks.json": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "JWKS endpoint",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/oidc.JWKS"
+                        }
+                    }
+                }
+            }
+        },
+        "/oidc/{app_id}/.well-known/openid-configuration": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "OIDC discovery document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCDiscoveryDocument"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/oidc/{app_id}/authorize": {
+            "get": {
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "OIDC authorization endpoint",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Must be 'code'",
+                        "name": "response_type",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OIDC client ID",
+                        "name": "client_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Registered redirect URI",
+                        "name": "redirect_uri",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Requested scopes (must include 'openid')",
+                        "name": "scope",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque state value",
+                        "name": "state",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Nonce",
+                        "name": "nonce",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "PKCE code challenge",
+                        "name": "code_challenge",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "PKCE method (S256)",
+                        "name": "code_challenge_method",
+                        "in": "query"
+                    }
+                ],
+                "responses": {}
+            },
+            "post": {
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "OIDC authorize form submit",
+                "responses": {}
+            }
+        },
+        "/oidc/{app_id}/end_session": {
+            "get": {
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "OIDC RP-Initiated Logout",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Previously-issued ID token",
+                        "name": "id_token_hint",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "URI to redirect to after logout",
+                        "name": "post_logout_redirect_uri",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque value returned with redirect",
+                        "name": "state",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "302": {
+                        "description": "Found"
+                    }
+                }
+            }
+        },
+        "/oidc/{app_id}/introspect": {
+            "post": {
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "OIDC token introspection (RFC 7662)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCIntrospectResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/oidc/{app_id}/revoke": {
+            "post": {
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "OIDC token revocation (RFC 7009)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Token to revoke",
+                        "name": "token",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "access_token or refresh_token",
+                        "name": "token_type_hint",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client ID (confidential clients)",
+                        "name": "client_id",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Client secret (confidential clients)",
+                        "name": "client_secret",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCTokenErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/oidc/{app_id}/token": {
+            "post": {
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "OIDC token endpoint",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCTokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCTokenErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/oidc/{app_id}/userinfo": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "OIDC"
+                ],
+                "summary": "OIDC userinfo endpoint",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OIDCUserInfoResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/passkey/login/begin": {
             "post": {
                 "description": "Start a passwordless login ceremony using discoverable credentials (passkeys)",
@@ -6146,6 +6723,48 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.CreateOIDCClientRequest": {
+            "type": "object",
+            "required": [
+                "allowed_grant_types",
+                "allowed_scopes",
+                "name",
+                "redirect_uris"
+            ],
+            "properties": {
+                "allowed_grant_types": {
+                    "description": "comma-separated",
+                    "type": "string"
+                },
+                "allowed_scopes": {
+                    "description": "comma-separated",
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_confidential": {
+                    "type": "boolean"
+                },
+                "logo_url": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "pkce_required": {
+                    "type": "boolean"
+                },
+                "redirect_uris": {
+                    "description": "JSON array string, e.g. '[\"https://app.example.com/cb\"]'",
+                    "type": "string"
+                },
+                "require_consent": {
+                    "type": "boolean"
+                }
+            }
+        },
         "dto.CreatePermissionRequest": {
             "type": "object",
             "required": [
@@ -6836,6 +7455,246 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.OIDCClientResponse": {
+            "type": "object",
+            "properties": {
+                "allowed_grant_types": {
+                    "type": "string"
+                },
+                "allowed_scopes": {
+                    "type": "string"
+                },
+                "app_id": {
+                    "type": "string"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "client_secret": {
+                    "description": "#nosec G101 -- only present on create/rotate",
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_confidential": {
+                    "type": "boolean"
+                },
+                "logo_url": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pkce_required": {
+                    "type": "boolean"
+                },
+                "redirect_uris": {
+                    "type": "string"
+                },
+                "require_consent": {
+                    "type": "boolean"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.OIDCDiscoveryDocument": {
+            "type": "object",
+            "properties": {
+                "authorization_endpoint": {
+                    "type": "string"
+                },
+                "claims_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "code_challenge_methods_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "end_session_endpoint": {
+                    "type": "string"
+                },
+                "grant_types_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id_token_signing_alg_values_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "introspection_endpoint": {
+                    "type": "string"
+                },
+                "issuer": {
+                    "type": "string"
+                },
+                "jwks_uri": {
+                    "type": "string"
+                },
+                "response_types_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "revocation_endpoint": {
+                    "type": "string"
+                },
+                "scopes_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_types_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_endpoint": {
+                    "type": "string"
+                },
+                "token_endpoint_auth_methods_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "userinfo_endpoint": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.OIDCIntrospectResponse": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "aud": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "exp": {
+                    "type": "integer"
+                },
+                "iat": {
+                    "type": "integer"
+                },
+                "iss": {
+                    "type": "string"
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "sub": {
+                    "type": "string"
+                },
+                "token_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.OIDCTokenErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "error_description": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.OIDCTokenResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "description": "#nosec G101 -- DTO field",
+                    "type": "string"
+                },
+                "expires_in": {
+                    "description": "seconds",
+                    "type": "integer"
+                },
+                "id_token": {
+                    "description": "#nosec G101 -- DTO field",
+                    "type": "string"
+                },
+                "refresh_token": {
+                    "description": "#nosec G101 -- DTO field",
+                    "type": "string"
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "token_type": {
+                    "description": "always \"Bearer\"",
+                    "type": "string"
+                }
+            }
+        },
+        "dto.OIDCUserInfoResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "email_verified": {
+                    "type": "boolean"
+                },
+                "family_name": {
+                    "type": "string"
+                },
+                "given_name": {
+                    "type": "string"
+                },
+                "locale": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "picture": {
+                    "type": "string"
+                },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sub": {
+                    "type": "string"
+                }
+            }
+        },
         "dto.PaginationResponse": {
             "type": "object",
             "properties": {
@@ -7423,6 +8282,42 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.UpdateOIDCClientRequest": {
+            "type": "object",
+            "properties": {
+                "allowed_grant_types": {
+                    "type": "string"
+                },
+                "allowed_scopes": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_confidential": {
+                    "type": "boolean"
+                },
+                "logo_url": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "pkce_required": {
+                    "type": "boolean"
+                },
+                "redirect_uris": {
+                    "type": "string"
+                },
+                "require_consent": {
+                    "type": "boolean"
+                }
+            }
+        },
         "dto.UpdatePasswordRequest": {
             "type": "object",
             "required": [
@@ -7714,6 +8609,40 @@ const docTemplate = `{
                 "url": {
                     "type": "string",
                     "example": "https://your-app.com/webhooks/auth"
+                }
+            }
+        },
+        "oidc.JWK": {
+            "type": "object",
+            "properties": {
+                "alg": {
+                    "type": "string"
+                },
+                "e": {
+                    "type": "string"
+                },
+                "kid": {
+                    "type": "string"
+                },
+                "kty": {
+                    "type": "string"
+                },
+                "n": {
+                    "type": "string"
+                },
+                "use": {
+                    "type": "string"
+                }
+            }
+        },
+        "oidc.JWKS": {
+            "type": "object",
+            "properties": {
+                "keys": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/oidc.JWK"
+                    }
                 }
             }
         },

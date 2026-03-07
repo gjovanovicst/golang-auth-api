@@ -131,6 +131,13 @@
                         <i class="bi bi-key"></i> OAuth Config
                     </a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link sidebar-link{{if eq .ActivePage "oidc-clients"}} active{{end}}" href="/gui/oidc-clients"
+                       data-page="oidc-clients"
+                       hx-get="/gui/oidc-clients" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
+                        <i class="bi bi-fingerprint"></i> OIDC Clients
+                    </a>
+                </li>
             </ul>
 
             <div class="sidebar-heading">Security</div>

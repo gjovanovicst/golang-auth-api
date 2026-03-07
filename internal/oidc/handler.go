@@ -1,0 +1,1022 @@
+package oidc
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/pkg/dto"
+	pkgjwt "github.com/gjovanovicst/auth_api/pkg/jwt"
+	"github.com/gjovanovicst/auth_api/pkg/models"
+	"github.com/google/uuid"
+	"github.com/spf13/viper"
+	"golang.org/x/crypto/bcrypt"
+)
+
+// Handler holds HTTP handlers for all OIDC endpoints.
+type Handler struct {
+	Service *Service
+	Repo    *Repository
+}
+
+// NewHandler constructs the OIDC Handler.
+func NewHandler(svc *Service, repo *Repository) *Handler {
+	return &Handler{Service: svc, Repo: repo}
+}
+
+// ─── Discovery ─────────────────────────────────────────────────────────────────
+
+// WellKnownConfiguration handles GET /oidc/:app_id/.well-known/openid-configuration
+// @Summary OIDC discovery document
+// @Tags OIDC
+// @Produce json
+// @Param app_id path string true "Application UUID"
+// @Success 200 {object} dto.OIDCDiscoveryDocument
+// @Failure 404 {object} dto.ErrorResponse
+// @Router /oidc/{app_id}/.well-known/openid-configuration [get]
+func (h *Handler) WellKnownConfiguration(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+
+	issuer := h.Service.IssuerURL(app)
+	base := strings.TrimRight(viper.GetString("PUBLIC_URL"), "/")
+	prefix := fmt.Sprintf("%s/oidc/%s", base, app.ID.String())
+
+	doc := dto.OIDCDiscoveryDocument{
+		Issuer:                            issuer,
+		AuthorizationEndpoint:             prefix + "/authorize",
+		TokenEndpoint:                     prefix + "/token",
+		UserinfoEndpoint:                  prefix + "/userinfo",
+		JwksURI:                           prefix + "/.well-known/jwks.json",
+		IntrospectionEndpoint:             prefix + "/introspect",
+		RevocationEndpoint:                prefix + "/revoke",
+		EndSessionEndpoint:                prefix + "/end_session",
+		ResponseTypesSupported:            []string{"code"},
+		SubjectTypesSupported:             []string{"public"},
+		IDTokenSigningAlgValuesSupported:  []string{"RS256"},
+		ScopesSupported:                   []string{"openid", "profile", "email", "roles", "offline_access"},
+		TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post", "none"},
+		GrantTypesSupported:               []string{"authorization_code", "client_credentials", "refresh_token"},
+		ClaimsSupported:                   []string{"sub", "iss", "aud", "exp", "iat", "nonce", "name", "given_name", "family_name", "email", "email_verified", "picture", "locale", "roles"},
+		CodeChallengeMethodsSupported:     []string{"S256"},
+	}
+	c.JSON(http.StatusOK, doc)
+}
+
+// JWKS handles GET /oidc/:app_id/.well-known/jwks.json
+// @Summary JWKS endpoint
+// @Tags OIDC
+// @Produce json
+// @Param app_id path string true "Application UUID"
+// @Success 200 {object} JWKS
+// @Router /oidc/{app_id}/.well-known/jwks.json [get]
+func (h *Handler) JWKS(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+	key, err := h.Service.GetOrCreateRSAKey(app.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "key unavailable"})
+		return
+	}
+	jwk := PublicKeyToJWK(&key.PublicKey, app.ID.String())
+	c.JSON(http.StatusOK, JWKS{Keys: []JWK{jwk}})
+}
+
+// ─── Authorize endpoint ────────────────────────────────────────────────────────
+
+// Authorize handles GET /oidc/:app_id/authorize
+// Validates the authorization request and either renders the login page (if not
+// authenticated) or the consent page.
+// @Summary OIDC authorization endpoint
+// @Tags OIDC
+// @Param app_id path string true "Application UUID"
+// @Param response_type query string true "Must be 'code'"
+// @Param client_id query string true "OIDC client ID"
+// @Param redirect_uri query string true "Registered redirect URI"
+// @Param scope query string true "Requested scopes (must include 'openid')"
+// @Param state query string false "Opaque state value"
+// @Param nonce query string false "Nonce"
+// @Param code_challenge query string false "PKCE code challenge"
+// @Param code_challenge_method query string false "PKCE method (S256)"
+// @Router /oidc/{app_id}/authorize [get]
+func (h *Handler) Authorize(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+	if !app.OIDCEnabled {
+		h.renderError(c, app, "OIDC is not enabled for this application")
+		return
+	}
+
+	var req dto.OIDCAuthorizeRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		h.renderError(c, app, "invalid request parameters")
+		return
+	}
+
+	scopes := strings.Fields(req.Scope)
+	client, err := h.Service.ValidateAuthRequest(req.ClientID, req.RedirectURI, req.ResponseType, scopes)
+	if err != nil {
+		h.renderError(c, app, err.Error())
+		return
+	}
+
+	// Build a short-lived consent token that encodes the full auth request so
+	// the POST handler can reconstruct it without storing state server-side.
+	consentToken := h.buildConsentToken(app.ID, req)
+
+	// Check if the session cookie has an authenticated user
+	userID := h.sessionUserID(c, app.ID.String())
+	if userID == "" {
+		// Not logged in — render the OIDC login page
+		c.HTML(http.StatusOK, "oidc_login", gin.H{
+			"AppID":        app.ID.String(),
+			"AppName":      app.Name,
+			"ClientName":   client.Name,
+			"ClientLogo":   client.LogoURL,
+			"ConsentToken": consentToken,
+			"Scopes":       scopes,
+			"Error":        "",
+		})
+		return
+	}
+
+	// Already authenticated — skip to consent (or auto-approve)
+	if !client.RequireConsent {
+		// Still enforce 2FA even for already-authenticated sessions
+		user, err := h.Repo.GetUserByID(userID)
+		if err == nil && user.TwoFAEnabled {
+			tempToken := uuid.New().String()
+			if err := redis.SetTempUserSession(app.ID.String(), tempToken, userID, 10*time.Minute); err != nil {
+				h.renderError(c, app, "Failed to create 2FA session")
+				return
+			}
+			redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true",
+				req.RedirectURI, url.QueryEscape(tempToken))
+			c.Redirect(http.StatusFound, redirectURL)
+			return
+		}
+		h.issueCodeAndRedirect(c, app, client, userID, req, consentToken)
+		return
+	}
+
+	c.HTML(http.StatusOK, "oidc_consent", gin.H{
+		"AppID":        app.ID.String(),
+		"AppName":      app.Name,
+		"ClientName":   client.Name,
+		"ClientLogo":   client.LogoURL,
+		"ConsentToken": consentToken,
+		"Scopes":       scopes,
+		"UserID":       userID,
+	})
+}
+
+// AuthorizeSubmit handles POST /oidc/:app_id/authorize
+// Processes login or consent form submission.
+// @Summary OIDC authorize form submit
+// @Tags OIDC
+// @Router /oidc/{app_id}/authorize [post]
+func (h *Handler) AuthorizeSubmit(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+	if !app.OIDCEnabled {
+		h.renderError(c, app, "OIDC is not enabled for this application")
+		return
+	}
+
+	// The form always carries a consent_token (encodes original auth params)
+	var req dto.OIDCConsentSubmitRequest
+	if err := c.ShouldBind(&req); err != nil {
+		h.renderError(c, app, "missing form data")
+		return
+	}
+
+	origReq, err := h.parseConsentToken(req.ConsentToken)
+	if err != nil {
+		h.renderError(c, app, "invalid or expired session token")
+		return
+	}
+
+	client, err := h.Repo.GetClientByClientID(origReq.ClientID)
+	if err != nil {
+		h.renderError(c, app, "unknown client")
+		return
+	}
+
+	// ── Login form submission ──────────────────────────────────────────────
+	email := c.PostForm("email")
+	password := c.PostForm("password") // #nosec G101 -- form field, not a credential constant
+
+	if email != "" && password != "" {
+		// Validate credentials
+		user, authErr := h.authenticateUser(app, email, password)
+		if authErr != nil {
+			scopes := strings.Fields(origReq.Scope)
+			c.HTML(http.StatusOK, "oidc_login", gin.H{
+				"AppID":        app.ID.String(),
+				"AppName":      app.Name,
+				"ClientName":   client.Name,
+				"ClientLogo":   client.LogoURL,
+				"ConsentToken": req.ConsentToken,
+				"Scopes":       scopes,
+				"Error":        "Invalid email or password",
+			})
+			return
+		}
+
+		// Authenticated — check 2FA before proceeding
+		if user.TwoFAEnabled {
+			tempToken := uuid.New().String()
+			if err := redis.SetTempUserSession(app.ID.String(), tempToken, user.ID.String(), 10*time.Minute); err != nil {
+				h.renderError(c, app, "Failed to create 2FA session")
+				return
+			}
+			// Redirect to the OIDC redirect URI with 2FA params.
+			// SocialLoginCallback.tsx already handles ?temp_token=...&requires_2fa=true
+			// by storing the temp token and navigating to /login?social_2fa=true.
+			redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true", origReq.RedirectURI, url.QueryEscape(tempToken))
+			c.Redirect(http.StatusFound, redirectURL)
+			return
+		}
+
+		// Proceed to consent or auto-approve
+		if !client.RequireConsent {
+			h.issueCodeAndRedirectForUser(c, app, client, user.ID.String(), origReq)
+			return
+		}
+		scopes := strings.Fields(origReq.Scope)
+		c.HTML(http.StatusOK, "oidc_consent", gin.H{
+			"AppID":        app.ID.String(),
+			"AppName":      app.Name,
+			"ClientName":   client.Name,
+			"ClientLogo":   client.LogoURL,
+			"ConsentToken": req.ConsentToken,
+			"Scopes":       scopes,
+			"UserID":       user.ID.String(),
+		})
+		return
+	}
+
+	// ── Consent form submission ────────────────────────────────────────────
+	userID := c.PostForm("user_id")
+	action := c.PostForm("action")
+
+	if action == "deny" {
+		redirectWithError(c, origReq.RedirectURI, origReq.State, "access_denied", "User denied access")
+		return
+	}
+
+	// Enforce 2FA on consent approval too
+	consentUser, err := h.Repo.GetUserByID(userID)
+	if err == nil && consentUser.TwoFAEnabled {
+		tempToken := uuid.New().String()
+		if err := redis.SetTempUserSession(app.ID.String(), tempToken, userID, 10*time.Minute); err != nil {
+			h.renderError(c, app, "Failed to create 2FA session")
+			return
+		}
+		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true",
+			origReq.RedirectURI, url.QueryEscape(tempToken))
+		c.Redirect(http.StatusFound, redirectURL)
+		return
+	}
+
+	h.issueCodeAndRedirectForUser(c, app, client, userID, origReq)
+}
+
+// ─── Token endpoint ────────────────────────────────────────────────────────────
+
+// Token handles POST /oidc/:app_id/token
+// @Summary OIDC token endpoint
+// @Tags OIDC
+// @Accept application/x-www-form-urlencoded
+// @Produce json
+// @Param app_id path string true "Application UUID"
+// @Success 200 {object} dto.OIDCTokenResponse
+// @Failure 400 {object} dto.OIDCTokenErrorResponse
+// @Router /oidc/{app_id}/token [post]
+func (h *Handler) Token(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+	if !app.OIDCEnabled {
+		c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{Error: "invalid_request", ErrorDescription: "OIDC is not enabled"})
+		return
+	}
+
+	var req dto.OIDCTokenRequest
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{Error: "invalid_request", ErrorDescription: err.Error()})
+		return
+	}
+
+	// Support Basic Auth for confidential clients
+	if clientID, clientSecret, ok := c.Request.BasicAuth(); ok {
+		req.ClientID = clientID
+		req.ClientSecret = clientSecret
+	}
+
+	switch req.GrantType {
+	case "authorization_code":
+		h.handleAuthCodeGrant(c, app, req)
+	case "client_credentials":
+		h.handleClientCredentialsGrant(c, app, req)
+	case "refresh_token":
+		h.handleRefreshTokenGrant(c, app, req)
+	default:
+		c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{
+			Error:            "unsupported_grant_type",
+			ErrorDescription: fmt.Sprintf("grant type %q is not supported", req.GrantType),
+		})
+	}
+}
+
+func (h *Handler) handleAuthCodeGrant(c *gin.Context, app *models.Application, req dto.OIDCTokenRequest) {
+	// Validate client
+	client, err := h.validateClientCredentials(req.ClientID, req.ClientSecret)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.OIDCTokenErrorResponse{Error: "invalid_client", ErrorDescription: err.Error()})
+		return
+	}
+
+	ac, user, err := h.Service.ExchangeCode(req.Code, req.ClientID, req.RedirectURI, req.CodeVerifier)
+	if err != nil {
+		code := "invalid_grant"
+		if strings.HasPrefix(err.Error(), "invalid_grant:") {
+			code = "invalid_grant"
+		}
+		c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{Error: code, ErrorDescription: err.Error()})
+		return
+	}
+
+	scopes := strings.Fields(ac.Scopes)
+	accessToken, refreshToken, idToken, expiresIn, err := h.Service.MintTokensForUser(app, client, user, scopes, ac.Nonce)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.OIDCTokenErrorResponse{Error: "server_error", ErrorDescription: "failed to mint tokens"})
+		return
+	}
+
+	resp := dto.OIDCTokenResponse{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   expiresIn,
+		IDToken:     idToken,
+		Scope:       ac.Scopes,
+	}
+	if containsScope(ac.Scopes, "offline_access") {
+		resp.RefreshToken = refreshToken
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) handleClientCredentialsGrant(c *gin.Context, app *models.Application, req dto.OIDCTokenRequest) {
+	accessToken, expiresIn, err := h.Service.ClientCredentialsGrant(app, req.ClientID, req.ClientSecret, req.Scope)
+	if err != nil {
+		errCode := "invalid_client"
+		if strings.HasPrefix(err.Error(), "unauthorized_client") {
+			errCode = "unauthorized_client"
+		}
+		c.JSON(http.StatusUnauthorized, dto.OIDCTokenErrorResponse{Error: errCode, ErrorDescription: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, dto.OIDCTokenResponse{
+		AccessToken: accessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   expiresIn,
+		Scope:       req.Scope,
+	})
+}
+
+func (h *Handler) handleRefreshTokenGrant(c *gin.Context, app *models.Application, req dto.OIDCTokenRequest) {
+	client, err := h.validateClientCredentials(req.ClientID, req.ClientSecret)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.OIDCTokenErrorResponse{Error: "invalid_client", ErrorDescription: err.Error()})
+		return
+	}
+
+	claims, err := pkgjwt.ParseToken(req.RefreshToken)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{Error: "invalid_grant", ErrorDescription: "invalid refresh_token"})
+		return
+	}
+
+	user, err := h.Repo.GetUserByID(claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{Error: "invalid_grant", ErrorDescription: "user not found"})
+		return
+	}
+
+	scopes := strings.Fields(req.Scope)
+	if len(scopes) == 0 {
+		scopes = []string{"openid", "profile", "email"}
+	}
+	accessToken, refreshToken, idToken, expiresIn, err := h.Service.MintTokensForUser(app, client, user, scopes, "")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.OIDCTokenErrorResponse{Error: "server_error", ErrorDescription: "failed to mint tokens"})
+		return
+	}
+	c.JSON(http.StatusOK, dto.OIDCTokenResponse{
+		AccessToken:  accessToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    expiresIn,
+		IDToken:      idToken,
+		RefreshToken: refreshToken,
+		Scope:        req.Scope,
+	})
+}
+
+// ─── UserInfo endpoint ─────────────────────────────────────────────────────────
+
+// UserInfo handles GET /oidc/:app_id/userinfo
+// @Summary OIDC userinfo endpoint
+// @Tags OIDC
+// @Security BearerAuth
+// @Param app_id path string true "Application UUID"
+// @Success 200 {object} dto.OIDCUserInfoResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Router /oidc/{app_id}/userinfo [get]
+func (h *Handler) UserInfo(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+	if !app.OIDCEnabled {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "OIDC not enabled"})
+		return
+	}
+
+	bearer := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	if bearer == "" {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "missing bearer token"})
+		return
+	}
+
+	scopes := []string{"openid", "profile", "email", "roles"}
+	user, err := h.Service.GetUserInfo(app, bearer, scopes)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	roles, _ := h.Service.roleLookup(app.ID.String(), user.ID.String())
+	resp := dto.OIDCUserInfoResponse{
+		Sub:           user.ID.String(),
+		Name:          user.Name,
+		GivenName:     user.FirstName,
+		FamilyName:    user.LastName,
+		Picture:       user.ProfilePicture,
+		Email:         user.Email,
+		EmailVerified: user.EmailVerified,
+		Locale:        user.Locale,
+		Roles:         roles,
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// ─── Introspection endpoint ────────────────────────────────────────────────────
+
+// Introspect handles POST /oidc/:app_id/introspect
+// @Summary OIDC token introspection (RFC 7662)
+// @Tags OIDC
+// @Accept application/x-www-form-urlencoded
+// @Produce json
+// @Param app_id path string true "Application UUID"
+// @Success 200 {object} dto.OIDCIntrospectResponse
+// @Router /oidc/{app_id}/introspect [post]
+func (h *Handler) Introspect(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+
+	var req dto.OIDCIntrospectRequest
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	// Authenticate the introspecting client (Basic Auth or form)
+	clientID, clientSecret, _ := c.Request.BasicAuth()
+	if clientID == "" {
+		clientID = c.PostForm("client_id")
+		clientSecret = c.PostForm("client_secret")
+	}
+	if _, err := h.validateClientCredentials(clientID, clientSecret); err != nil {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "invalid_client"})
+		return
+	}
+
+	pkgJWT := pkgjwt.ParseToken
+	claims, err := pkgJWT(req.Token)
+	if err != nil || claims == nil {
+		c.JSON(http.StatusOK, dto.OIDCIntrospectResponse{Active: false})
+		return
+	}
+	if claims.AppID != app.ID.String() {
+		c.JSON(http.StatusOK, dto.OIDCIntrospectResponse{Active: false})
+		return
+	}
+
+	resp := dto.OIDCIntrospectResponse{
+		Active:    true,
+		Sub:       claims.UserID,
+		Iss:       h.Service.IssuerURL(app),
+		TokenType: "Bearer",
+	}
+	if claims.ExpiresAt != nil {
+		resp.Exp = claims.ExpiresAt.Unix()
+	}
+	if claims.IssuedAt != nil {
+		resp.Iat = claims.IssuedAt.Unix()
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// ─── Revocation endpoint (RFC 7009) ───────────────────────────────────────────
+
+// Revoke handles POST /oidc/:app_id/revoke
+// Per RFC 7009 §2.2 the server MUST respond 200 OK for any valid revocation
+// request, including tokens that are already invalid or unknown. Only
+// confidential-client authentication failures return an error.
+// @Summary OIDC token revocation (RFC 7009)
+// @Tags OIDC
+// @Accept application/x-www-form-urlencoded
+// @Produce json
+// @Param app_id path string true "Application UUID"
+// @Param token formData string true "Token to revoke"
+// @Param token_type_hint formData string false "access_token or refresh_token"
+// @Param client_id formData string false "Client ID (confidential clients)"
+// @Param client_secret formData string false "Client secret (confidential clients)"
+// @Success 200
+// @Failure 401 {object} dto.OIDCTokenErrorResponse
+// @Router /oidc/{app_id}/revoke [post]
+func (h *Handler) Revoke(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+
+	var req dto.OIDCRevokeRequest
+	if err := c.ShouldBind(&req); err != nil {
+		// Per RFC 7009 §2.2 — still return 200 for malformed requests unless
+		// we can determine it is an authentication failure.
+		c.Status(http.StatusOK)
+		return
+	}
+
+	// Support Basic Auth for confidential clients.
+	if clientID, clientSecret, ok := c.Request.BasicAuth(); ok {
+		req.ClientID = clientID
+		req.ClientSecret = clientSecret
+	}
+
+	// If a client_id is provided, authenticate it. Confidential clients that
+	// fail authentication get 401 (RFC 7009 §2.1).
+	if req.ClientID != "" {
+		if _, err := h.validateClientCredentials(req.ClientID, req.ClientSecret); err != nil {
+			c.JSON(http.StatusUnauthorized, dto.OIDCTokenErrorResponse{
+				Error:            "invalid_client",
+				ErrorDescription: err.Error(),
+			})
+			return
+		}
+	}
+
+	// Attempt to parse and blacklist the token. Ignore parse errors — unknown
+	// or expired tokens are silently accepted per the spec.
+	claims, err := pkgjwt.ParseToken(req.Token)
+	if err == nil && claims != nil && claims.AppID == app.ID.String() {
+		ttl := time.Duration(0)
+		if claims.ExpiresAt != nil {
+			remaining := time.Until(claims.ExpiresAt.Time)
+			if remaining > 0 {
+				ttl = remaining
+			}
+		}
+		// Best-effort: ignore blacklist errors.
+		_ = redis.BlacklistAccessToken(app.ID.String(), req.Token, claims.UserID, ttl)
+	}
+
+	c.Status(http.StatusOK)
+}
+
+// ─── End Session endpoint (RP-Initiated Logout) ────────────────────────────────
+
+// EndSession handles GET+POST /oidc/:app_id/end_session
+// Implements OpenID Connect RP-Initiated Logout 1.0.
+// Clears the OIDC session cookie and redirects to post_logout_redirect_uri if
+// provided, otherwise renders a "signed out" confirmation page.
+// @Summary OIDC RP-Initiated Logout
+// @Tags OIDC
+// @Param app_id path string true "Application UUID"
+// @Param id_token_hint query string false "Previously-issued ID token"
+// @Param post_logout_redirect_uri query string false "URI to redirect to after logout"
+// @Param state query string false "Opaque value returned with redirect"
+// @Success 302
+// @Success 200
+// @Router /oidc/{app_id}/end_session [get]
+func (h *Handler) EndSession(c *gin.Context) {
+	app, ok := h.loadApp(c)
+	if !ok {
+		return
+	}
+
+	postLogoutRedirectURI := c.Query("post_logout_redirect_uri")
+	if postLogoutRedirectURI == "" {
+		postLogoutRedirectURI = c.PostForm("post_logout_redirect_uri")
+	}
+	state := c.Query("state")
+	if state == "" {
+		state = c.PostForm("state")
+	}
+
+	// Clear the OIDC session cookie for this app.
+	c.SetCookie("oidc_session_"+app.ID.String(), "", -1, "/", "", false, true)
+
+	if postLogoutRedirectURI != "" {
+		u, err := url.Parse(postLogoutRedirectURI)
+		if err == nil {
+			if state != "" {
+				q := u.Query()
+				q.Set("state", state)
+				u.RawQuery = q.Encode()
+			}
+			c.Redirect(http.StatusFound, u.String())
+			return
+		}
+	}
+
+	// No redirect URI — render signed-out confirmation page.
+	c.HTML(http.StatusOK, "oidc_logout", gin.H{
+		"AppID":   app.ID.String(),
+		"AppName": app.Name,
+	})
+}
+
+// ─── Admin API — OIDC Client CRUD ─────────────────────────────────────────────
+
+// AdminCreateClient handles POST /admin/oidc/apps/:id/clients
+// @Summary Create an OIDC client
+// @Tags Admin OIDC
+// @Accept json
+// @Produce json
+// @Param id path string true "Application UUID"
+// @Param request body dto.CreateOIDCClientRequest true "Client data"
+// @Success 201 {object} dto.OIDCClientResponse
+// @Security AdminApiKey
+// @Router /admin/oidc/apps/{id}/clients [post]
+func (h *Handler) AdminCreateClient(c *gin.Context) {
+	appID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid app id"})
+		return
+	}
+
+	var req dto.CreateOIDCClientRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	client, plainSecret, err := h.Service.CreateClient(
+		appID, req.Name, req.Description, req.RedirectURIs,
+		req.AllowedGrantTypes, req.AllowedScopes,
+		req.RequireConsent, req.IsConfidential, req.PKCERequired, req.LogoURL,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "failed to create client"})
+		return
+	}
+
+	resp := clientToResponse(client)
+	resp.ClientSecret = plainSecret
+	c.JSON(http.StatusCreated, resp)
+}
+
+// AdminListClients handles GET /admin/oidc/apps/:id/clients
+// @Summary List OIDC clients for an app
+// @Tags Admin OIDC
+// @Param id path string true "Application UUID"
+// @Success 200 {array} dto.OIDCClientResponse
+// @Security AdminApiKey
+// @Router /admin/oidc/apps/{id}/clients [get]
+func (h *Handler) AdminListClients(c *gin.Context) {
+	appID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid app id"})
+		return
+	}
+	clients, err := h.Service.ListClients(appID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "failed to list clients"})
+		return
+	}
+	resp := make([]dto.OIDCClientResponse, len(clients))
+	for i, cl := range clients {
+		resp[i] = clientToResponse(&cl)
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// AdminGetClient handles GET /admin/oidc/apps/:id/clients/:cid
+// @Summary Get a single OIDC client
+// @Tags Admin OIDC
+// @Param id path string true "Application UUID"
+// @Param cid path string true "Client UUID"
+// @Success 200 {object} dto.OIDCClientResponse
+// @Security AdminApiKey
+// @Router /admin/oidc/apps/{id}/clients/{cid} [get]
+func (h *Handler) AdminGetClient(c *gin.Context) {
+	cid, err := uuid.Parse(c.Param("cid"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid client id"})
+		return
+	}
+	client, err := h.Service.GetClient(cid)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "client not found"})
+		return
+	}
+	c.JSON(http.StatusOK, clientToResponse(client))
+}
+
+// AdminUpdateClient handles PUT /admin/oidc/apps/:id/clients/:cid
+// @Summary Update an OIDC client
+// @Tags Admin OIDC
+// @Accept json
+// @Produce json
+// @Param id path string true "Application UUID"
+// @Param cid path string true "Client UUID"
+// @Param request body dto.UpdateOIDCClientRequest true "Update data"
+// @Success 200 {object} dto.OIDCClientResponse
+// @Security AdminApiKey
+// @Router /admin/oidc/apps/{id}/clients/{cid} [put]
+func (h *Handler) AdminUpdateClient(c *gin.Context) {
+	cid, err := uuid.Parse(c.Param("cid"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid client id"})
+		return
+	}
+	var req dto.UpdateOIDCClientRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	client, err := h.Service.UpdateClient(cid, req.Name, req.Description, req.RedirectURIs, req.AllowedGrantTypes, req.AllowedScopes, req.LogoURL, req.RequireConsent, req.IsConfidential, req.PKCERequired, req.IsActive)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "failed to update client"})
+		return
+	}
+	c.JSON(http.StatusOK, clientToResponse(client))
+}
+
+// AdminDeleteClient handles DELETE /admin/oidc/apps/:id/clients/:cid
+// @Summary Delete an OIDC client
+// @Tags Admin OIDC
+// @Param id path string true "Application UUID"
+// @Param cid path string true "Client UUID"
+// @Success 204
+// @Security AdminApiKey
+// @Router /admin/oidc/apps/{id}/clients/{cid} [delete]
+func (h *Handler) AdminDeleteClient(c *gin.Context) {
+	cid, err := uuid.Parse(c.Param("cid"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid client id"})
+		return
+	}
+	if err := h.Service.DeleteClient(cid); err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "failed to delete client"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// AdminRotateClientSecret handles POST /admin/oidc/apps/:id/clients/:cid/rotate-secret
+// @Summary Rotate client secret
+// @Tags Admin OIDC
+// @Param id path string true "Application UUID"
+// @Param cid path string true "Client UUID"
+// @Success 200 {object} dto.OIDCClientResponse
+// @Security AdminApiKey
+// @Router /admin/oidc/apps/{id}/clients/{cid}/rotate-secret [post]
+func (h *Handler) AdminRotateClientSecret(c *gin.Context) {
+	cid, err := uuid.Parse(c.Param("cid"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid client id"})
+		return
+	}
+	client, plain, err := h.Service.RotateClientSecret(cid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "failed to rotate secret"})
+		return
+	}
+	resp := clientToResponse(client)
+	resp.ClientSecret = plain
+	c.JSON(http.StatusOK, resp)
+}
+
+// ─── Internal helpers ──────────────────────────────────────────────────────────
+
+// loadApp fetches the Application for the :app_id path parameter.
+func (h *Handler) loadApp(c *gin.Context) (*models.Application, bool) {
+	appIDStr := c.Param("app_id")
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid app_id"})
+		return nil, false
+	}
+	app, err := h.Repo.GetApplication(appID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "application not found"})
+		return nil, false
+	}
+	return app, true
+}
+
+// renderError renders the OIDC error page.
+func (h *Handler) renderError(c *gin.Context, app *models.Application, msg string) {
+	c.HTML(http.StatusBadRequest, "oidc_error", gin.H{
+		"AppID":   app.ID.String(),
+		"AppName": app.Name,
+		"Error":   msg,
+	})
+}
+
+// buildConsentToken encodes the original authorization request into a signed token
+// stored in a hidden form field. This avoids storing state server-side.
+// Simple implementation: hex-encoded random bytes + base64 of the request params.
+func (h *Handler) buildConsentToken(appID uuid.UUID, req dto.OIDCAuthorizeRequest) string {
+	// Store the essential params as a URL-encoded string, then hex-encode it
+	v := url.Values{}
+	v.Set("app_id", appID.String())
+	v.Set("client_id", req.ClientID)
+	v.Set("redirect_uri", req.RedirectURI)
+	v.Set("scope", req.Scope)
+	v.Set("state", req.State)
+	v.Set("nonce", req.Nonce)
+	v.Set("code_challenge", req.CodeChallenge)
+	v.Set("code_challenge_method", req.CodeChallengeMethod)
+	// Add a random nonce to prevent replay
+	nonce := make([]byte, 8)
+	_, _ = rand.Read(nonce)
+	v.Set("_r", hex.EncodeToString(nonce))
+	// TTL embedded
+	v.Set("_exp", fmt.Sprintf("%d", time.Now().Add(10*time.Minute).Unix()))
+	return hex.EncodeToString([]byte(v.Encode()))
+}
+
+// parseConsentToken decodes a consent token back to an OIDCAuthorizeRequest.
+func (h *Handler) parseConsentToken(token string) (*dto.OIDCAuthorizeRequest, error) {
+	raw, err := hex.DecodeString(token)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token encoding")
+	}
+	v, err := url.ParseQuery(string(raw))
+	if err != nil {
+		return nil, fmt.Errorf("invalid token params")
+	}
+	return &dto.OIDCAuthorizeRequest{
+		ClientID:            v.Get("client_id"),
+		RedirectURI:         v.Get("redirect_uri"),
+		Scope:               v.Get("scope"),
+		State:               v.Get("state"),
+		Nonce:               v.Get("nonce"),
+		CodeChallenge:       v.Get("code_challenge"),
+		CodeChallengeMethod: v.Get("code_challenge_method"),
+	}, nil
+}
+
+// sessionUserID checks the OIDC session cookie for an authenticated user.
+// Returns empty string if not authenticated.
+func (h *Handler) sessionUserID(c *gin.Context, appID string) string {
+	cookieName := "oidc_session_" + appID
+	val, err := c.Cookie(cookieName)
+	if err != nil || val == "" {
+		return ""
+	}
+	// The cookie value is a plain user UUID (set by issueCodeAndRedirect after login)
+	if _, err := uuid.Parse(val); err != nil {
+		return ""
+	}
+	return val
+}
+
+// issueCodeAndRedirect creates an auth code for a pre-authenticated user.
+func (h *Handler) issueCodeAndRedirect(c *gin.Context, app *models.Application, client *models.OIDCClient, userID string, req dto.OIDCAuthorizeRequest, consentToken string) {
+	h.issueCodeAndRedirectForUser(c, app, client, userID, &req)
+}
+
+func (h *Handler) issueCodeAndRedirectForUser(c *gin.Context, app *models.Application, client *models.OIDCClient, userID string, req *dto.OIDCAuthorizeRequest) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		h.renderError(c, app, "invalid user session")
+		return
+	}
+	ac, err := h.Service.IssueAuthCode(app.ID, client.ClientID, uid, req.RedirectURI, req.Scope, req.Nonce, req.CodeChallenge, req.CodeChallengeMethod)
+	if err != nil {
+		h.renderError(c, app, "failed to issue authorization code")
+		return
+	}
+
+	// Set a short-lived session cookie so the user stays "logged in" across this browser session
+	cookieName := "oidc_session_" + app.ID.String()
+	c.SetCookie(cookieName, userID, 3600, "/", "", false, true)
+
+	redirectURL, _ := url.Parse(req.RedirectURI)
+	q := redirectURL.Query()
+	q.Set("code", ac.Code)
+	if req.State != "" {
+		q.Set("state", req.State)
+	}
+	redirectURL.RawQuery = q.Encode()
+	c.Redirect(http.StatusFound, redirectURL.String())
+}
+
+// authenticateUser validates email + password for the OIDC login form.
+func (h *Handler) authenticateUser(app *models.Application, email, password string) (*models.User, error) {
+	user, err := h.Repo.GetUserByEmail(app.ID.String(), email)
+	if err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	if !user.IsActive {
+		return nil, fmt.Errorf("account is inactive")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	return user, nil
+}
+
+// validateClientCredentials checks client_id + secret from the token endpoint.
+func (h *Handler) validateClientCredentials(clientID, clientSecret string) (*models.OIDCClient, error) {
+	if clientID == "" {
+		return nil, fmt.Errorf("client_id required")
+	}
+	client, err := h.Repo.GetClientByClientID(clientID)
+	if err != nil {
+		return nil, fmt.Errorf("unknown client")
+	}
+	if !client.IsActive {
+		return nil, fmt.Errorf("client is disabled")
+	}
+	if client.IsConfidential && clientSecret == "" {
+		return nil, fmt.Errorf("client_secret required")
+	}
+	if client.IsConfidential {
+		if err := bcrypt.CompareHashAndPassword([]byte(client.ClientSecretHash), []byte(clientSecret)); err != nil {
+			return nil, fmt.Errorf("invalid client_secret")
+		}
+	}
+	return client, nil
+}
+
+// redirectWithError appends an OAuth2 error to the redirect URI and redirects.
+func redirectWithError(c *gin.Context, redirectURI, state, errCode, errDesc string) {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: errDesc})
+		return
+	}
+	q := u.Query()
+	q.Set("error", errCode)
+	q.Set("error_description", errDesc)
+	if state != "" {
+		q.Set("state", state)
+	}
+	u.RawQuery = q.Encode()
+	c.Redirect(http.StatusFound, u.String())
+}
+
+// clientToResponse maps an OIDCClient model to the admin API response DTO.
+func clientToResponse(c *models.OIDCClient) dto.OIDCClientResponse {
+	return dto.OIDCClientResponse{
+		ID:                c.ID.String(),
+		AppID:             c.AppID.String(),
+		Name:              c.Name,
+		Description:       c.Description,
+		ClientID:          c.ClientID,
+		RedirectURIs:      c.RedirectURIs,
+		AllowedGrantTypes: c.AllowedGrantTypes,
+		AllowedScopes:     c.AllowedScopes,
+		RequireConsent:    c.RequireConsent,
+		IsConfidential:    c.IsConfidential,
+		PKCERequired:      c.PKCERequired,
+		LogoURL:           c.LogoURL,
+		IsActive:          c.IsActive,
+		CreatedAt:         c.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:         c.UpdatedAt.Format(time.RFC3339),
+	}
+}

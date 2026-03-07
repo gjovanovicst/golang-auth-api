@@ -1,0 +1,74 @@
+{{define "oidc_login"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In — {{.AppName}}</title>
+    <link rel="stylesheet" href="/gui/static/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/gui/static/css/bootstrap-icons.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .login-card { width: 100%; max-width: 420px; }
+        .client-logo { width: 48px; height: 48px; object-fit: contain; }
+    </style>
+</head>
+<body>
+<div class="container py-5">
+    <div class="login-card mx-auto">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+
+                {{if .ClientLogo}}
+                <div class="text-center mb-3">
+                    <img src="{{.ClientLogo}}" alt="{{.ClientName}} logo" class="client-logo rounded">
+                </div>
+                {{end}}
+
+                <h4 class="card-title text-center mb-1">Sign in</h4>
+                <p class="text-muted text-center small mb-4">
+                    to continue to <strong>{{.ClientName}}</strong>
+                </p>
+
+                {{if .Error}}
+                <div class="alert alert-danger py-2 small">
+                    <i class="bi bi-exclamation-circle me-1"></i>{{.Error}}
+                </div>
+                {{end}}
+
+                <form method="POST" action="/oidc/{{.AppID}}/authorize">
+                    <input type="hidden" name="consent_token" value="{{.ConsentToken}}">
+
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="email" name="email"
+                               autocomplete="email" required autofocus>
+                    </div>
+                    <div class="mb-4">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password"
+                               autocomplete="current-password" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-box-arrow-in-right me-1"></i>Sign in
+                    </button>
+                </form>
+
+                <hr class="my-4">
+                <p class="text-muted text-center" style="font-size: 0.75rem;">
+                    Signing in via <strong>{{.AppName}}</strong> authentication
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+{{end}}

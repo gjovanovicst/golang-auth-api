@@ -3,6 +3,7 @@ package email
 import (
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
@@ -99,11 +100,8 @@ func (r *VariableResolver) applySettingsVars(vars map[string]string, appID uuid.
 	// app_name: application name from DB -> env -> default
 	vars[VarAppName] = r.resolveAppName(appID)
 
-	// frontend_url: from env/config
-	frontendURL := viper.GetString("FRONTEND_URL")
-	if frontendURL != "" {
-		vars[VarFrontendURL] = frontendURL
-	}
+	// frontend_url: per-app FrontendURL → FRONTEND_URL env var → default
+	vars[VarFrontendURL] = r.resolveAppFrontendURL(appID)
 }
 
 // applyUserVars loads the user by ID and populates user-sourced variables.
@@ -155,4 +153,21 @@ func (r *VariableResolver) resolveAppName(appID uuid.UUID) string {
 		appName = "Auth API"
 	}
 	return appName
+}
+
+// resolveAppFrontendURL returns the effective frontend URL for an application.
+// Priority: per-app FrontendURL → FRONTEND_URL env var → http://localhost:8080
+func (r *VariableResolver) resolveAppFrontendURL(appID uuid.UUID) string {
+	if r.db != nil {
+		var app models.Application
+		if err := r.db.Select("frontend_url").First(&app, "id = ?", appID).Error; err == nil {
+			if u := strings.TrimRight(app.FrontendURL, "/"); u != "" {
+				return u
+			}
+		}
+	}
+	if u := strings.TrimRight(viper.GetString("FRONTEND_URL"), "/"); u != "" {
+		return u
+	}
+	return "http://localhost:8080"
 }

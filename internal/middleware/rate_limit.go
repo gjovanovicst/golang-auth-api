@@ -492,3 +492,27 @@ func OIDCUserInfoRateLimit() gin.HandlerFunc {
 		Window:      60 * time.Second,
 	})
 }
+
+// OIDCIntrospectRateLimit — 30 requests/min per IP on the introspect endpoint.
+// Prevents token fishing via repeated introspection probes.
+func OIDCIntrospectRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "oidc:introspect",
+		MaxAttempts:      30,
+		Window:           60 * time.Second,
+		LockoutThreshold: 60,
+		LockoutDuration:  5 * time.Minute,
+	})
+}
+
+// OIDCRevokeRateLimit — 10 requests/min per IP on the revoke endpoint.
+// Protects against mass token revocation abuse.
+func OIDCRevokeRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "oidc:revoke",
+		MaxAttempts:      10,
+		Window:           60 * time.Second,
+		LockoutThreshold: 20,
+		LockoutDuration:  15 * time.Minute,
+	})
+}

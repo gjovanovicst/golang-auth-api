@@ -131,6 +131,7 @@ func (h *Handler) CreateApp(c *gin.Context) {
 		TenantID:    tenantID,
 		Name:        req.Name,
 		Description: req.Description,
+		FrontendURL: req.FrontendURL,
 	}
 
 	if err := h.Repo.CreateApp(app); err != nil {
@@ -146,6 +147,7 @@ func (h *Handler) CreateApp(c *gin.Context) {
 			TenantID:    app.TenantID,
 			Name:        app.Name,
 			Description: app.Description,
+			FrontendURL: app.FrontendURL,
 			CreatedAt:   app.CreatedAt,
 			UpdatedAt:   app.UpdatedAt,
 		})
@@ -157,6 +159,7 @@ func (h *Handler) CreateApp(c *gin.Context) {
 		TenantID:    app.TenantID,
 		Name:        app.Name,
 		Description: app.Description,
+		FrontendURL: app.FrontendURL,
 		CreatedAt:   app.CreatedAt,
 		UpdatedAt:   app.UpdatedAt,
 	})
@@ -188,8 +191,60 @@ func (h *Handler) GetAppDetails(c *gin.Context) {
 		TenantID:    app.TenantID,
 		Name:        app.Name,
 		Description: app.Description,
+		FrontendURL: app.FrontendURL,
 		CreatedAt:   app.CreatedAt,
 		UpdatedAt:   app.UpdatedAt,
+	})
+}
+
+// GetAppLoginConfig returns the public login configuration for an application.
+// It exposes only which social providers are enabled and whether OIDC/SSO is available.
+// No secrets are included. No authentication is required.
+// @Summary Get public login configuration for an app
+// @Description Returns enabled social providers and OIDC availability for the login/register UI
+// @Tags Public
+// @Produce json
+// @Param   app_id   path      string  true  "Application UUID"
+// @Success 200 {object} dto.AppLoginConfigResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Router /app-config/{app_id} [get]
+func (h *Handler) GetAppLoginConfig(c *gin.Context) {
+	appIDStr := c.Param("app_id")
+	_, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid app_id: must be a UUID"})
+		return
+	}
+
+	app, err := h.Repo.GetAppByID(appIDStr)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "Application not found"})
+		return
+	}
+
+	providers, err := h.Repo.GetEnabledOAuthProviders(appIDStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to retrieve provider config"})
+		return
+	}
+	if providers == nil {
+		providers = []string{}
+	}
+
+	hasClients, err := h.Repo.HasActiveOIDCClients(appIDStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to retrieve OIDC client config"})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.AppLoginConfigResponse{
+		AppID:                  appIDStr,
+		EnabledSocialProviders: providers,
+		OIDCEnabled:            app.OIDCEnabled,
+		HasOIDCClients:         hasClients,
+		MagicLinkEnabled:       app.MagicLinkEnabled,
+		PasskeyLoginEnabled:    app.PasskeyLoginEnabled,
 	})
 }
 

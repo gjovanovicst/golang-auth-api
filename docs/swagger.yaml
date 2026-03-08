@@ -56,6 +56,24 @@ definitions:
       user_id:
         type: string
     type: object
+  dto.AppLoginConfigResponse:
+    properties:
+      app_id:
+        type: string
+      enabled_social_providers:
+        description: e.g. ["google","github"]
+        items:
+          type: string
+        type: array
+      has_oidc_clients:
+        type: boolean
+      magic_link_enabled:
+        type: boolean
+      oidc_enabled:
+        type: boolean
+      passkey_login_enabled:
+        type: boolean
+    type: object
   dto.AppResponse:
     properties:
       created_at:
@@ -4010,6 +4028,34 @@ paths:
       summary: Toggle webhook endpoint active state (admin)
       tags:
       - Webhooks
+  /app-config/{app_id}:
+    get:
+      description: Returns enabled social providers and OIDC availability for the
+        login/register UI
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AppLoginConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get public login configuration for an app
+      tags:
+      - Public
   /app/{id}/webhooks:
     get:
       description: Returns all webhook endpoints for this application

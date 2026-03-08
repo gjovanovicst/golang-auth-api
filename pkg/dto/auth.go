@@ -186,6 +186,7 @@ type MagicLinkRequest struct {
 // MagicLinkVerifyRequest represents the request payload for verifying a magic link token
 type MagicLinkVerifyRequest struct {
 	Token string `json:"token" validate:"required"` // #nosec G101 -- This is a DTO field, not a hardcoded credential
+	AppID string `json:"app_id"`                    // optional: overrides the X-App-ID header for multi-app token disambiguation
 }
 
 // AccountLockedResponse represents the response when a user's account is locked

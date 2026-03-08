@@ -116,6 +116,12 @@
                             <div class="form-text">Allow users to sign in via a one-time link sent to their email address. Skips 2FA verification.</div>
                         </div>
                     </div>
+                    <div class="col-md-6">
+                        <label for="appFrontendURL" class="form-label small text-muted">Frontend URL</label>
+                        <input type="text" class="form-control" id="appFrontendURL" name="frontend_url"
+                               value="{{.FrontendURL}}" placeholder="https://app.example.com">
+                        <div class="form-text">Base URL of the frontend app. Used for email verification, password reset, and magic link URLs. Falls back to the global <code>FRONTEND_URL</code> env var if empty.</div>
+                    </div>
                 </div>
             </div>
 

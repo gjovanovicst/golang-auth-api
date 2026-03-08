@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gjovanovicst/auth_api/internal/redis"
@@ -28,6 +29,11 @@ type RoleLookupFunc func(appID, userID string) ([]string, error)
 type Service struct {
 	repo       *Repository
 	roleLookup RoleLookupFunc
+
+	// keyMu protects the check-and-generate pattern in GetOrCreateRSAKey to
+	// prevent a race where two concurrent requests for a new app both generate
+	// different RSA keys and one is silently discarded.
+	keyMu sync.Mutex
 }
 
 // NewService constructs the OIDC Service.
@@ -39,12 +45,31 @@ func NewService(repo *Repository, roleLookup RoleLookupFunc) *Service {
 
 // GetOrCreateRSAKey returns the RSA private key for the given application.
 // If the application does not yet have a key, one is generated and persisted.
+// A mutex prevents a race where two concurrent requests simultaneously find
+// an empty key and both attempt to generate + persist one.
 func (s *Service) GetOrCreateRSAKey(appID uuid.UUID) (*rsa.PrivateKey, error) {
+	// Fast path: read without the lock first.
 	app, err := s.repo.GetApplication(appID)
 	if err != nil {
 		return nil, fmt.Errorf("get application: %w", err)
 	}
+	if app.OIDCRSAPrivateKey != "" {
+		key, err := PEMToPrivateKey(app.OIDCRSAPrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("parse stored rsa key: %w", err)
+		}
+		return key, nil
+	}
 
+	// Slow path: key does not exist — acquire lock and re-check.
+	s.keyMu.Lock()
+	defer s.keyMu.Unlock()
+
+	// Re-read after acquiring lock (another goroutine may have created it).
+	app, err = s.repo.GetApplication(appID)
+	if err != nil {
+		return nil, fmt.Errorf("get application (locked): %w", err)
+	}
 	if app.OIDCRSAPrivateKey != "" {
 		key, err := PEMToPrivateKey(app.OIDCRSAPrivateKey)
 		if err != nil {
@@ -190,7 +215,7 @@ func (s *Service) RotateClientSecret(id uuid.UUID) (*models.OIDCClient, string, 
 
 // ValidateAuthRequest validates the authorization request parameters and returns
 // the client record. It does NOT yet issue a code or redirect.
-func (s *Service) ValidateAuthRequest(clientID, redirectURI, responseType string, scopes []string) (*models.OIDCClient, error) {
+func (s *Service) ValidateAuthRequest(clientID, redirectURI, responseType string, scopes []string, codeChallenge string) (*models.OIDCClient, error) {
 	client, err := s.repo.GetClientByClientID(clientID)
 	if err != nil {
 		if isNotFound(err) {
@@ -209,6 +234,16 @@ func (s *Service) ValidateAuthRequest(clientID, redirectURI, responseType string
 	}
 	if !containsScope(client.AllowedScopes, "openid") || !sliceContains(scopes, "openid") {
 		return nil, fmt.Errorf("scope must include 'openid'")
+	}
+	// Fix #5: Reject any scope the client is not allowed to request.
+	for _, requestedScope := range scopes {
+		if !containsScope(client.AllowedScopes, requestedScope) {
+			return nil, fmt.Errorf("scope %q is not allowed for this client", requestedScope)
+		}
+	}
+	// Fix #13: Require PKCE for public (non-confidential) clients.
+	if !client.IsConfidential && codeChallenge == "" {
+		return nil, fmt.Errorf("code_challenge required for public clients")
 	}
 	return client, nil
 }
@@ -314,6 +349,12 @@ func (s *Service) MintTokensForUser(app *models.Application, client *models.OIDC
 		return "", "", "", 0, fmt.Errorf("create session: %w", err)
 	}
 
+	// Fix #3: Persist granted scopes in Redis so GetGrantedScopes can return
+	// the exact scopes without relying on a Roles-length heuristic.
+	if err := redis.SetOIDCGrantedScopes(app.ID.String(), sessionID, strings.Join(scopes, " "), sessionTTL); err != nil {
+		log.Printf("[OIDC] MintTokensForUser: failed to store granted scopes: %v", err)
+	}
+
 	// RS256 ID token
 	rsaKey, err := s.GetOrCreateRSAKey(app.ID)
 	if err != nil {
@@ -327,15 +368,16 @@ func (s *Service) MintTokensForUser(app *models.Application, client *models.OIDC
 		ttlSec = 3600
 	}
 	idToken, err = MintIDToken(MintIDTokenParams{
-		Issuer:   s.IssuerURL(app),
-		Audience: client.ClientID,
-		User:     user,
-		Roles:    roles,
-		Scopes:   scopes,
-		Nonce:    nonce,
-		TTL:      time.Duration(ttlSec) * time.Second,
-		Kid:      app.ID.String(),
-		Key:      rsaKey,
+		Issuer:      s.IssuerURL(app),
+		Audience:    client.ClientID,
+		User:        user,
+		Roles:       roles,
+		Scopes:      scopes,
+		Nonce:       nonce,
+		AccessToken: accessToken, // Fix #1: supply access token so at_hash is computed
+		TTL:         time.Duration(ttlSec) * time.Second,
+		Kid:         app.ID.String(),
+		Key:         rsaKey,
 	})
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("mint id token: %w", err)
@@ -375,6 +417,15 @@ func (s *Service) ClientCredentialsGrant(app *models.Application, clientID, clie
 	if err != nil {
 		return "", 0, fmt.Errorf("generate access token: %w", err)
 	}
+	// Fix #9: Persist session in Redis so SessionExists checks in AuthMiddleware pass.
+	sessionTTL := time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS"))
+	if sessionTTL <= 0 {
+		sessionTTL = 720 * time.Hour
+	}
+	if err := redis.CreateSession(app.ID.String(), sessionID, client.ID.String(), "", "", "", sessionTTL); err != nil {
+		log.Printf("[OIDC] ClientCredentialsGrant: failed to create Redis session: %v", err)
+	}
+
 	accessTTL := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES") * 60
 	if accessTTL <= 0 {
 		accessTTL = 900
@@ -425,11 +476,31 @@ func isNotFound(err error) bool {
 	return err == gorm.ErrRecordNotFound
 }
 
+// isRedirectURIAllowed checks whether redirectURI exactly matches one of the
+// URIs in the stored JSON array string (e.g. ["https://app.example.com/cb"]).
+// Fix #2: Replaced insecure strings.Contains with exact string matching to prevent
+// open-redirect bypass attacks (e.g. https://evil.com?x=https://allowed.com).
 func isRedirectURIAllowed(allowedJSON, redirectURI string) bool {
-	// Simple contains check — the stored value is a JSON array string
-	return strings.Contains(allowedJSON, redirectURI)
+	if allowedJSON == "" || redirectURI == "" {
+		return false
+	}
+	// The stored value is a JSON array: ["uri1","uri2",...]
+	// Strip brackets, split on commas, trim JSON double-quotes.
+	s := strings.TrimSpace(allowedJSON)
+	if len(s) >= 2 && s[0] == '[' && s[len(s)-1] == ']' {
+		inner := s[1 : len(s)-1]
+		for _, part := range strings.Split(inner, ",") {
+			uri := strings.TrimSpace(part)
+			uri = strings.Trim(uri, "\"")
+			if uri == redirectURI {
+				return true
+			}
+		}
+		return false
+	}
+	// Fallback: treat as a single plain URI.
+	return strings.TrimSpace(s) == redirectURI
 }
-
 func containsScope(allowedCSV, scope string) bool {
 	for _, s := range strings.Split(allowedCSV, ",") {
 		if strings.TrimSpace(s) == scope {
@@ -458,6 +529,9 @@ func sliceContains(slice []string, val string) bool {
 }
 
 // verifyPKCE checks a PKCE code_verifier against a stored code_challenge (RFC 7636).
+// Fix #7: Only S256 is accepted — plain is explicitly rejected because it
+// provides no security benefit and is absent from the discovery document's
+// code_challenge_methods_supported list.
 func verifyPKCE(challenge, method, verifier string) bool {
 	switch strings.ToUpper(method) {
 	case "S256":
@@ -465,7 +539,40 @@ func verifyPKCE(challenge, method, verifier string) bool {
 		computed := base64.RawURLEncoding.EncodeToString(h[:])
 		return computed == challenge
 	default:
-		// plain (discouraged but spec-compliant)
-		return verifier == challenge
+		// Reject plain and any other unknown method.
+		return false
 	}
+}
+
+// IsRedirectURIAllowed is the exported form of isRedirectURIAllowed,
+// exposed so the Handler can call it for EndSession post_logout_redirect_uri validation.
+func (s *Service) IsRedirectURIAllowed(allowedJSON, redirectURI string) bool {
+	return isRedirectURIAllowed(allowedJSON, redirectURI)
+}
+
+// GetGrantedScopes resolves the scopes that were granted when the access token
+// was issued. It first looks up the scopes stored in Redis alongside the session
+// (set by MintTokensForUser). If not found (e.g. legacy tokens), it falls back
+// to returning the provided fallback list minus the "roles" scope when the token
+// carries no roles — preventing a silent roles-claim leak for role-less users.
+//
+// Fix #3: The previous heuristic (len(claims.Roles) == 0 → suppress roles)
+// was wrong because a user with no assigned roles would never receive the roles
+// claim even when the roles scope was legitimately requested.
+func (s *Service) GetGrantedScopes(bearerToken string, fallback []string) ([]string, error) {
+	claims, err := pkgjwt.ParseToken(bearerToken)
+	if err != nil {
+		return nil, fmt.Errorf("invalid_token")
+	}
+
+	// Prefer the authoritative Redis-stored granted scopes.
+	if claims.SessionID != "" && claims.AppID != "" {
+		scopeStr, err := redis.GetOIDCGrantedScopes(claims.AppID, claims.SessionID)
+		if err == nil && scopeStr != "" {
+			return strings.Fields(scopeStr), nil
+		}
+	}
+
+	// Fallback: return all standard scopes (legacy tokens without stored scopes).
+	return fallback, nil
 }

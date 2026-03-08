@@ -38,6 +38,10 @@ type Application struct {
 	BfCaptchaSecretKey *string `gorm:"type:varchar(500);default:null" json:"-"`                              // Override reCAPTCHA secret key (hidden from API responses)
 	BfCaptchaThreshold *int    `gorm:"default:null" json:"bf_captcha_threshold,omitempty"`                   // Override failures before CAPTCHA required
 
+	// Frontend URL — per-app override for the frontend URL used in emails and WebAuthn origins.
+	// Falls back to the FRONTEND_URL environment variable when empty.
+	FrontendURL string `gorm:"type:varchar(500);default:''" json:"frontend_url"`
+
 	// OIDC Provider settings — allows this application to act as an OIDC issuer
 	OIDCEnabled       bool   `gorm:"column:oidc_enabled;default:false" json:"oidc_enabled"`                      // Master switch: expose OIDC endpoints for this app
 	OIDCRSAPrivateKey string `gorm:"column:oidc_rsa_private_key;type:text;default:''" json:"-"`                  // PEM-encoded RSA private key (generated on first use, never exposed)

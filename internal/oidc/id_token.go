@@ -2,6 +2,8 @@ package oidc
 
 import (
 	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -15,7 +17,7 @@ import (
 type IDTokenClaims struct {
 	// Standard OIDC claims
 	Nonce  string `json:"nonce,omitempty"`
-	AtHash string `json:"at_hash,omitempty"` // Access token hash (optional)
+	AtHash string `json:"at_hash,omitempty"` // Access token hash (OIDC Core §3.3.2.11)
 
 	// profile scope claims
 	Name       string `json:"name,omitempty"`
@@ -36,15 +38,25 @@ type IDTokenClaims struct {
 
 // MintIDTokenParams carries everything needed to create an ID token.
 type MintIDTokenParams struct {
-	Issuer   string          // e.g. "https://auth.example.com/oidc/<app_id>"
-	Audience string          // client_id of the relying party
-	User     *models.User    // end user
-	Roles    []string        // user's role names in this app (may be nil)
-	Scopes   []string        // granted scopes (controls which claims to include)
-	Nonce    string          // from the original authorization request
-	TTL      time.Duration   // ID token lifetime
-	Kid      string          // RSA key identifier (app UUID)
-	Key      *rsa.PrivateKey // RSA signing key
+	Issuer      string          // e.g. "https://auth.example.com/oidc/<app_id>"
+	Audience    string          // client_id of the relying party
+	User        *models.User    // end user
+	Roles       []string        // user's role names in this app (may be nil)
+	Scopes      []string        // granted scopes (controls which claims to include)
+	Nonce       string          // from the original authorization request
+	AccessToken string          // HS256 access token — used to compute at_hash (may be empty)
+	TTL         time.Duration   // ID token lifetime
+	Kid         string          // RSA key identifier (app UUID)
+	Key         *rsa.PrivateKey // RSA signing key
+}
+
+// computeAtHash computes the at_hash claim value for a given access token.
+// Per OIDC Core §3.3.2.11: SHA-256 the ASCII representation, take the left half,
+// then base64url-encode without padding.
+func computeAtHash(accessToken string) string {
+	h := sha256.Sum256([]byte(accessToken))
+	half := h[:len(h)/2]
+	return base64.RawURLEncoding.EncodeToString(half)
 }
 
 // MintIDToken signs and returns a new RS256 ID token.
@@ -60,6 +72,11 @@ func MintIDToken(p MintIDTokenParams) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(now.Add(p.TTL)),
 		},
 		Nonce: p.Nonce,
+	}
+
+	// Compute at_hash when an access token is provided (OIDC Core §3.3.2.11).
+	if p.AccessToken != "" {
+		claims.AtHash = computeAtHash(p.AccessToken)
 	}
 
 	scopeSet := make(map[string]bool, len(p.Scopes))

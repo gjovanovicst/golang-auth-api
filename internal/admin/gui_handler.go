@@ -508,6 +508,7 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		ID                  string
 		Name                string
 		Description         string
+		FrontendURL         string
 		TenantID            string
 		TwoFAIssuerName     string
 		TwoFAEnabled        bool
@@ -561,6 +562,7 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 func (h *GUIHandler) AppCreate(c *gin.Context) {
 	name := strings.TrimSpace(c.PostForm("name"))
 	description := strings.TrimSpace(c.PostForm("description"))
+	frontendURL := strings.TrimSpace(c.PostForm("frontend_url"))
 	tenantID := c.PostForm("tenant_id")
 	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
 	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
@@ -591,6 +593,7 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 		TenantID:            parsedTenantID,
 		Name:                name,
 		Description:         description,
+		FrontendURL:         frontendURL,
 		TwoFAIssuerName:     twoFAIssuerName,
 		TwoFAEnabled:        twoFAEnabled,
 		TwoFARequired:       twoFARequired,
@@ -683,6 +686,7 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		ID                  string
 		Name                string
 		Description         string
+		FrontendURL         string
 		TenantID            string
 		TwoFAIssuerName     string
 		TwoFAEnabled        bool
@@ -716,6 +720,7 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		ID:                  app.ID.String(),
 		Name:                app.Name,
 		Description:         app.Description,
+		FrontendURL:         app.FrontendURL,
 		TenantID:            app.TenantID.String(),
 		TwoFAIssuerName:     app.TwoFAIssuerName,
 		TwoFAEnabled:        app.TwoFAEnabled,
@@ -806,6 +811,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	id := c.Param("id")
 	name := strings.TrimSpace(c.PostForm("name"))
 	description := strings.TrimSpace(c.PostForm("description"))
+	frontendURL := strings.TrimSpace(c.PostForm("frontend_url"))
 	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
 	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
 	twoFARequired := c.PostForm("two_fa_required") == "on"
@@ -874,7 +880,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	}
 	// If override toggles are off, all bf fields remain nil -> clears overrides in DB
 
-	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, bf); err != nil {
+	if err := h.Repo.UpdateApp(id, name, description, frontendURL, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, bf); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return

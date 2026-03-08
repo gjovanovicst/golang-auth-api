@@ -823,3 +823,50 @@ func ResetDelayTier(appID, identifier string) error {
 	key := fmt.Sprintf("app:%s:delay_tier:%s", appID, identifier)
 	return Rdb.Del(ctx, key).Err()
 }
+
+// ─── OIDC browser session (login cookie) ───────────────────────────────────────
+
+// SetOIDCBrowserSession stores an opaque session token → userID mapping used by
+// the OIDC login cookie. The token is a random value, never the user UUID.
+func SetOIDCBrowserSession(appID, sessionToken, userID string, ttl time.Duration) error {
+	key := fmt.Sprintf("app:%s:oidc_browser:%s", appID, sessionToken)
+	return Rdb.Set(ctx, key, userID, ttl).Err()
+}
+
+// GetOIDCBrowserSession resolves an opaque OIDC browser session token to a userID.
+// Returns ("", nil) when the session does not exist.
+func GetOIDCBrowserSession(appID, sessionToken string) (string, error) {
+	key := fmt.Sprintf("app:%s:oidc_browser:%s", appID, sessionToken)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	return val, err
+}
+
+// DeleteOIDCBrowserSession removes the OIDC browser session (e.g. on logout).
+func DeleteOIDCBrowserSession(appID, sessionToken string) error {
+	key := fmt.Sprintf("app:%s:oidc_browser:%s", appID, sessionToken)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ─── OIDC granted scopes (per session) ─────────────────────────────────────────
+
+// SetOIDCGrantedScopes stores the space-separated scopes that were granted for
+// a given OIDC session. Used by the UserInfo endpoint to gate which claims are
+// returned without embedding scopes in the JWT itself.
+func SetOIDCGrantedScopes(appID, sessionID, scopes string, ttl time.Duration) error {
+	key := fmt.Sprintf("app:%s:oidc_scopes:%s", appID, sessionID)
+	return Rdb.Set(ctx, key, scopes, ttl).Err()
+}
+
+// GetOIDCGrantedScopes retrieves the space-separated scopes for an OIDC session.
+// Returns ("", nil) when not found (e.g. token issued before this feature).
+func GetOIDCGrantedScopes(appID, sessionID string) (string, error) {
+	key := fmt.Sprintf("app:%s:oidc_scopes:%s", appID, sessionID)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	return val, err
+}

@@ -272,10 +272,11 @@ type BruteForceAppSettings struct {
 	CaptchaThreshold *int
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, bf BruteForceAppSettings) error {
+func (r *Repository) UpdateApp(id string, name string, description string, frontendURL string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, bf BruteForceAppSettings) error {
 	updates := map[string]interface{}{
 		"name":                  name,
 		"description":           description,
+		"frontend_url":          frontendURL,
 		"two_fa_issuer_name":    twoFAIssuerName,
 		"two_fa_enabled":        twoFAEnabled,
 		"two_fa_required":       twoFARequired,
@@ -453,6 +454,32 @@ func (r *Repository) ToggleOAuthConfigEnabled(id string) (*models.OAuthProviderC
 		return nil, err
 	}
 	return &config, nil
+}
+
+// GetEnabledOAuthProviders returns the provider names (e.g. "google", "github") that
+// are configured and enabled for the given app. Used by the public /app-config endpoint.
+func (r *Repository) GetEnabledOAuthProviders(appID string) ([]string, error) {
+	var providers []string
+	err := r.DB.Model(&models.OAuthProviderConfig{}).
+		Where("app_id = ? AND is_enabled = true", appID).
+		Pluck("provider", &providers).Error
+	if err != nil {
+		return nil, err
+	}
+	return providers, nil
+}
+
+// HasActiveOIDCClients returns true if at least one active OIDC client exists for
+// the given app. Used by the public /app-config endpoint.
+func (r *Repository) HasActiveOIDCClients(appID string) (bool, error) {
+	var count int64
+	err := r.DB.Model(&models.OIDCClient{}).
+		Where("app_id = ? AND is_active = true", appID).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // AppWithTenant holds an application ID, name, and its tenant name for dropdown selects.

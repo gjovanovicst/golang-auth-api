@@ -1087,6 +1087,15 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
+	// Allow the request body to supply an explicit app_id, overriding the header-sourced value.
+	// This ensures magic link tokens are looked up under the correct app even when the user
+	// clicks a link for app B while the frontend is set to app A (multi-app scenario).
+	if req.AppID != "" {
+		if parsed, err := uuid.Parse(req.AppID); err == nil {
+			appID = parsed
+		}
+	}
+
 	ipAddress, userAgent := util.GetClientInfo(c)
 
 	// Check IP-based access rules before processing magic link

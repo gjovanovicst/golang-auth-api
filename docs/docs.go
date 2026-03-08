@@ -3969,6 +3969,47 @@ const docTemplate = `{
                 }
             }
         },
+        "/app-config/{app_id}": {
+            "get": {
+                "description": "Returns enabled social providers and OIDC availability for the login/register UI",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Public"
+                ],
+                "summary": "Get public login configuration for an app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Application UUID",
+                        "name": "app_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AppLoginConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/app/{id}/webhooks": {
             "get": {
                 "security": [
@@ -6611,6 +6652,33 @@ const docTemplate = `{
                 },
                 "user_id": {
                     "type": "string"
+                }
+            }
+        },
+        "dto.AppLoginConfigResponse": {
+            "type": "object",
+            "properties": {
+                "app_id": {
+                    "type": "string"
+                },
+                "enabled_social_providers": {
+                    "description": "e.g. [\"google\",\"github\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "has_oidc_clients": {
+                    "type": "boolean"
+                },
+                "magic_link_enabled": {
+                    "type": "boolean"
+                },
+                "oidc_enabled": {
+                    "type": "boolean"
+                },
+                "passkey_login_enabled": {
+                    "type": "boolean"
                 }
             }
         },

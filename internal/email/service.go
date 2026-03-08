@@ -6,7 +6,6 @@ import (
 
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
@@ -78,10 +77,7 @@ func (s *Service) SendEmailWithContext(appID uuid.UUID, emailTypeCode string, to
 // SendVerificationEmail sends an email verification email.
 // The userID parameter enables auto-population of user profile variables in the template.
 func (s *Service) SendVerificationEmail(appID uuid.UUID, toEmail, token string, userID *uuid.UUID) error {
-	frontendURL := viper.GetString("FRONTEND_URL")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:8080"
-	}
+	frontendURL := s.resolver.resolveAppFrontendURL(appID)
 	verificationLink := fmt.Sprintf("%s/verify-email?token=%s", frontendURL, token)
 
 	return s.SendEmailWithContext(appID, TypeEmailVerification, toEmail, userID, map[string]string{

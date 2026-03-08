@@ -24,6 +24,7 @@ type CreateAppRequest struct {
 	TenantID         string `json:"tenant_id" binding:"required"`
 	Name             string `json:"name" binding:"required"`
 	Description      string `json:"description"`
+	FrontendURL      string `json:"frontend_url"`
 	MagicLinkEnabled bool   `json:"magic_link_enabled"`
 }
 
@@ -33,6 +34,7 @@ type AppResponse struct {
 	TenantID    uuid.UUID `json:"tenant_id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
+	FrontendURL string    `json:"frontend_url"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -55,4 +57,15 @@ type OAuthConfigResponse struct {
 	IsEnabled   bool      `json:"is_enabled"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// AppLoginConfigResponse is the public response for GET /app-config/:app_id.
+// It exposes only the information the login/register UI needs — no secrets.
+type AppLoginConfigResponse struct {
+	AppID                  string   `json:"app_id"`
+	EnabledSocialProviders []string `json:"enabled_social_providers"` // e.g. ["google","github"]
+	OIDCEnabled            bool     `json:"oidc_enabled"`
+	HasOIDCClients         bool     `json:"has_oidc_clients"`
+	MagicLinkEnabled       bool     `json:"magic_link_enabled"`
+	PasskeyLoginEnabled    bool     `json:"passkey_login_enabled"`
 }

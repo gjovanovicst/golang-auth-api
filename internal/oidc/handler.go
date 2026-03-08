@@ -1,11 +1,15 @@
 package oidc
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,7 +130,7 @@ func (h *Handler) Authorize(c *gin.Context) {
 	}
 
 	scopes := strings.Fields(req.Scope)
-	client, err := h.Service.ValidateAuthRequest(req.ClientID, req.RedirectURI, req.ResponseType, scopes)
+	client, err := h.Service.ValidateAuthRequest(req.ClientID, req.RedirectURI, req.ResponseType, scopes, req.CodeChallenge)
 	if err != nil {
 		h.renderError(c, app, err.Error())
 		return
@@ -413,17 +417,52 @@ func (h *Handler) handleRefreshTokenGrant(c *gin.Context, app *models.Applicatio
 		return
 	}
 
+	// Fix #12: Enforce that this token is actually a refresh token
+	if claims.TokenType != pkgjwt.TokenTypeRefresh {
+		c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{Error: "invalid_grant", ErrorDescription: "token is not a refresh token"})
+		return
+	}
+
+	// Fix #7: Blacklist the old refresh token so it cannot be reused
+	if claims.ExpiresAt != nil {
+		if ttl := time.Until(claims.ExpiresAt.Time); ttl > 0 {
+			_ = redis.BlacklistAccessToken(app.ID.String(), req.RefreshToken, claims.UserID, ttl)
+		}
+	}
+
 	user, err := h.Repo.GetUserByID(claims.UserID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{Error: "invalid_grant", ErrorDescription: "user not found"})
 		return
 	}
 
-	scopes := strings.Fields(req.Scope)
-	if len(scopes) == 0 {
-		scopes = []string{"openid", "profile", "email"}
+	// Fix #4: Validate that the requested scopes are a subset of the originally
+	// granted scopes. Look up the granted scopes from Redis using the session ID
+	// embedded in the refresh token claims.
+	originalScopeStr, _ := redis.GetOIDCGrantedScopes(app.ID.String(), claims.SessionID)
+	originalScopes := strings.Fields(originalScopeStr)
+
+	requestedScopes := strings.Fields(req.Scope)
+	if len(requestedScopes) == 0 {
+		// No scope requested — default to what was originally granted.
+		requestedScopes = originalScopes
+		if len(requestedScopes) == 0 {
+			requestedScopes = []string{"openid", "profile", "email"}
+		}
+	} else if len(originalScopes) > 0 {
+		// Ensure every requested scope was in the original grant.
+		for _, s := range requestedScopes {
+			if !sliceContains(originalScopes, s) {
+				c.JSON(http.StatusBadRequest, dto.OIDCTokenErrorResponse{
+					Error:            "invalid_scope",
+					ErrorDescription: fmt.Sprintf("scope %q was not granted in the original authorization", s),
+				})
+				return
+			}
+		}
 	}
-	accessToken, refreshToken, idToken, expiresIn, err := h.Service.MintTokensForUser(app, client, user, scopes, "")
+
+	accessToken, refreshToken, idToken, expiresIn, err := h.Service.MintTokensForUser(app, client, user, requestedScopes, "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.OIDCTokenErrorResponse{Error: "server_error", ErrorDescription: "failed to mint tokens"})
 		return
@@ -434,7 +473,7 @@ func (h *Handler) handleRefreshTokenGrant(c *gin.Context, app *models.Applicatio
 		ExpiresIn:    expiresIn,
 		IDToken:      idToken,
 		RefreshToken: refreshToken,
-		Scope:        req.Scope,
+		Scope:        strings.Join(requestedScopes, " "),
 	})
 }
 
@@ -464,14 +503,24 @@ func (h *Handler) UserInfo(c *gin.Context) {
 		return
 	}
 
-	scopes := []string{"openid", "profile", "email", "roles"}
+	scopes, err := h.Service.GetGrantedScopes(bearer, []string{"openid", "profile", "email", "roles"})
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
 	user, err := h.Service.GetUserInfo(app, bearer, scopes)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
 
-	roles, _ := h.Service.roleLookup(app.ID.String(), user.ID.String())
+	// Fix #11: Only include roles in the UserInfo response when the 'roles'
+	// scope was part of the original grant. This prevents leaking role
+	// information to clients that never requested it.
+	var roleNames []string
+	if sliceContains(scopes, "roles") {
+		roleNames, _ = h.Service.roleLookup(app.ID.String(), user.ID.String())
+	}
 	resp := dto.OIDCUserInfoResponse{
 		Sub:           user.ID.String(),
 		Name:          user.Name,
@@ -481,7 +530,7 @@ func (h *Handler) UserInfo(c *gin.Context) {
 		Email:         user.Email,
 		EmailVerified: user.EmailVerified,
 		Locale:        user.Locale,
-		Roles:         roles,
+		Roles:         roleNames,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -530,11 +579,17 @@ func (h *Handler) Introspect(c *gin.Context) {
 		return
 	}
 
+	// Fix #6: Reflect the actual token type from the JWT claims rather than
+	// hardcoding "Bearer" — a refresh token and an access token are distinct types.
+	tokenType := claims.TokenType
+	if tokenType == "" {
+		tokenType = "Bearer"
+	}
 	resp := dto.OIDCIntrospectResponse{
 		Active:    true,
 		Sub:       claims.UserID,
 		Iss:       h.Service.IssuerURL(app),
-		TokenType: "Bearer",
+		TokenType: tokenType,
 	}
 	if claims.ExpiresAt != nil {
 		resp.Exp = claims.ExpiresAt.Unix()
@@ -643,19 +698,59 @@ func (h *Handler) EndSession(c *gin.Context) {
 		state = c.PostForm("state")
 	}
 
-	// Clear the OIDC session cookie for this app.
-	c.SetCookie("oidc_session_"+app.ID.String(), "", -1, "/", "", false, true)
+	// Fix #8: Validate id_token_hint — parse the ID token (RS256) and verify it
+	// belongs to a real user in this application before honouring the logout.
+	idTokenHint := c.Query("id_token_hint")
+	if idTokenHint == "" {
+		idTokenHint = c.PostForm("id_token_hint")
+	}
+	if idTokenHint != "" {
+		rsaKey, err := h.Service.GetOrCreateRSAKey(app.ID)
+		if err == nil {
+			idClaims, err := ParseIDToken(idTokenHint, rsaKey)
+			if err != nil || idClaims == nil {
+				// Hint present but invalid — reject rather than silently ignore.
+				h.renderError(c, app, "invalid id_token_hint")
+				return
+			}
+			// Confirm the subject belongs to this application.
+			if _, err := h.Repo.GetUserByID(idClaims.Subject); err != nil {
+				h.renderError(c, app, "id_token_hint refers to an unknown user")
+				return
+			}
+		}
+	}
+
+	// Clear the OIDC session cookie and remove the Redis mapping.
+	cookieName := "oidc_session_" + app.ID.String()
+	sessionToken, cookieErr := c.Cookie(cookieName)
+	c.SetCookie(cookieName, "", -1, "/", "", false, true)
+	if cookieErr == nil && sessionToken != "" {
+		_ = redis.DeleteOIDCBrowserSession(app.ID.String(), sessionToken)
+	}
 
 	if postLogoutRedirectURI != "" {
-		u, err := url.Parse(postLogoutRedirectURI)
-		if err == nil {
-			if state != "" {
-				q := u.Query()
-				q.Set("state", state)
-				u.RawQuery = q.Encode()
+		// Fix #14: Validate post_logout_redirect_uri against registered client redirect URIs
+		allowed := false
+		if clients, err := h.Repo.ListClientsByApp(app.ID); err == nil {
+			for i := range clients {
+				if h.Service.IsRedirectURIAllowed(clients[i].RedirectURIs, postLogoutRedirectURI) {
+					allowed = true
+					break
+				}
 			}
-			c.Redirect(http.StatusFound, u.String())
-			return
+		}
+		if allowed {
+			u, err := url.Parse(postLogoutRedirectURI)
+			if err == nil {
+				if state != "" {
+					q := u.Query()
+					q.Set("state", state)
+					u.RawQuery = q.Encode()
+				}
+				c.Redirect(http.StatusFound, u.String())
+				return
+			}
 		}
 	}
 
@@ -859,7 +954,6 @@ func (h *Handler) renderError(c *gin.Context, app *models.Application, msg strin
 // stored in a hidden form field. This avoids storing state server-side.
 // Simple implementation: hex-encoded random bytes + base64 of the request params.
 func (h *Handler) buildConsentToken(appID uuid.UUID, req dto.OIDCAuthorizeRequest) string {
-	// Store the essential params as a URL-encoded string, then hex-encode it
 	v := url.Values{}
 	v.Set("app_id", appID.String())
 	v.Set("client_id", req.ClientID)
@@ -870,24 +964,49 @@ func (h *Handler) buildConsentToken(appID uuid.UUID, req dto.OIDCAuthorizeReques
 	v.Set("code_challenge", req.CodeChallenge)
 	v.Set("code_challenge_method", req.CodeChallengeMethod)
 	// Add a random nonce to prevent replay
-	nonce := make([]byte, 8)
-	_, _ = rand.Read(nonce)
-	v.Set("_r", hex.EncodeToString(nonce))
-	// TTL embedded
-	v.Set("_exp", fmt.Sprintf("%d", time.Now().Add(10*time.Minute).Unix()))
-	return hex.EncodeToString([]byte(v.Encode()))
+	rnd := make([]byte, 8)
+	_, _ = rand.Read(rnd)
+	v.Set("_r", hex.EncodeToString(rnd))
+	// Embed expiry
+	v.Set("_exp", strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10))
+	payload := v.Encode()
+	mac := hmac.New(sha256.New, []byte(viper.GetString("JWT_SECRET")))
+	mac.Write([]byte(payload))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return payload + "." + sig
 }
 
 // parseConsentToken decodes a consent token back to an OIDCAuthorizeRequest.
 func (h *Handler) parseConsentToken(token string) (*dto.OIDCAuthorizeRequest, error) {
-	raw, err := hex.DecodeString(token)
-	if err != nil {
-		return nil, fmt.Errorf("invalid token encoding")
+	// Split on the last dot: payload.signature
+	dotIdx := strings.LastIndex(token, ".")
+	if dotIdx < 0 {
+		return nil, fmt.Errorf("invalid token format")
 	}
-	v, err := url.ParseQuery(string(raw))
+	payload := token[:dotIdx]
+	gotSig := token[dotIdx+1:]
+
+	// Verify HMAC-SHA256 signature
+	mac := hmac.New(sha256.New, []byte(viper.GetString("JWT_SECRET")))
+	mac.Write([]byte(payload))
+	wantSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(gotSig), []byte(wantSig)) {
+		return nil, fmt.Errorf("invalid token signature")
+	}
+
+	v, err := url.ParseQuery(payload)
 	if err != nil {
 		return nil, fmt.Errorf("invalid token params")
 	}
+
+	// Validate embedded expiry
+	if expStr := v.Get("_exp"); expStr != "" {
+		exp, err := strconv.ParseInt(expStr, 10, 64)
+		if err != nil || time.Now().Unix() > exp {
+			return nil, fmt.Errorf("consent token expired")
+		}
+	}
+
 	return &dto.OIDCAuthorizeRequest{
 		ClientID:            v.Get("client_id"),
 		RedirectURI:         v.Get("redirect_uri"),
@@ -900,6 +1019,8 @@ func (h *Handler) parseConsentToken(token string) (*dto.OIDCAuthorizeRequest, er
 }
 
 // sessionUserID checks the OIDC session cookie for an authenticated user.
+// The cookie holds an opaque random token (not the user UUID) that is resolved
+// via Redis to defend against session fixation / UUID-guessing attacks.
 // Returns empty string if not authenticated.
 func (h *Handler) sessionUserID(c *gin.Context, appID string) string {
 	cookieName := "oidc_session_" + appID
@@ -907,11 +1028,12 @@ func (h *Handler) sessionUserID(c *gin.Context, appID string) string {
 	if err != nil || val == "" {
 		return ""
 	}
-	// The cookie value is a plain user UUID (set by issueCodeAndRedirect after login)
-	if _, err := uuid.Parse(val); err != nil {
+	// Resolve the opaque token to a userID in Redis (Fix #2).
+	userID, err := redis.GetOIDCBrowserSession(appID, val)
+	if err != nil || userID == "" {
 		return ""
 	}
-	return val
+	return userID
 }
 
 // issueCodeAndRedirect creates an auth code for a pre-authenticated user.
@@ -931,9 +1053,27 @@ func (h *Handler) issueCodeAndRedirectForUser(c *gin.Context, app *models.Applic
 		return
 	}
 
-	// Set a short-lived session cookie so the user stays "logged in" across this browser session
+	// Fix #2: Set an opaque random session token as the cookie value (not the
+	// user UUID) and store the userID mapping in Redis to prevent session
+	// fixation / UUID-guessing attacks.
+	const browserSessionTTL = 3600 * time.Second
+	sessionToken := uuid.New().String() // random, unguessable
+	if err := redis.SetOIDCBrowserSession(app.ID.String(), sessionToken, userID, browserSessionTTL); err != nil {
+		// Non-fatal — the code is already issued; the user just won't be
+		// pre-authenticated for the next visit in this browser.
+		sessionToken = ""
+	}
+
 	cookieName := "oidc_session_" + app.ID.String()
-	c.SetCookie(cookieName, userID, 3600, "/", "", false, true)
+	cookieDomain := ""
+	if rawPublicURL := viper.GetString("PUBLIC_URL"); rawPublicURL != "" {
+		if parsed, err := url.Parse(rawPublicURL); err == nil {
+			cookieDomain = parsed.Hostname()
+		}
+	}
+	if sessionToken != "" {
+		c.SetCookie(cookieName, sessionToken, int(browserSessionTTL/time.Second), "/", cookieDomain, strings.HasPrefix(viper.GetString("PUBLIC_URL"), "https://"), true)
+	}
 
 	redirectURL, _ := url.Parse(req.RedirectURI)
 	q := redirectURL.Query()

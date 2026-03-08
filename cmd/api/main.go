@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -80,7 +81,9 @@ func main() {
 	viper.SetDefault("REFRESH_TOKEN_EXPIRATION_HOURS", 720)
 	// OIDC provider configuration
 	viper.SetDefault("OIDC_ENABLED", false)
+	viper.SetDefault("OIDC_DEFAULT_APP_ID", "00000000-0000-0000-0000-000000000001")
 	viper.SetDefault("PUBLIC_URL", "http://localhost:8080")
+	viper.SetDefault("FRONTEND_URL", "http://localhost:5173")
 	viper.SetDefault("OIDC_ID_TOKEN_EXPIRATION_MINUTES", 60)
 	viper.SetDefault("OIDC_AUTH_CODE_EXPIRATION_MINUTES", 10)
 
@@ -188,6 +191,20 @@ func main() {
 		oidcService := oidc.NewService(oidcRepo, rbacService.GetUserRoleNames)
 		oidcHandler = oidc.NewHandler(oidcService, oidcRepo)
 		guiHandler.OIDCService = oidcService
+		// Fix #10: Run an initial cleanup immediately on startup so stale codes
+		// from before the last restart are purged without waiting a full hour.
+		go func() {
+			if err := oidcRepo.DeleteExpiredAuthCodes(); err != nil {
+				log.Printf("[OIDC] startup cleanup of expired auth codes failed: %v", err)
+			}
+			ticker := time.NewTicker(1 * time.Hour)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := oidcRepo.DeleteExpiredAuthCodes(); err != nil {
+					log.Printf("[OIDC] failed to delete expired auth codes: %v", err)
+				}
+			}
+		}()
 	}
 
 	// Wire IP rule evaluator and anomaly detector on login handlers
@@ -282,6 +299,9 @@ func main() {
 		// Magic link passwordless login (public)
 		public.POST("/magic-link/request", middleware.APIMagicLinkRateLimit(), userHandler.RequestMagicLink)
 		public.POST("/magic-link/verify", middleware.APIMagicLinkRateLimit(), userHandler.VerifyMagicLink)
+
+		// Public app login configuration (no auth required — used by login/register UI)
+		public.GET("/app-config/:app_id", adminHandler.GetAppLoginConfig)
 	}
 
 	// Social authentication routes
@@ -707,7 +727,7 @@ func main() {
 	if oidcHandler != nil {
 		// Global OIDC discovery redirect to default app
 		r.GET("/.well-known/openid-configuration", func(c *gin.Context) {
-			defaultAppID := "00000000-0000-0000-0000-000000000001"
+			defaultAppID := viper.GetString("OIDC_DEFAULT_APP_ID")
 			c.Redirect(302, "/oidc/"+defaultAppID+"/.well-known/openid-configuration")
 		})
 
@@ -721,8 +741,8 @@ func main() {
 			oidcGroup.POST("/token", middleware.OIDCTokenRateLimit(), oidcHandler.Token)
 			oidcGroup.GET("/userinfo", middleware.OIDCUserInfoRateLimit(), oidcHandler.UserInfo)
 			oidcGroup.POST("/userinfo", middleware.OIDCUserInfoRateLimit(), oidcHandler.UserInfo)
-			oidcGroup.POST("/introspect", oidcHandler.Introspect)
-			oidcGroup.POST("/revoke", oidcHandler.Revoke)
+			oidcGroup.POST("/introspect", middleware.OIDCIntrospectRateLimit(), oidcHandler.Introspect)
+			oidcGroup.POST("/revoke", middleware.OIDCRevokeRateLimit(), oidcHandler.Revoke)
 			oidcGroup.GET("/end_session", oidcHandler.EndSession)
 			oidcGroup.POST("/end_session", oidcHandler.EndSession)
 		}

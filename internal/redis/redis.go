@@ -241,6 +241,15 @@ func IsUserTokensBlacklisted(appID, userID string) (bool, error) {
 	return true, nil // All user tokens are blacklisted
 }
 
+// ClearUserTokenBlacklist removes the user-wide token blacklist entry.
+// Called when a user successfully authenticates with fresh credentials (e.g. new login
+// after a password reset) so that newly issued tokens are not blocked by the stale
+// post-reset blacklist.
+func ClearUserTokenBlacklist(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:blacklist_user:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
 // ==================== Session Management Functions ====================
 
 // CreateSession stores a new session as a Redis Hash with metadata.

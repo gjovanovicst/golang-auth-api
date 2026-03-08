@@ -27,6 +27,8 @@ func refreshTokenTTL() time.Duration {
 
 // CreateSession creates a new session in Redis and returns the session ID.
 // It generates tokens and stores the refresh token inside the session hash.
+// Any prior user-wide token blacklist (set on password reset / account compromise)
+// is cleared here because a fresh credential check already proved identity.
 func (s *Service) CreateSession(appID, userID, ip, userAgent string, roles []string) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
 	sessionID = uuid.New().String()
 
@@ -42,6 +44,13 @@ func (s *Service) CreateSession(appID, userID, ip, userAgent string, roles []str
 
 	if err := redis.CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent, refreshTokenTTL()); err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to create session")
+	}
+
+	// Clear any user-wide token blacklist so the newly issued tokens are not immediately
+	// rejected by AuthMiddleware. The blacklist was set to invalidate pre-reset tokens;
+	// a successful new login proves identity and a fresh token pair is now in use.
+	if clearErr := redis.ClearUserTokenBlacklist(appID, userID); clearErr != nil {
+		log.Printf("Warning: Failed to clear user token blacklist for user %s: %v\n", userID, clearErr)
 	}
 
 	return accessToken, refreshToken, sessionID, nil

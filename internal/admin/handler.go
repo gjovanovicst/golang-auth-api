@@ -245,6 +245,8 @@ func (h *Handler) GetAppLoginConfig(c *gin.Context) {
 		HasOIDCClients:         hasClients,
 		MagicLinkEnabled:       app.MagicLinkEnabled,
 		PasskeyLoginEnabled:    app.PasskeyLoginEnabled,
+		TwoFAEnabled:           app.TwoFAEnabled,
+		TwoFARequired:          app.TwoFARequired,
 	})
 }
 

@@ -65,7 +65,7 @@
                     <div class="col-md-4 d-flex align-items-center">
                         <div class="form-check form-switch">
                             <input class="form-check-input" type="checkbox" role="switch" id="appTwoFARequired"
-                                   name="two_fa_required" {{if .TwoFARequired}}checked{{end}}>
+                                   name="two_fa_required" {{if .TwoFARequired}}checked{{end}} {{if not .TwoFAEnabled}}disabled{{end}}>
                             <label class="form-check-label" for="appTwoFARequired">
                                 <span class="small text-muted">Require 2FA</span>
                             </label>
@@ -291,4 +291,24 @@
         </form>
     </div>
 </div>
+<script>
+(function() {
+    var enableSwitch  = document.getElementById('appTwoFAEnabled');
+    var requireSwitch = document.getElementById('appTwoFARequired');
+    if (!enableSwitch || !requireSwitch) return;
+
+    function syncRequireSwitch() {
+        if (!enableSwitch.checked) {
+            requireSwitch.checked  = false;
+            requireSwitch.disabled = true;
+        } else {
+            requireSwitch.disabled = false;
+        }
+    }
+
+    enableSwitch.addEventListener('change', syncRequireSwitch);
+    // Sync once on load to handle any mismatch in server-rendered state
+    syncRequireSwitch();
+})();
+</script>
 {{end}}

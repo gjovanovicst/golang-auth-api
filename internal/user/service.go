@@ -179,8 +179,21 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		return nil, errors.NewAppError(errors.ErrForbidden, "Email not verified. Please check your inbox.")
 	}
 
-	// Check if 2FA is enabled
-	if user.TwoFAEnabled {
+	// Load application flags once — used for both the 2FA challenge gate and
+	// the forced-setup check below. We select both columns in a single query to
+	// avoid two round-trips.
+	//
+	// Fail-open: if the query fails we treat both flags as their safe defaults
+	// (two_fa_enabled=true keeps existing behaviour, two_fa_required=false skips
+	// the forced-setup path).
+	var app models.Application
+	appLoaded := s.DB.Select("two_fa_enabled, two_fa_required").First(&app, "id = ?", appID).Error == nil
+
+	// Check if 2FA is enabled for this user AND the app's master switch is ON.
+	// If two_fa_enabled is false on the application, skip the 2FA challenge
+	// entirely even when the individual user has 2FA configured — the admin has
+	// explicitly disabled 2FA at the app level.
+	if user.TwoFAEnabled && (!appLoaded || app.TwoFAEnabled) {
 		// Generate temporary token for 2FA verification
 		tempToken := uuid.New().String()
 		if err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute); err != nil {
@@ -220,9 +233,9 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		}, nil
 	}
 
-	// Check if this application requires 2FA setup for all users
-	var app models.Application
-	if err := s.DB.Select("two_fa_required").First(&app, "id = ?", appID).Error; err == nil && app.TwoFARequired {
+	// Check if this application requires 2FA setup for all users.
+	// Reuse the already-loaded app record instead of issuing a second DB query.
+	if appLoaded && app.TwoFARequired {
 		// User doesn't have 2FA set up, but the app requires it.
 		// Issue tokens via session so the user can authenticate to /2fa/generate, but flag the response.
 		accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)

@@ -287,7 +287,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	if user.TwoFAEnabled {
+	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		tempToken := uuid.New().String()
 		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {
@@ -470,7 +470,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	if user.TwoFAEnabled {
+	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		tempToken := uuid.New().String()
 		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {
@@ -653,7 +653,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	if user.TwoFAEnabled {
+	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		tempToken := uuid.New().String()
 		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {

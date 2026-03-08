@@ -965,3 +965,13 @@ func (s *Service) HandleGithubLinkCallback(appID uuid.UUID, userID string, githu
 
 	return newLinkAccount, nil
 }
+
+// IsAppTwoFAEnabled reports whether 2FA is enabled at the application level.
+// Fail-open: if the DB query fails, returns true to preserve existing behaviour.
+func (s *Service) IsAppTwoFAEnabled(appID uuid.UUID) bool {
+	var app models.Application
+	if err := s.SocialRepo.DB.Select("two_fa_enabled").First(&app, "id = ?", appID).Error; err != nil {
+		return true // fail open
+	}
+	return app.TwoFAEnabled
+}

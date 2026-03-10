@@ -73,6 +73,7 @@ func MigrateDatabase() {
 		&models.WebhookDelivery{},    // Webhook delivery history and retry tracking
 		&models.OIDCClient{},         // OIDC relying-party clients (per-app)
 		&models.OIDCAuthCode{},       // OIDC single-use authorization codes
+		&models.TrustedDevice{},      // Trusted device tokens for 2FA bypass
 	)
 
 	if err != nil {

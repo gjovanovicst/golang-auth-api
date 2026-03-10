@@ -22,6 +22,11 @@ type Application struct {
 	TwoFAMethods              string    `gorm:"type:varchar(100);default:'totp'" json:"two_fa_methods"` // Comma-separated available methods: "totp", "email", "passkey", or combinations
 	LoginNotificationsEnabled bool      `gorm:"default:false" json:"login_notifications_enabled"`       // Send email notifications on new device/location logins
 	SuspiciousActivityAlerts  bool      `gorm:"default:false" json:"suspicious_activity_alerts"`        // Send email alerts for suspicious activity (brute force, etc.)
+	// SMS-based recovery — allows users to register a phone number for SMS 2FA / recovery codes
+	SMS2FAEnabled bool `gorm:"default:false" json:"sms_2fa_enabled"` // Allow SMS-based recovery codes for this application
+	// Trusted device management — allows users to skip 2FA for a configurable number of days
+	TrustedDeviceEnabled bool `gorm:"default:false" json:"trusted_device_enabled"` // Allow users to mark devices as trusted (skips 2FA)
+	TrustedDeviceMaxDays int  `gorm:"default:30" json:"trusted_device_max_days"`   // How many days a device is trusted (default 30)
 
 	// Brute-Force Protection — per-app overrides (NULL = use global default from .env)
 	BfLockoutEnabled   *bool   `gorm:"default:null" json:"bf_lockout_enabled,omitempty"`                     // Override account lockout master switch

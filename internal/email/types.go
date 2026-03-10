@@ -44,6 +44,7 @@ const (
 	VarApiKeyType        = "api_key_type"
 	VarApiKeyExpiresAt   = "api_key_expires_at"
 	VarDaysUntilExpiry   = "days_until_expiry"
+	VarBackupEmail       = "backup_email"
 )
 
 // WellKnownVariables is the registry of all variables the system can auto-resolve.
@@ -85,6 +86,9 @@ var WellKnownVariables = []models.EmailTypeVariable{
 	{Name: VarApiKeyType, Description: "Type of the expiring API key (admin or app)", Source: models.VarSourceExplicit},
 	{Name: VarApiKeyExpiresAt, Description: "Formatted expiry date/time of the API key", Source: models.VarSourceExplicit},
 	{Name: VarDaysUntilExpiry, Description: "Number of days until the API key expires", Source: models.VarSourceExplicit},
+
+	// Backup email verification
+	{Name: VarBackupEmail, Description: "Backup email address being verified", Source: models.VarSourceExplicit},
 }
 
 // SMTPConfig holds the resolved SMTP configuration for sending emails.
@@ -110,7 +114,12 @@ type EmailData struct {
 
 // TwoFAMethod constants
 const (
-	TwoFAMethodTOTP    = "totp"
-	TwoFAMethodEmail   = "email"
-	TwoFAMethodPasskey = "passkey"
+	TwoFAMethodTOTP        = "totp"
+	TwoFAMethodEmail       = "email"
+	TwoFAMethodPasskey     = "passkey"
+	TwoFAMethodSMS         = "sms"
+	TwoFAMethodBackupEmail = "backup_email"
 )
+
+// TypeBackupEmailVerification is the email type code for backup email verification.
+const TypeBackupEmailVerification = "backup_email_verification"

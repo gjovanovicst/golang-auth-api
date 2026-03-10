@@ -68,6 +68,8 @@ type AppLoginConfigResponse struct {
 	HasOIDCClients         bool     `json:"has_oidc_clients"`
 	MagicLinkEnabled       bool     `json:"magic_link_enabled"`
 	PasskeyLoginEnabled    bool     `json:"passkey_login_enabled"`
-	TwoFAEnabled           bool     `json:"two_fa_enabled"`  // whether 2FA is allowed for this app
-	TwoFARequired          bool     `json:"two_fa_required"` // whether every user must set up 2FA before accessing the app
+	TwoFAEnabled           bool     `json:"two_fa_enabled"`         // whether 2FA is allowed for this app
+	TwoFARequired          bool     `json:"two_fa_required"`        // whether every user must set up 2FA before accessing the app
+	SMS2FAEnabled          bool     `json:"sms_2fa_enabled"`        // whether SMS is available as a 2FA method
+	TrustedDeviceEnabled   bool     `json:"trusted_device_enabled"` // whether "remember this device" is available
 }

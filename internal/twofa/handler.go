@@ -28,11 +28,12 @@ type AssignDefaultRoleFunc func(appID, userID string) error
 
 type Handler struct {
 	Service           *Service
-	SessionService    *session.Service       // Session management for creating sessions on 2FA login completion
-	LookupRoles       RoleLookupFunc         // Optional: if nil, tokens are generated without roles
-	AssignDefaultRole AssignDefaultRoleFunc  // Optional: if nil, no self-healing role assignment
-	IPRuleEvaluator   *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
-	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
+	SessionService    *session.Service         // Session management for creating sessions on 2FA login completion
+	LookupRoles       RoleLookupFunc           // Optional: if nil, tokens are generated without roles
+	AssignDefaultRole AssignDefaultRoleFunc    // Optional: if nil, no self-healing role assignment
+	IPRuleEvaluator   *geoip.IPRuleEvaluator   // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector   *log.AnomalyDetector     // Anomaly detector for login monitoring (nil = disabled)
+	TrustedDeviceRepo *TrustedDeviceRepository // nil = trusted device feature disabled
 }
 
 func NewHandler(s *Service) *Handler {
@@ -382,6 +383,14 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 			// Email 2FA code verification
 			method = "email"
 			verificationErr = h.Service.VerifyEmail2FACode(appID, userID, req.Code)
+		} else if userMethod == emailpkg.TwoFAMethodSMS {
+			// SMS 2FA code verification
+			method = "sms"
+			verificationErr = h.Service.VerifySMS2FACode(appID, userID, req.Code)
+		} else if userMethod == emailpkg.TwoFAMethodBackupEmail {
+			// Backup email 2FA code verification
+			method = "backup_email"
+			verificationErr = h.Service.VerifyBackupEmail2FACode(appID, userID, req.Code)
 		} else {
 			// TOTP code verification (default)
 			method = "totp"
@@ -421,6 +430,35 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 
 	// Clear temporary session
 	clearTempSession(appID.String(), req.TempToken)
+
+	// If the user opted in to trusting this device, create a trusted device record and set the cookie.
+	if req.RememberDevice && h.TrustedDeviceRepo != nil {
+		if enabled, maxDays := h.Service.IsTrustedDeviceEnabled(appID); enabled {
+			userUUIDForDevice, parseErrDevice := uuid.Parse(userID)
+			if parseErrDevice == nil {
+				deviceName := req.DeviceName
+				if deviceName == "" {
+					deviceName = "Unknown Device"
+				}
+				if plainToken, tdErr := h.Service.CreateTrustedDevice(appID, userUUIDForDevice, deviceName, userAgent, ipAddress, maxDays); tdErr == nil {
+					secureCookie := gin.Mode() == gin.ReleaseMode
+					sameSite := http.SameSiteLaxMode
+					if secureCookie {
+						sameSite = http.SameSiteStrictMode
+					}
+					http.SetCookie(c.Writer, &http.Cookie{
+						Name:     "trusted_device",
+						Value:    plainToken,
+						Path:     "/",
+						MaxAge:   maxDays * 86400,
+						HttpOnly: true,
+						Secure:   secureCookie,
+						SameSite: sameSite,
+					})
+				}
+			}
+		}
+	}
 
 	// Dispatch webhook event (non-fatal)
 	if h.Service.WebhookService != nil {
@@ -666,4 +704,614 @@ func clearTempSession(appID, tempToken string) {
 		// Log the error but don't fail the operation since the user is already authenticated
 		fmt.Printf("Warning: Failed to delete temporary user session %s: %v\n", tempToken, err)
 	}
+}
+
+// ============================================================================
+// SMS 2FA Endpoints
+// ============================================================================
+
+// @Summary Enable SMS-based 2FA
+// @Description Enable SMS-based 2FA for the user (phone number must be verified first)
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.TwoFAEnableResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/sms/enable [post]
+func (h *Handler) EnableSMS2FA(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	recoveryCodes, err := h.Service.EnableSMS2FA(appID, userID.(string))
+	if err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.Log2FAEnable(appID, userUUID, ipAddress, userAgent)
+	}
+
+	c.JSON(http.StatusOK, dto.TwoFAEnableResponse{
+		Message:       "SMS 2FA enabled successfully",
+		RecoveryCodes: recoveryCodes,
+	})
+}
+
+// @Summary Resend SMS 2FA code
+// @Description Resend a new SMS 2FA verification code to the user's phone during login
+// @Tags 2FA
+// @Accept json
+// @Produce json
+// @Param   resend  body  object{temp_token=string}  true  "Temporary login token"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/sms/resend [post]
+func (h *Handler) ResendSMS2FACode(c *gin.Context) {
+	var req struct {
+		TempToken string `json:"temp_token" validate:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, err := getUserIDFromTempSession(appID.String(), req.TempToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "Invalid or expired temporary token"})
+		return
+	}
+
+	if appErr := h.Service.GenerateSMS2FACode(appID, userID); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "SMS 2FA code resent successfully"})
+}
+
+// ============================================================================
+// Backup Email Endpoints
+// ============================================================================
+
+// @Summary Enable backup email 2FA
+// @Description Enable backup-email-based 2FA for the authenticated user. The backup email must already be verified.
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.TwoFAEnableResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/backup-email/enable [post]
+func (h *Handler) EnableBackupEmail2FA(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	recoveryCodes, err := h.Service.EnableBackupEmail2FA(appID, userID.(string))
+	if err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.Log2FAEnable(appID, userUUID, ipAddress, userAgent)
+	}
+
+	c.JSON(http.StatusOK, dto.TwoFAEnableResponse{
+		Message:       "Backup email 2FA enabled successfully",
+		RecoveryCodes: recoveryCodes,
+	})
+}
+
+// @Summary Disable backup email 2FA
+// @Description Disable backup-email-based 2FA for the authenticated user. No verification code required — authentication alone is sufficient.
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/backup-email/disable [post]
+func (h *Handler) DisableBackupEmail2FA(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	// Verify the user's current 2FA method is backup_email before disabling
+	method, methodErr := h.Service.GetUserTwoFAMethod(userID.(string))
+	if methodErr != nil {
+		c.JSON(methodErr.Code, dto.ErrorResponse{Error: methodErr.Message})
+		return
+	}
+	if method != emailpkg.TwoFAMethodBackupEmail {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Backup email is not the current 2FA method"})
+		return
+	}
+
+	if err := h.Service.DisableBackupEmail2FAMethod(appID, userID.(string)); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.Log2FADisable(appID, userUUID, ipAddress, userAgent)
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Backup email 2FA disabled successfully"})
+}
+
+// @Summary Resend backup email 2FA code
+// @Description Resend a new 2FA verification code to the user's backup email during login
+// @Tags 2FA
+// @Accept json
+// @Produce json
+// @Param   resend  body  object{temp_token=string}  true  "Temporary login token"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/backup-email/resend [post]
+func (h *Handler) ResendBackupEmail2FACode(c *gin.Context) {
+	var req struct {
+		TempToken string `json:"temp_token" validate:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, err := getUserIDFromTempSession(appID.String(), req.TempToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "Invalid or expired temporary token"})
+		return
+	}
+
+	if appErr := h.Service.ResendBackupEmail2FACode(appID, userID); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Backup email 2FA code resent successfully"})
+}
+
+// @Summary Add backup email
+// @Description Register a secondary email address for 2FA recovery (sends verification email)
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   request  body  dto.AddBackupEmailRequest  true  "Backup email"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/backup-email [post]
+func (h *Handler) AddBackupEmail(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	var req dto.AddBackupEmailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if appErr := h.Service.AddBackupEmail(appID, userID.(string), req.BackupEmail); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Verification email sent to backup address"})
+}
+
+// @Summary Verify backup email
+// @Description Confirm a backup email using the token from the verification email
+// @Tags 2FA
+// @Produce json
+// @Param   token  query  string  true  "Verification token"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Router /2fa/backup-email/verify [get]
+func (h *Handler) VerifyBackupEmail(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "token query parameter is required"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	if appErr := h.Service.VerifyBackupEmail(appID, token); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Backup email verified successfully"})
+}
+
+// @Summary Remove backup email
+// @Description Remove the backup email address from the user account
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.MessageResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/backup-email [delete]
+func (h *Handler) RemoveBackupEmail(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	if appErr := h.Service.RemoveBackupEmail(userID.(string)); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Backup email removed successfully"})
+}
+
+// @Summary Get backup email status
+// @Description Return the current backup email address and whether it is verified
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.BackupEmailStatusResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Router /2fa/backup-email/status [get]
+func (h *Handler) BackupEmailStatus(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	usr, err := h.Service.UserRepo.GetUserByID(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "User not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.BackupEmailStatusResponse{
+		BackupEmail: usr.BackupEmail,
+		Verified:    usr.BackupEmailVerified,
+	})
+}
+
+// ============================================================================
+// Phone / SMS Endpoints
+// ============================================================================
+
+// @Summary Add phone number
+// @Description Register a phone number for SMS 2FA (sends verification SMS)
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   request  body  dto.AddPhoneRequest  true  "Phone number"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /phone [post]
+func (h *Handler) AddPhone(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	var req dto.AddPhoneRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if appErr := h.Service.AddPhone(appID, userID.(string), req.PhoneNumber); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Verification SMS sent to phone number"})
+}
+
+// @Summary Verify phone number
+// @Description Confirm a phone number using the code from the verification SMS
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   request  body  dto.VerifyPhoneRequest  true  "Verification code"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Router /phone/verify [post]
+func (h *Handler) VerifyPhone(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	var req dto.VerifyPhoneRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if appErr := h.Service.VerifyPhone(appID, userID.(string), req.Code); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Phone number verified successfully"})
+}
+
+// @Summary Remove phone number
+// @Description Remove the phone number from the user account
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.MessageResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /phone [delete]
+func (h *Handler) RemovePhone(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	if appErr := h.Service.RemovePhone(userID.(string)); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Phone number removed successfully"})
+}
+
+// @Summary Get phone number status
+// @Description Return the current phone number and whether it is verified
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.PhoneStatusResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Router /phone/status [get]
+func (h *Handler) PhoneStatus(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	usr, err := h.Service.UserRepo.GetUserByID(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "User not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.PhoneStatusResponse{
+		PhoneNumber: usr.PhoneNumber,
+		Verified:    usr.PhoneVerified,
+	})
+}
+
+// ============================================================================
+// Trusted Device Endpoints
+// ============================================================================
+
+// @Summary List trusted devices
+// @Description List all trusted devices for the authenticated user in the current app
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.TrustedDevicesListResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/trusted-devices [get]
+func (h *Handler) ListTrustedDevices(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userUUID, err := uuid.Parse(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid user ID"})
+		return
+	}
+
+	devices, appErr := h.Service.ListTrustedDevices(userUUID, appID)
+	if appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	resp := dto.TrustedDevicesListResponse{Devices: make([]dto.TrustedDeviceResponse, 0, len(devices))}
+	for _, d := range devices {
+		resp.Devices = append(resp.Devices, dto.TrustedDeviceResponse{
+			ID:         d.ID.String(),
+			Name:       d.Name,
+			UserAgent:  d.UserAgent,
+			IPAddress:  d.IPAddress,
+			LastUsedAt: d.LastUsedAt.Format(time.RFC3339),
+			ExpiresAt:  d.ExpiresAt.Format(time.RFC3339),
+			CreatedAt:  d.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// @Summary Revoke a trusted device
+// @Description Revoke a specific trusted device by ID
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Param   id  path  string  true  "Trusted device UUID"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Router /2fa/trusted-devices/{id} [delete]
+func (h *Handler) RevokeTrustedDevice(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	deviceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid device ID"})
+		return
+	}
+
+	userUUID, err := uuid.Parse(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid user ID"})
+		return
+	}
+
+	if appErr := h.Service.RevokeTrustedDevice(deviceID, userUUID); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Trusted device revoked successfully"})
+}
+
+// @Summary Revoke all trusted devices
+// @Description Revoke all trusted devices for the authenticated user in the current app
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.MessageResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/trusted-devices [delete]
+func (h *Handler) RevokeAllTrustedDevices(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userUUID, err := uuid.Parse(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid user ID"})
+		return
+	}
+
+	if appErr := h.Service.RevokeAllTrustedDevices(userUUID, appID); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "All trusted devices revoked successfully"})
 }

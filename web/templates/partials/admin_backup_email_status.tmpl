@@ -1,0 +1,53 @@
+{{define "admin_backup_email_status"}}
+<div class="card border-0 shadow-sm" id="backup-email-card">
+    <div class="card-header bg-transparent border-bottom">
+        <h6 class="mb-0 fw-semibold"><i class="bi bi-envelope-plus me-2"></i>Backup Email</h6>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            A backup email is used as an alternative recovery address. It is separate from your login email.
+        </p>
+
+        {{if .BackupEmail}}
+        <div class="d-flex align-items-center gap-2 mb-3">
+            <span class="fw-semibold">{{.BackupEmail}}</span>
+            {{if .BackupEmailVerified}}
+            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle me-1"></i>Active</span>
+            {{else}}
+            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-hourglass-split me-1"></i>Pending verification</span>
+            {{end}}
+        </div>
+        {{else}}
+        <p class="text-muted fst-italic small mb-3">No backup email configured.</p>
+        {{end}}
+
+        <!-- Set / update form -->
+        <form hx-post="/gui/my-account/backup-email"
+              hx-target="#backup-email-result"
+              hx-swap="innerHTML">
+            <input type="hidden" name="_csrf" value="{{.CSRFToken}}">
+            <div class="input-group input-group-sm mb-2">
+                <input type="email" class="form-control" name="backup_email"
+                       value="{{.BackupEmail}}" placeholder="backup@example.com" required>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="bi bi-check-lg me-1"></i>{{if .BackupEmail}}Update{{else}}Set{{end}}
+                </button>
+            </div>
+        </form>
+        <div id="backup-email-result"></div>
+
+        {{if .BackupEmail}}
+        <div class="mt-2">
+            <button class="btn btn-outline-danger btn-sm"
+                    hx-delete="/gui/my-account/backup-email"
+                    hx-target="#backup-email-result"
+                    hx-swap="innerHTML"
+                    hx-confirm="Remove your backup email?"
+                    hx-on::after-request="htmx.ajax('GET', '/gui/my-account/backup-email/status', {target: '#backup-email-card', swap: 'outerHTML'})">
+                <i class="bi bi-trash me-1"></i>Remove
+            </button>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

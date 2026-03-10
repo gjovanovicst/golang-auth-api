@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -856,6 +857,94 @@ func GetOIDCBrowserSession(appID, sessionToken string) (string, error) {
 // DeleteOIDCBrowserSession removes the OIDC browser session (e.g. on logout).
 func DeleteOIDCBrowserSession(appID, sessionToken string) error {
 	key := fmt.Sprintf("app:%s:oidc_browser:%s", appID, sessionToken)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== Backup Email Verification ====================
+
+// SetBackupEmailVerificationToken stores a token → (userID, pendingEmail) mapping used during
+// backup email verification. The token is a random URL-safe value emailed to the backup address.
+func SetBackupEmailVerificationToken(appID, userID, token, pendingEmail string, expiration time.Duration) error {
+	// token → "userID|pendingEmail"
+	key := fmt.Sprintf("app:%s:backup_email_verify:%s", appID, token)
+	value := userID + "|" + pendingEmail
+	return Rdb.Set(ctx, key, value, expiration).Err()
+}
+
+// GetBackupEmailVerificationToken retrieves the userID and pending email for a backup email verification token.
+func GetBackupEmailVerificationToken(appID, token string) (userID, pendingEmail string, err error) {
+	key := fmt.Sprintf("app:%s:backup_email_verify:%s", appID, token)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err != nil {
+		return "", "", err
+	}
+	// Split on first "|" only
+	idx := strings.Index(val, "|")
+	if idx < 0 {
+		return val, "", nil
+	}
+	return val[:idx], val[idx+1:], nil
+}
+
+// DeleteBackupEmailVerificationToken removes a backup email verification token after use.
+func DeleteBackupEmailVerificationToken(appID, token string) error {
+	key := fmt.Sprintf("app:%s:backup_email_verify:%s", appID, token)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== SMS / Phone Verification Codes ====================
+
+// SetPhoneVerificationCode stores a 6-digit code used to verify a new phone number.
+func SetPhoneVerificationCode(appID, userID, code string, expiration time.Duration) error {
+	key := fmt.Sprintf("app:%s:phone_verify:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, expiration).Err()
+}
+
+// GetPhoneVerificationCode retrieves a phone verification code.
+func GetPhoneVerificationCode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:phone_verify:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeletePhoneVerificationCode removes a phone verification code after successful use.
+func DeletePhoneVerificationCode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:phone_verify:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// Set2FASMSCode stores a 6-digit SMS 2FA / recovery code during login (5-minute TTL).
+func Set2FASMSCode(appID, userID, code string) error {
+	key := fmt.Sprintf("app:%s:2fa_sms:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, 5*time.Minute).Err()
+}
+
+// Get2FASMSCode retrieves a stored SMS 2FA code.
+func Get2FASMSCode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:2fa_sms:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// Delete2FASMSCode removes an SMS 2FA code after successful verification (one-time use).
+func Delete2FASMSCode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:2fa_sms:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// SetBackupEmail2FACode stores a 6-digit code sent to the backup email during login (5-minute TTL).
+func SetBackupEmail2FACode(appID, userID, code string) error {
+	key := fmt.Sprintf("app:%s:2fa_backup_email:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, 5*time.Minute).Err()
+}
+
+// GetBackupEmail2FACode retrieves a stored backup-email 2FA code.
+func GetBackupEmail2FACode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:2fa_backup_email:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteBackupEmail2FACode removes a backup-email 2FA code after successful verification.
+func DeleteBackupEmail2FACode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:2fa_backup_email:%s", appID, userID)
 	return Rdb.Del(ctx, key).Err()
 }
 

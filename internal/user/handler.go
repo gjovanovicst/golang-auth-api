@@ -16,11 +16,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// TrustedDeviceValidateFunc validates a plain trusted-device token and returns the
+// associated userID and appID on success.  It is called during Login to skip 2FA when
+// a valid trusted-device cookie is present.  Wired from main.go to avoid an import cycle.
+type TrustedDeviceValidateFunc func(plainToken string) (userID uuid.UUID, appID uuid.UUID, ok bool)
+
 type Handler struct {
-	Service           *Service
-	IPRuleEvaluator   *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
-	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
-	BruteForceService *bruteforce.Service    // Brute-force protection service (lockout, delays, CAPTCHA)
+	Service               *Service
+	IPRuleEvaluator       *geoip.IPRuleEvaluator    // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector       *log.AnomalyDetector      // Anomaly detector for login monitoring (nil = disabled)
+	BruteForceService     *bruteforce.Service       // Brute-force protection service (lockout, delays, CAPTCHA)
+	ValidateTrustedDevice TrustedDeviceValidateFunc // Optional: skip 2FA when a valid trusted-device cookie is present
 }
 
 func NewHandler(s *Service) *Handler {
@@ -341,6 +347,30 @@ func (h *Handler) Login(c *gin.Context) {
 		h.BruteForceService.ResetOnSuccess(appID, req.Email, ipAddress)
 	}
 
+	// Trusted device check: if the client presents a valid trusted-device cookie and
+	// it matches this app + user, skip 2FA entirely and issue tokens immediately.
+	if loginResult.RequiresTwoFA && h.ValidateTrustedDevice != nil {
+		if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
+			if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
+				tdUserID == loginResult.UserID && tdAppID == appID {
+				// Trusted device is valid — bypass 2FA by creating a fresh session
+				accessToken, refreshToken, sessionErr := h.Service.CreateSessionForUser(appID, loginResult.UserID, ipAddress, userAgent)
+				if sessionErr == nil {
+					details := map[string]interface{}{
+						"requires_2fa":   false,
+						"trusted_device": true,
+					}
+					h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, details)
+					c.JSON(http.StatusOK, dto.LoginResponse{
+						AccessToken:  accessToken,
+						RefreshToken: refreshToken,
+					})
+					return
+				}
+			}
+		}
+	}
+
 	// Check if 2FA is required
 	if loginResult.RequiresTwoFA {
 		// Log partial login (2FA required) — anomaly detection will run after 2FA completion
@@ -646,6 +676,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		ProfilePicture: user.ProfilePicture,
 		Locale:         user.Locale,
 		TwoFAEnabled:   user.TwoFAEnabled,
+		TwoFAMethod:    user.TwoFAMethod,
 		Roles:          userRoles,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),

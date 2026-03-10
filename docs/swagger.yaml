@@ -56,6 +56,22 @@ definitions:
       user_id:
         type: string
     type: object
+  dto.AddBackupEmailRequest:
+    properties:
+      backup_email:
+        example: backup@example.com
+        type: string
+    required:
+    - backup_email
+    type: object
+  dto.AddPhoneRequest:
+    properties:
+      phone_number:
+        example: "+12125551234"
+        type: string
+    required:
+    - phone_number
+    type: object
   dto.AppLoginConfigResponse:
     properties:
       app_id:
@@ -73,12 +89,20 @@ definitions:
         type: boolean
       passkey_login_enabled:
         type: boolean
+      two_fa_enabled:
+        description: whether 2FA is allowed for this app
+        type: boolean
+      two_fa_required:
+        description: whether every user must set up 2FA before accessing the app
+        type: boolean
     type: object
   dto.AppResponse:
     properties:
       created_at:
         type: string
       description:
+        type: string
+      frontend_url:
         type: string
       id:
         type: string
@@ -99,6 +123,16 @@ definitions:
     - role_id
     - user_id
     type: object
+  dto.BackupEmailStatusResponse:
+    properties:
+      backup_email:
+        type: string
+      pending_email:
+        description: set when a verification is in progress
+        type: string
+      verified:
+        type: boolean
+    type: object
   dto.CaptchaRequiredResponse:
     properties:
       captcha_required:
@@ -115,6 +149,8 @@ definitions:
   dto.CreateAppRequest:
     properties:
       description:
+        type: string
+      frontend_url:
         type: string
       magic_link_enabled:
         type: boolean
@@ -621,6 +657,10 @@ definitions:
     type: object
   dto.MagicLinkVerifyRequest:
     properties:
+      app_id:
+        description: 'optional: overrides the X-App-ID header for multi-app token
+          disambiguation'
+        type: string
       token:
         description: '#nosec G101 -- This is a DTO field, not a hardcoded credential'
         type: string
@@ -928,6 +968,13 @@ definitions:
       resource:
         type: string
     type: object
+  dto.PhoneStatusResponse:
+    properties:
+      phone_number:
+        type: string
+      verified:
+        type: boolean
+    type: object
   dto.RefreshTokenRequest:
     properties:
       refresh_token:
@@ -1095,6 +1142,30 @@ definitions:
         example: true
         type: boolean
     type: object
+  dto.TrustedDeviceResponse:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      ip_address:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      user_agent:
+        type: string
+    type: object
+  dto.TrustedDevicesListResponse:
+    properties:
+      devices:
+        items:
+          $ref: '#/definitions/dto.TrustedDeviceResponse'
+        type: array
+    type: object
   dto.TwoFADisableRequest:
     properties:
       code:
@@ -1115,8 +1186,14 @@ definitions:
     properties:
       code:
         type: string
+      device_name:
+        description: Human-readable label for the trusted device
+        type: string
       recovery_code:
         type: string
+      remember_device:
+        description: When true, create a trusted device record
+        type: boolean
       temp_token:
         type: string
     required:
@@ -1131,6 +1208,8 @@ definitions:
       email_2fa_enabled:
         type: boolean
       passkey_enabled:
+        type: boolean
+      sms_enabled:
         type: boolean
       totp_enabled:
         type: boolean
@@ -1339,6 +1418,14 @@ definitions:
       user_id:
         type: string
     type: object
+  dto.VerifyPhoneRequest:
+    properties:
+      code:
+        example: "123456"
+        type: string
+    required:
+    - code
+    type: object
   dto.WebhookDeliveryListResponse:
     properties:
       deliveries:
@@ -1483,6 +1570,115 @@ info:
   title: Authentication and Authorization API
   version: 1.1.0
 paths:
+  /2fa/backup-email:
+    delete:
+      description: Remove the backup email address from the user account
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Remove backup email
+      tags:
+      - 2FA
+    post:
+      consumes:
+      - application/json
+      description: Register a secondary email address for 2FA recovery (sends verification
+        email)
+      parameters:
+      - description: Backup email
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.AddBackupEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Add backup email
+      tags:
+      - 2FA
+  /2fa/backup-email/status:
+    get:
+      description: Return the current backup email address and whether it is verified
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.BackupEmailStatusResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get backup email status
+      tags:
+      - 2FA
+  /2fa/backup-email/verify:
+    get:
+      description: Confirm a backup email using the token from the verification email
+      parameters:
+      - description: Verification token
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Verify backup email
+      tags:
+      - 2FA
   /2fa/disable:
     post:
       consumes:
@@ -1791,6 +1987,152 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Generate new recovery codes
+      tags:
+      - 2FA
+  /2fa/sms/enable:
+    post:
+      description: Enable SMS-based 2FA for the user (phone number must be verified
+        first)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TwoFAEnableResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Enable SMS-based 2FA
+      tags:
+      - 2FA
+  /2fa/sms/resend:
+    post:
+      consumes:
+      - application/json
+      description: Resend a new SMS 2FA verification code to the user's phone during
+        login
+      parameters:
+      - description: Temporary login token
+        in: body
+        name: resend
+        required: true
+        schema:
+          properties:
+            temp_token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Resend SMS 2FA code
+      tags:
+      - 2FA
+  /2fa/trusted-devices:
+    delete:
+      description: Revoke all trusted devices for the authenticated user in the current
+        app
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Revoke all trusted devices
+      tags:
+      - 2FA
+    get:
+      description: List all trusted devices for the authenticated user in the current
+        app
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TrustedDevicesListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List trusted devices
+      tags:
+      - 2FA
+  /2fa/trusted-devices/{id}:
+    delete:
+      description: Revoke a specific trusted device by ID
+      parameters:
+      - description: Trusted device UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Revoke a trusted device
       tags:
       - 2FA
   /2fa/verify-setup:
@@ -3893,6 +4235,112 @@ paths:
       summary: Create a new tenant
       tags:
       - Admin
+  /admin/users/{id}/trusted-devices:
+    delete:
+      description: Removes all trusted devices for a user, forcing full 2FA on all
+        devices
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Revoke all trusted devices for a user
+      tags:
+      - Admin
+    get:
+      description: Returns all trusted devices registered by a specific user across
+        all apps
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TrustedDevicesListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List trusted devices for a user
+      tags:
+      - Admin
+  /admin/users/{id}/trusted-devices/{device_id}:
+    delete:
+      description: Removes a specific trusted device, forcing the user to re-authenticate
+        with 2FA on that device
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Trusted Device UUID
+        in: path
+        name: device_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Revoke a trusted device
+      tags:
+      - Admin
   /admin/webhooks:
     get:
       description: Returns all registered webhook endpoints across all applications
@@ -5231,6 +5679,115 @@ paths:
       summary: Rename a passkey
       tags:
       - Passkeys
+  /phone:
+    delete:
+      description: Remove the phone number from the user account
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Remove phone number
+      tags:
+      - 2FA
+    post:
+      consumes:
+      - application/json
+      description: Register a phone number for SMS 2FA (sends verification SMS)
+      parameters:
+      - description: Phone number
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.AddPhoneRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Add phone number
+      tags:
+      - 2FA
+  /phone/status:
+    get:
+      description: Return the current phone number and whether it is verified
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.PhoneStatusResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get phone number status
+      tags:
+      - 2FA
+  /phone/verify:
+    post:
+      consumes:
+      - application/json
+      description: Confirm a phone number using the code from the verification SMS
+      parameters:
+      - description: Verification code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.VerifyPhoneRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Verify phone number
+      tags:
+      - 2FA
   /profile:
     delete:
       consumes:

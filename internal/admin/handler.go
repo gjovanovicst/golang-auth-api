@@ -8,17 +8,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 )
 
 type Handler struct {
-	Repo            *Repository
-	EmailService    *email.Service
-	IPRuleRepo      *geoip.IPRuleRepository // IP rule repository (nil = IP rules disabled)
-	IPRuleEvaluator *geoip.IPRuleEvaluator  // IP rule evaluator for cache invalidation (nil = disabled)
-	GeoIPService    *geoip.Service          // GeoIP service for IP access checks (nil = disabled)
+	Repo              *Repository
+	EmailService      *email.Service
+	IPRuleRepo        *geoip.IPRuleRepository        // IP rule repository (nil = IP rules disabled)
+	IPRuleEvaluator   *geoip.IPRuleEvaluator         // IP rule evaluator for cache invalidation (nil = disabled)
+	TrustedDeviceRepo *twofa.TrustedDeviceRepository // Optional: trusted device management (nil = disabled)
+	GeoIPService      *geoip.Service                 // GeoIP service for IP access checks (nil = disabled)
 }
 
 func NewHandler(r *Repository, emailService *email.Service) *Handler {
@@ -247,6 +249,8 @@ func (h *Handler) GetAppLoginConfig(c *gin.Context) {
 		PasskeyLoginEnabled:    app.PasskeyLoginEnabled,
 		TwoFAEnabled:           app.TwoFAEnabled,
 		TwoFARequired:          app.TwoFARequired,
+		SMS2FAEnabled:          app.SMS2FAEnabled,
+		TrustedDeviceEnabled:   app.TrustedDeviceEnabled,
 	})
 }
 
@@ -1565,4 +1569,140 @@ func toIPRuleResponse(rule models.IPRule) dto.IPRuleResponse {
 		CreatedAt:   rule.CreatedAt,
 		UpdatedAt:   rule.UpdatedAt,
 	}
+}
+
+// AdminListTrustedDevices lists all trusted devices for a given user.
+// @Summary List trusted devices for a user
+// @Description Returns all trusted devices registered by a specific user across all apps
+// @Tags Admin
+// @Produce json
+// @Param id path string true "User UUID"
+// @Success 200 {object} dto.TrustedDevicesListResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/users/{id}/trusted-devices [get]
+func (h *Handler) AdminListTrustedDevices(c *gin.Context) {
+	if h.TrustedDeviceRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "Trusted device feature is not enabled"})
+		return
+	}
+
+	userIDStr := c.Param("id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid user ID"})
+		return
+	}
+
+	devices, err := h.TrustedDeviceRepo.FindAllForUser(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to list trusted devices"})
+		return
+	}
+
+	items := make([]dto.TrustedDeviceResponse, 0, len(devices))
+	for _, d := range devices {
+		items = append(items, dto.TrustedDeviceResponse{
+			ID:         d.ID.String(),
+			Name:       d.Name,
+			UserAgent:  d.UserAgent,
+			IPAddress:  d.IPAddress,
+			LastUsedAt: d.LastUsedAt.Format("2006-01-02T15:04:05Z07:00"),
+			ExpiresAt:  d.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+			CreatedAt:  d.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+
+	c.JSON(http.StatusOK, dto.TrustedDevicesListResponse{Devices: items})
+}
+
+// AdminRevokeTrustedDevice revokes a single trusted device for a user.
+// @Summary Revoke a trusted device
+// @Description Removes a specific trusted device, forcing the user to re-authenticate with 2FA on that device
+// @Tags Admin
+// @Produce json
+// @Param id path string true "User UUID"
+// @Param device_id path string true "Trusted Device UUID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/users/{id}/trusted-devices/{device_id} [delete]
+func (h *Handler) AdminRevokeTrustedDevice(c *gin.Context) {
+	if h.TrustedDeviceRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "Trusted device feature is not enabled"})
+		return
+	}
+
+	userIDStr := c.Param("id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid user ID"})
+		return
+	}
+
+	deviceIDStr := c.Param("device_id")
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid device ID"})
+		return
+	}
+
+	// Verify the device belongs to the specified user
+	device, err := h.TrustedDeviceRepo.FindByID(deviceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to find trusted device"})
+		return
+	}
+	if device == nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "Trusted device not found"})
+		return
+	}
+	if device.UserID != userID {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "Trusted device not found"})
+		return
+	}
+
+	if err := h.TrustedDeviceRepo.DeleteByID(deviceID); err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to revoke trusted device"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Trusted device revoked"})
+}
+
+// AdminRevokeAllTrustedDevices revokes all trusted devices for a user.
+// @Summary Revoke all trusted devices for a user
+// @Description Removes all trusted devices for a user, forcing full 2FA on all devices
+// @Tags Admin
+// @Produce json
+// @Param id path string true "User UUID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/users/{id}/trusted-devices [delete]
+func (h *Handler) AdminRevokeAllTrustedDevices(c *gin.Context) {
+	if h.TrustedDeviceRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, dto.ErrorResponse{Error: "Trusted device feature is not enabled"})
+		return
+	}
+
+	userIDStr := c.Param("id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid user ID"})
+		return
+	}
+
+	// Delete across all apps for this user
+	if err := h.TrustedDeviceRepo.DB.Where("user_id = ?", userID).Delete(&models.TrustedDevice{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to revoke trusted devices"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "All trusted devices revoked"})
 }

@@ -316,6 +316,17 @@ func (r *Repository) DeleteApp(id string) error {
 	return r.DB.Where("id = ?", id).Delete(&models.Application{}).Error
 }
 
+// UpdateAppSMSTrustedDevice updates the SMS and trusted device settings for an application.
+func (r *Repository) UpdateAppSMSTrustedDevice(id string, sms2FAEnabled bool, trustedDeviceEnabled bool, trustedDeviceMaxDays int) error {
+	return r.DB.Model(&models.Application{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"sms2_fa_enabled":         sms2FAEnabled,
+			"trusted_device_enabled":  trustedDeviceEnabled,
+			"trusted_device_max_days": trustedDeviceMaxDays,
+		}).Error
+}
+
 // ListAllTenants returns all tenants (ID and Name only), ordered by name.
 // Used for populating dropdown selects in forms and filters.
 func (r *Repository) ListAllTenants() ([]models.Tenant, error) {
@@ -542,6 +553,10 @@ type UserDetail struct {
 	EmailVerified       bool                        `json:"email_verified"`
 	TwoFAEnabled        bool                        `json:"two_fa_enabled"`
 	HasPassword         bool                        `json:"has_password"`
+	BackupEmail         string                      `json:"backup_email"`
+	BackupEmailVerified bool                        `json:"backup_email_verified"`
+	PhoneNumber         string                      `json:"phone_number"`
+	PhoneVerified       bool                        `json:"phone_verified"`
 	LockedAt            *time.Time                  `json:"locked_at"`
 	LockReason          string                      `json:"lock_reason"`
 	LockExpiresAt       *time.Time                  `json:"lock_expires_at"`
@@ -549,6 +564,7 @@ type UserDetail struct {
 	UpdatedAt           time.Time                   `json:"updated_at"`
 	SocialAccounts      []models.SocialAccount      `json:"social_accounts" gorm:"-"`
 	WebAuthnCredentials []models.WebAuthnCredential `json:"webauthn_credentials" gorm:"-"`
+	TrustedDevices      []models.TrustedDevice      `json:"trusted_devices" gorm:"-"`
 }
 
 // UserStatusCounts holds active/inactive user counts for dashboard display
@@ -614,6 +630,10 @@ func (r *Repository) GetUserDetailByID(id string) (*UserDetail, error) {
 			COALESCE(tenants.name, '') as tenant_name,
 			users.is_active, users.email_verified, users.two_fa_enabled,
 			(users.password_hash != '') as has_password,
+			COALESCE(users.backup_email, '') as backup_email,
+			users.backup_email_verified,
+			COALESCE(users.phone_number, '') as phone_number,
+			users.phone_verified,
 			users.locked_at, users.lock_reason, users.lock_expires_at,
 			users.created_at, users.updated_at`).
 		Joins("LEFT JOIN applications ON applications.id = users.app_id").

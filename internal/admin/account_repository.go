@@ -129,3 +129,22 @@ func (r *AccountRepository) GetByEmail(email string) (*models.AdminAccount, erro
 	}
 	return &account, nil
 }
+
+// SetBackupEmail sets (or updates) the backup email for an admin account.
+// It marks backup_email_verified = false since the new address hasn't been confirmed.
+func (r *AccountRepository) SetBackupEmail(id, backupEmail string) error {
+	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"backup_email":          backupEmail,
+			"backup_email_verified": false,
+		}).Error
+}
+
+// ClearBackupEmail removes the backup email from an admin account.
+func (r *AccountRepository) ClearBackupEmail(id string) error {
+	return r.DB.Model(&models.AdminAccount{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"backup_email":          "",
+			"backup_email_verified": false,
+		}).Error
+}

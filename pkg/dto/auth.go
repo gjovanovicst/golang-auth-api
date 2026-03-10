@@ -69,9 +69,11 @@ type TwoFAVerifyRequest struct {
 
 // TwoFALoginRequest represents the request payload for 2FA login verification
 type TwoFALoginRequest struct {
-	TempToken    string `json:"temp_token" validate:"required"`
-	Code         string `json:"code,omitempty"`
-	RecoveryCode string `json:"recovery_code,omitempty"`
+	TempToken      string `json:"temp_token" validate:"required"`
+	Code           string `json:"code,omitempty"`
+	RecoveryCode   string `json:"recovery_code,omitempty"`
+	RememberDevice bool   `json:"remember_device,omitempty"` // When true, create a trusted device record
+	DeviceName     string `json:"device_name,omitempty"`     // Human-readable label for the trusted device
 }
 
 // TwoFADisableRequest represents the request payload for disabling 2FA
@@ -208,4 +210,65 @@ type CaptchaRequiredResponse struct {
 type ProgressiveDelayResponse struct {
 	Error      string `json:"error"`
 	RetryAfter int    `json:"retry_after"` // Seconds the client should wait before retrying
+}
+
+// ============================================================================
+// Backup Email DTOs
+// ============================================================================
+
+// AddBackupEmailRequest is the request payload for registering a backup email address.
+type AddBackupEmailRequest struct {
+	BackupEmail string `json:"backup_email" validate:"required,email" example:"backup@example.com"`
+}
+
+// VerifyBackupEmailRequest is the request payload for confirming the backup email token.
+type VerifyBackupEmailRequest struct {
+	Token string `json:"token" validate:"required"` // #nosec G101 -- DTO field
+}
+
+// BackupEmailStatusResponse describes the current state of a user's backup email.
+type BackupEmailStatusResponse struct {
+	BackupEmail  string `json:"backup_email,omitempty"`
+	Verified     bool   `json:"verified"`
+	PendingEmail string `json:"pending_email,omitempty"` // set when a verification is in progress
+}
+
+// ============================================================================
+// Phone / SMS DTOs
+// ============================================================================
+
+// AddPhoneRequest is the request payload for registering a phone number for SMS 2FA.
+type AddPhoneRequest struct {
+	PhoneNumber string `json:"phone_number" validate:"required" example:"+12125551234"`
+}
+
+// VerifyPhoneRequest is the request payload for confirming an SMS verification code.
+type VerifyPhoneRequest struct {
+	Code string `json:"code" validate:"required,len=6" example:"123456"`
+}
+
+// PhoneStatusResponse describes the current state of a user's phone number.
+type PhoneStatusResponse struct {
+	PhoneNumber string `json:"phone_number,omitempty"`
+	Verified    bool   `json:"verified"`
+}
+
+// ============================================================================
+// Trusted Device DTOs
+// ============================================================================
+
+// TrustedDeviceResponse represents a single trusted device record.
+type TrustedDeviceResponse struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	UserAgent  string `json:"user_agent,omitempty"`
+	IPAddress  string `json:"ip_address,omitempty"`
+	LastUsedAt string `json:"last_used_at"`
+	ExpiresAt  string `json:"expires_at"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// TrustedDevicesListResponse wraps a slice of TrustedDeviceResponse.
+type TrustedDevicesListResponse struct {
+	Devices []TrustedDeviceResponse `json:"devices"`
 }

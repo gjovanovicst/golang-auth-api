@@ -157,6 +157,21 @@ func (s *Service) SendSuspiciousActivityEmail(appID uuid.UUID, toEmail string, u
 	})
 }
 
+// SendBackupEmailVerification sends a verification email to a user's pending backup email address.
+// The token is stored in Redis and expires after the given duration. The userID enables
+// auto-population of user profile variables in the template.
+func (s *Service) SendBackupEmailVerification(appID uuid.UUID, toBackupEmail, token string, userID *uuid.UUID) error {
+	frontendURL := s.resolver.resolveAppFrontendURL(appID)
+	verificationLink := fmt.Sprintf("%s/verify-backup-email?token=%s", frontendURL, token)
+
+	return s.SendEmailWithContext(appID, TypeBackupEmailVerification, toBackupEmail, userID, map[string]string{
+		VarVerificationLink:  verificationLink,
+		VarVerificationToken: token,
+		VarBackupEmail:       toBackupEmail,
+		VarExpirationMinutes: "30",
+	})
+}
+
 // SendAdmin2FACodeEmail sends a 2FA verification code to an admin's email address.
 // This bypasses the app-scoped template/SMTP resolution and uses the global SMTP config
 // with a simple hardcoded template, since admin accounts are not scoped to any application.

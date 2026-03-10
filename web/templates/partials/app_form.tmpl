@@ -142,6 +142,40 @@
                 </div>
             </div>
 
+            <!-- SMS 2FA & Trusted Device Settings -->
+            <div class="border rounded p-3 mt-3 bg-light bg-opacity-50">
+                <h6 class="fw-semibold mb-3"><i class="bi bi-phone me-2"></i>SMS 2FA &amp; Trusted Devices</h6>
+                <div class="row g-3">
+                    <div class="col-md-4 d-flex align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" id="appSMS2FAEnabled"
+                                   name="sms_2fa_enabled" {{if .SMS2FAEnabled}}checked{{end}}>
+                            <label class="form-check-label" for="appSMS2FAEnabled">
+                                <span class="small text-muted">Enable SMS 2FA</span>
+                            </label>
+                            <div class="form-text">Allow users to verify their identity via SMS one-time codes.</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-center">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" id="appTrustedDeviceEnabled"
+                                   name="trusted_device_enabled" {{if .TrustedDeviceEnabled}}checked{{end}}
+                                   onchange="document.getElementById('trustedDeviceMaxDaysField').style.display = this.checked ? '' : 'none'">
+                            <label class="form-check-label" for="appTrustedDeviceEnabled">
+                                <span class="small text-muted">Enable Trusted Devices</span>
+                            </label>
+                            <div class="form-text">Allow users to skip 2FA on trusted devices for a configurable number of days.</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4" id="trustedDeviceMaxDaysField" {{if not .TrustedDeviceEnabled}}style="display:none"{{end}}>
+                        <label for="appTrustedDeviceMaxDays" class="form-label small text-muted">Trust Duration (days)</label>
+                        <input type="number" class="form-control" id="appTrustedDeviceMaxDays" name="trusted_device_max_days"
+                               value="{{if .TrustedDeviceMaxDays}}{{.TrustedDeviceMaxDays}}{{else}}30{{end}}" min="1" max="365">
+                        <div class="form-text">How long a device remains trusted before requiring 2FA again.</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Brute-Force Protection Settings -->
             <div class="border rounded p-3 mt-3 bg-light bg-opacity-50">
                 <h6 class="fw-semibold mb-3"><i class="bi bi-shield-exclamation me-2"></i>Brute-Force Protection</h6>
@@ -309,6 +343,13 @@
     enableSwitch.addEventListener('change', syncRequireSwitch);
     // Sync once on load to handle any mismatch in server-rendered state
     syncRequireSwitch();
+
+    // Sync trusted device max days field visibility on load
+    var tdSwitch = document.getElementById('appTrustedDeviceEnabled');
+    var tdMaxDaysField = document.getElementById('trustedDeviceMaxDaysField');
+    if (tdSwitch && tdMaxDaysField) {
+        tdMaxDaysField.style.display = tdSwitch.checked ? '' : 'none';
+    }
 })();
 </script>
 {{end}}

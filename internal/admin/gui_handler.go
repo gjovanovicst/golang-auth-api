@@ -20,6 +20,7 @@ import (
 	oidcpkg "github.com/gjovanovicst/auth_api/internal/oidc"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/twofa"
 	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
 	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/models"
@@ -57,12 +58,13 @@ type GUIHandler struct {
 	EmailService      *email.Service
 	RBACService       *rbac.Service
 	PasskeyService    *passkeypkg.Service
-	IPRuleRepo        *geoip.IPRuleRepository // IP rule repository (nil = IP rules disabled)
-	IPRuleEvaluator   *geoip.IPRuleEvaluator  // IP rule evaluator for cache invalidation (nil = disabled)
-	GeoIPService      *geoip.Service          // GeoIP service for IP lookups (nil = disabled)
-	BruteForceService *bruteforce.Service     // Brute-force protection service for account unlock (nil = disabled)
-	WebhookService    *webhook.Service        // Webhook management service (nil = webhooks disabled)
-	OIDCService       *oidcpkg.Service        // OIDC provider service (nil = OIDC disabled)
+	IPRuleRepo        *geoip.IPRuleRepository        // IP rule repository (nil = IP rules disabled)
+	IPRuleEvaluator   *geoip.IPRuleEvaluator         // IP rule evaluator for cache invalidation (nil = disabled)
+	GeoIPService      *geoip.Service                 // GeoIP service for IP lookups (nil = disabled)
+	BruteForceService *bruteforce.Service            // Brute-force protection service for account unlock (nil = disabled)
+	WebhookService    *webhook.Service               // Webhook management service (nil = webhooks disabled)
+	OIDCService       *oidcpkg.Service               // OIDC provider service (nil = OIDC disabled)
+	TrustedDeviceRepo *twofa.TrustedDeviceRepository // Trusted device repository (nil = feature disabled)
 }
 
 // NewGUIHandler creates a new GUIHandler
@@ -570,6 +572,12 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
 	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
 	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
+	sms2FAEnabled := c.PostForm("sms_2fa_enabled") == "on"
+	trustedDeviceEnabled := c.PostForm("trusted_device_enabled") == "on"
+	trustedDeviceMaxDays := 30
+	if v, err := strconv.Atoi(c.PostForm("trusted_device_max_days")); err == nil && v > 0 {
+		trustedDeviceMaxDays = v
+	}
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -590,16 +598,19 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	}
 
 	app := &models.Application{
-		TenantID:            parsedTenantID,
-		Name:                name,
-		Description:         description,
-		FrontendURL:         frontendURL,
-		TwoFAIssuerName:     twoFAIssuerName,
-		TwoFAEnabled:        twoFAEnabled,
-		TwoFARequired:       twoFARequired,
-		Passkey2FAEnabled:   passkey2FAEnabled,
-		PasskeyLoginEnabled: passkeyLoginEnabled,
-		MagicLinkEnabled:    magicLinkEnabled,
+		TenantID:             parsedTenantID,
+		Name:                 name,
+		Description:          description,
+		FrontendURL:          frontendURL,
+		TwoFAIssuerName:      twoFAIssuerName,
+		TwoFAEnabled:         twoFAEnabled,
+		TwoFARequired:        twoFARequired,
+		Passkey2FAEnabled:    passkey2FAEnabled,
+		PasskeyLoginEnabled:  passkeyLoginEnabled,
+		MagicLinkEnabled:     magicLinkEnabled,
+		SMS2FAEnabled:        sms2FAEnabled,
+		TrustedDeviceEnabled: trustedDeviceEnabled,
+		TrustedDeviceMaxDays: trustedDeviceMaxDays,
 	}
 
 	// Brute-force lockout overrides
@@ -683,20 +694,23 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID                  string
-		Name                string
-		Description         string
-		FrontendURL         string
-		TenantID            string
-		TwoFAIssuerName     string
-		TwoFAEnabled        bool
-		TwoFARequired       bool
-		Passkey2FAEnabled   bool
-		PasskeyLoginEnabled bool
-		MagicLinkEnabled    bool
-		OIDCEnabled         bool
-		Tenants             []models.Tenant
-		IsEdit              bool
+		ID                   string
+		Name                 string
+		Description          string
+		FrontendURL          string
+		TenantID             string
+		TwoFAIssuerName      string
+		TwoFAEnabled         bool
+		TwoFARequired        bool
+		Passkey2FAEnabled    bool
+		PasskeyLoginEnabled  bool
+		MagicLinkEnabled     bool
+		OIDCEnabled          bool
+		SMS2FAEnabled        bool
+		TrustedDeviceEnabled bool
+		TrustedDeviceMaxDays int
+		Tenants              []models.Tenant
+		IsEdit               bool
 		// Brute-force overrides
 		BfLockoutOverride  bool
 		BfLockoutEnabled   bool
@@ -717,20 +731,23 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 	}
 
 	fd := formData{
-		ID:                  app.ID.String(),
-		Name:                app.Name,
-		Description:         app.Description,
-		FrontendURL:         app.FrontendURL,
-		TenantID:            app.TenantID.String(),
-		TwoFAIssuerName:     app.TwoFAIssuerName,
-		TwoFAEnabled:        app.TwoFAEnabled,
-		TwoFARequired:       app.TwoFARequired,
-		Passkey2FAEnabled:   app.Passkey2FAEnabled,
-		PasskeyLoginEnabled: app.PasskeyLoginEnabled,
-		MagicLinkEnabled:    app.MagicLinkEnabled,
-		OIDCEnabled:         app.OIDCEnabled,
-		Tenants:             tenants,
-		IsEdit:              true,
+		ID:                   app.ID.String(),
+		Name:                 app.Name,
+		Description:          app.Description,
+		FrontendURL:          app.FrontendURL,
+		TenantID:             app.TenantID.String(),
+		TwoFAIssuerName:      app.TwoFAIssuerName,
+		TwoFAEnabled:         app.TwoFAEnabled,
+		TwoFARequired:        app.TwoFARequired,
+		Passkey2FAEnabled:    app.Passkey2FAEnabled,
+		PasskeyLoginEnabled:  app.PasskeyLoginEnabled,
+		MagicLinkEnabled:     app.MagicLinkEnabled,
+		OIDCEnabled:          app.OIDCEnabled,
+		SMS2FAEnabled:        app.SMS2FAEnabled,
+		TrustedDeviceEnabled: app.TrustedDeviceEnabled,
+		TrustedDeviceMaxDays: app.TrustedDeviceMaxDays,
+		Tenants:              tenants,
+		IsEdit:               true,
 	}
 
 	// Pre-fill brute-force defaults so fields are never blank
@@ -819,6 +836,12 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
 	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
 	oidcEnabled := c.PostForm("oidc_enabled") == "on"
+	sms2FAEnabled := c.PostForm("sms_2fa_enabled") == "on"
+	trustedDeviceEnabled := c.PostForm("trusted_device_enabled") == "on"
+	trustedDeviceMaxDays := 30
+	if v, err := strconv.Atoi(c.PostForm("trusted_device_max_days")); err == nil && v > 0 {
+		trustedDeviceMaxDays = v
+	}
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -883,6 +906,13 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	if err := h.Repo.UpdateApp(id, name, description, frontendURL, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, bf); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	// Update SMS and trusted device settings
+	if err := h.Repo.UpdateAppSMSTrustedDevice(id, sms2FAEnabled, trustedDeviceEnabled, trustedDeviceMaxDays); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update SMS/trusted device settings.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
 	}
 
@@ -1363,7 +1393,65 @@ func (h *GUIHandler) UserDetail(c *gin.Context) {
 		return
 	}
 
+	// Load trusted devices if the feature is enabled
+	if h.TrustedDeviceRepo != nil {
+		userUUID, parseErr := uuid.Parse(id)
+		if parseErr == nil {
+			devices, devErr := h.TrustedDeviceRepo.FindAllForUser(userUUID)
+			if devErr == nil {
+				detail.TrustedDevices = devices
+			}
+		}
+	}
+
 	c.HTML(http.StatusOK, "user_detail", detail)
+}
+
+// UserRevokeTrustedDevice revokes a single trusted device for a user (admin action).
+// DELETE /gui/users/:id/trusted-devices/:device_id
+func (h *GUIHandler) UserRevokeTrustedDevice(c *gin.Context) {
+	deviceIDStr := c.Param("device_id")
+	if h.TrustedDeviceRepo == nil {
+		c.String(http.StatusServiceUnavailable, "Trusted device feature is disabled.")
+		return
+	}
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid device ID.")
+		return
+	}
+	if err := h.TrustedDeviceRepo.DeleteByID(deviceID); err != nil {
+		c.String(http.StatusInternalServerError, "Failed to revoke trusted device.")
+		return
+	}
+	c.String(http.StatusOK, `<span class="badge bg-success bg-opacity-10 text-success">Revoked</span>`)
+}
+
+// UserRevokeAllTrustedDevices revokes all trusted devices for a user across all apps (admin action).
+// DELETE /gui/users/:id/trusted-devices
+func (h *GUIHandler) UserRevokeAllTrustedDevices(c *gin.Context) {
+	id := c.Param("id")
+	if h.TrustedDeviceRepo == nil {
+		c.String(http.StatusServiceUnavailable, "Trusted device feature is disabled.")
+		return
+	}
+	userUUID, err := uuid.Parse(id)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid user ID.")
+		return
+	}
+	// Fetch all devices across all apps and delete them one by one
+	devices, err := h.TrustedDeviceRepo.FindAllForUser(userUUID)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load trusted devices.")
+		return
+	}
+	for _, d := range devices {
+		_ = h.TrustedDeviceRepo.DeleteByID(d.ID)
+	}
+	c.Header("HX-Trigger", "trustedDevicesRevoked")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success py-2 small">All trusted devices revoked successfully.</div>`)
 }
 
 // UserToggleActive toggles a user's IsActive flag and revokes tokens on deactivation (HTMX fragment)
@@ -6063,4 +6151,120 @@ func (h *GUIHandler) WebhookDeliveries(c *gin.Context) {
 		"Total":      total,
 		"CSRFToken":  getCSRFToken(c),
 	})
+}
+
+// ============================================================
+// My Account — Backup Email
+// ============================================================
+
+// MyAccountBackupEmailStatus returns the current backup email status as an HTML partial.
+// GET /gui/my-account/backup-email/status
+func (h *GUIHandler) MyAccountBackupEmailStatus(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to load account.</div>`)
+		return
+	}
+	c.HTML(http.StatusOK, "admin_backup_email_status", gin.H{
+		"BackupEmail":         account.BackupEmail,
+		"BackupEmailVerified": account.BackupEmailVerified,
+		"CSRFToken":           c.GetString(web.CSRFTokenKey),
+	})
+}
+
+// MyAccountSetBackupEmail sets (or updates) the backup email for the admin account.
+// POST /gui/my-account/backup-email
+func (h *GUIHandler) MyAccountSetBackupEmail(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	backupEmail := strings.TrimSpace(c.PostForm("backup_email"))
+
+	if backupEmail == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2 small">Backup email address is required.</div>`)
+		return
+	}
+
+	if err := h.AccountService.Repo.SetBackupEmail(adminID, backupEmail); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to update backup email.</div>`)
+		return
+	}
+
+	c.String(http.StatusOK,
+		fmt.Sprintf(`<div class="alert alert-success py-2 small">Backup email set to %s. Note: admin account backup email verification is not required.</div>`, backupEmail))
+}
+
+// MyAccountRemoveBackupEmail removes the backup email from the admin account.
+// DELETE /gui/my-account/backup-email
+func (h *GUIHandler) MyAccountRemoveBackupEmail(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	if err := h.AccountService.Repo.ClearBackupEmail(adminID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to remove backup email.</div>`)
+		return
+	}
+
+	// Refresh the backup email status section
+	c.Header("HX-Trigger", "backupEmailChanged")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success py-2 small">Backup email removed.</div>`)
+}
+
+// ============================================================
+// My Account — Trusted Devices (admin's own user-level devices)
+// ============================================================
+
+// MyAccountTrustedDevices lists the trusted devices belonging to the logged-in admin
+// across all apps (the admin may also be a regular user in some apps).
+// GET /gui/my-account/trusted-devices
+func (h *GUIHandler) MyAccountTrustedDevices(c *gin.Context) {
+	if h.TrustedDeviceRepo == nil {
+		c.HTML(http.StatusOK, "admin_trusted_devices", gin.H{
+			"Devices":   nil,
+			"CSRFToken": c.GetString(web.CSRFTokenKey),
+		})
+		return
+	}
+	adminID := c.GetString(web.GUIAdminIDKey)
+	adminUUID, err := uuid.Parse(adminID)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid admin ID.")
+		return
+	}
+	devices, err := h.TrustedDeviceRepo.FindAllForUser(adminUUID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to load trusted devices.</div>`)
+		return
+	}
+	c.HTML(http.StatusOK, "admin_trusted_devices", gin.H{
+		"Devices":   devices,
+		"CSRFToken": c.GetString(web.CSRFTokenKey),
+	})
+}
+
+// MyAccountRevokeTrustedDevice revokes one of the admin's own trusted devices.
+// DELETE /gui/my-account/trusted-devices/:device_id
+func (h *GUIHandler) MyAccountRevokeTrustedDevice(c *gin.Context) {
+	if h.TrustedDeviceRepo == nil {
+		c.String(http.StatusServiceUnavailable, "Trusted device feature is disabled.")
+		return
+	}
+	deviceIDStr := c.Param("device_id")
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid device ID.")
+		return
+	}
+	if err := h.TrustedDeviceRepo.DeleteByID(deviceID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to revoke trusted device.</div>`)
+		return
+	}
+	// Trigger a list refresh
+	c.Header("HX-Trigger", "trustedDeviceRevoked")
+	c.String(http.StatusOK, `<span class="badge bg-success bg-opacity-10 text-success">Revoked</span>`)
 }

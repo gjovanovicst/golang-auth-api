@@ -10,13 +10,15 @@ import (
 
 // DashboardStats holds aggregate counts for the admin dashboard.
 type DashboardStats struct {
-	TotalUsers        int64
-	ActiveUsers       int64
-	InactiveUsers     int64
-	TotalTenants      int64
-	TotalApps         int64
-	RecentEventsCount int64 // activity logs in last 24 hours
-	ActiveSessions    int64 // active user sessions across all apps
+	TotalUsers         int64
+	ActiveUsers        int64
+	InactiveUsers      int64
+	TotalTenants       int64
+	TotalApps          int64
+	RecentEventsCount  int64 // activity logs in last 24 hours
+	ActiveSessions     int64 // active user sessions across all apps
+	TrustedDeviceCount int64 // active (non-expired) trusted devices
+	VerifiedPhoneCount int64 // users with phone_verified = true
 }
 
 // DashboardService provides aggregated data for the admin dashboard.
@@ -78,6 +80,21 @@ func (s *DashboardService) GetStats() (*DashboardStats, error) {
 			continue // Don't fail dashboard if Redis is unavailable
 		}
 		stats.ActiveSessions += count
+	}
+
+	// Count active (non-expired) trusted devices
+	if err := s.db.Table("trusted_devices").
+		Where("expires_at > ?", time.Now().UTC()).
+		Count(&stats.TrustedDeviceCount).Error; err != nil {
+		// Non-fatal: table may not exist yet on first startup
+		stats.TrustedDeviceCount = 0
+	}
+
+	// Count users with verified phone numbers
+	if err := s.db.Model(&models.User{}).
+		Where("phone_verified = ?", true).
+		Count(&stats.VerifiedPhoneCount).Error; err != nil {
+		stats.VerifiedPhoneCount = 0
 	}
 
 	return stats, nil

@@ -11,6 +11,7 @@ import (
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
+	"github.com/gjovanovicst/auth_api/internal/sms"
 	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
@@ -41,6 +42,7 @@ type Service struct {
 	LookupRoles       RoleLookupFunc        // Optional: if nil, tokens are generated without roles
 	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no default role is assigned on registration
 	WebhookService    *webhook.Service      // Optional: if nil, webhook dispatch is skipped
+	SMSSender         sms.Sender            // Optional: if nil, SMS 2FA auto-send is skipped
 }
 
 func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
@@ -218,6 +220,40 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 			}
 		}
 
+		// If the user uses SMS 2FA, generate and send the code now
+		if twoFAMethod == emailpkg.TwoFAMethodSMS && s.SMSSender != nil {
+			if user.PhoneVerified && user.PhoneNumber != "" {
+				code := generateSecure6DigitCode()
+				if storeErr := redis.Set2FASMSCode(appID.String(), user.ID.String(), code); storeErr != nil {
+					return nil, errors.NewAppError(errors.ErrInternal, "Failed to prepare SMS 2FA verification")
+				}
+				body := fmt.Sprintf("Your verification code is: %s  (expires in 5 minutes)", code)
+				if sendErr := s.SMSSender.Send(user.PhoneNumber, body); sendErr != nil {
+					log.Printf("Warning: Failed to send SMS 2FA code to user %s: %v", user.ID, sendErr)
+					return nil, errors.NewAppError(errors.ErrInternal, "Failed to send SMS 2FA code")
+				}
+			}
+		}
+
+		// If the user uses backup email 2FA, generate and send the code to the backup address now.
+		// Always store the code in Redis so resend works even in dev mode (no email service).
+		if twoFAMethod == emailpkg.TwoFAMethodBackupEmail {
+			if user.BackupEmailVerified && user.BackupEmail != "" {
+				code := generateSecure6DigitCode()
+				if storeErr := redis.SetBackupEmail2FACode(appID.String(), user.ID.String(), code); storeErr != nil {
+					return nil, errors.NewAppError(errors.ErrInternal, "Failed to prepare backup email 2FA verification")
+				}
+				if s.EmailService != nil {
+					if sendErr := s.EmailService.Send2FACodeEmail(appID, user.BackupEmail, code, &user.ID); sendErr != nil {
+						log.Printf("Warning: Failed to send backup email 2FA code to user %s: %v", user.ID, sendErr)
+						return nil, errors.NewAppError(errors.ErrInternal, "Failed to send backup email 2FA code")
+					}
+				} else {
+					log.Printf("[DEV MODE] Backup email 2FA code for user %s: %s", user.ID, code)
+				}
+			}
+		}
+
 		// For passkey 2FA, no server-side action needed here — the client
 		// must call /2fa/passkey/begin + /2fa/passkey/finish using the temp token.
 
@@ -384,6 +420,13 @@ func (s *Service) createSession(appID, userID, ip, userAgent string) (accessToke
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 	}
 	return accessToken, refreshToken, "", nil
+}
+
+// CreateSessionForUser creates a new authenticated session for a user by app+userID.
+// Used by the trusted-device bypass in the Login handler to issue tokens when 2FA is skipped.
+func (s *Service) CreateSessionForUser(appID, userID uuid.UUID, ip, userAgent string) (accessToken, refreshToken string, appErr *errors.AppError) {
+	at, rt, _, err := s.createSession(appID.String(), userID.String(), ip, userAgent)
+	return at, rt, err
 }
 
 func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.AppError {

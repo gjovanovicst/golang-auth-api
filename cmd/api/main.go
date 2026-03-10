@@ -22,6 +22,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
+	"github.com/gjovanovicst/auth_api/internal/sms"
 	"github.com/gjovanovicst/auth_api/internal/social"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
@@ -140,6 +141,12 @@ func main() {
 	twofaService := twofa.NewService(userRepo, database.DB, emailService)
 	logQueryService := logService.NewQueryService(logRepo)
 
+	// Initialize SMS sender (graceful degradation if not configured)
+	smsSender := sms.NewSenderFromConfig()
+
+	// Initialize Trusted Device Repository
+	trustedDeviceRepo := twofa.NewTrustedDeviceRepository(database.DB)
+
 	// Initialize Webhook Service
 	webhookRepo := webhook.NewRepository(database.DB)
 	webhookService := webhook.NewService(webhookRepo)
@@ -150,12 +157,37 @@ func main() {
 	userService.WebhookService = webhookService
 	twofaService.WebhookService = webhookService
 	socialService.WebhookService = webhookService
+	// Wire SMS sender and trusted device repo into twofa service
+	twofaService.SMSSender = smsSender
+	twofaService.TrustedDeviceRepo = trustedDeviceRepo
+	// Wire SMS sender into user service so SMS 2FA codes are auto-sent on password login
+	userService.SMSSender = smsSender
 	userHandler := user.NewHandler(userService)
 	socialHandler := social.NewHandler(socialService)
+	// Wire twofa service into social handler so SMS 2FA codes are auto-sent on social login
+	socialHandler.TwoFAService = twofaService
+	// Wire trusted device validation callback into social handler
+	socialHandler.ValidateTrustedDevice = func(plainToken string) (uuid.UUID, uuid.UUID, bool) {
+		device, appErr := twofaService.ValidateTrustedDevice(plainToken)
+		if appErr != nil {
+			return uuid.Nil, uuid.Nil, false
+		}
+		return device.UserID, device.AppID, true
+	}
 	twofaHandler := twofa.NewHandler(twofaService)
 	twofaHandler.LookupRoles = rbacService.GetUserRoleNames
 	twofaHandler.SessionService = sessionService
 	twofaHandler.AssignDefaultRole = rbacService.AssignDefaultRole
+	// Wire trusted device repo into twofa handler
+	twofaHandler.TrustedDeviceRepo = trustedDeviceRepo
+	// Wire trusted device validation callback into user handler (avoids circular import)
+	userHandler.ValidateTrustedDevice = func(plainToken string) (uuid.UUID, uuid.UUID, bool) {
+		device, appErr := twofaService.ValidateTrustedDevice(plainToken)
+		if appErr != nil {
+			return uuid.Nil, uuid.Nil, false
+		}
+		return device.UserID, device.AppID, true
+	}
 	logHandler := logService.NewHandler(logQueryService)
 	sessionHandler := session.NewHandler(sessionService)
 	adminRepo := admin.NewRepository(database.DB)
@@ -225,9 +257,11 @@ func main() {
 	adminHandler.IPRuleRepo = ipRuleRepo
 	adminHandler.IPRuleEvaluator = ipRuleEvaluator
 	adminHandler.GeoIPService = geoIPService
+	adminHandler.TrustedDeviceRepo = trustedDeviceRepo
 	guiHandler.IPRuleRepo = ipRuleRepo
 	guiHandler.IPRuleEvaluator = ipRuleEvaluator
 	guiHandler.GeoIPService = geoIPService
+	guiHandler.TrustedDeviceRepo = trustedDeviceRepo
 
 	// Wire anomaly notification callback: sends emails when anomalies are detected
 	logSvc.SetAnomalyCallback(func(appID, userID uuid.UUID, userEmail string, result logService.AnomalyResult) {
@@ -285,6 +319,12 @@ func main() {
 		public.POST("/2fa/login-verify", middleware.API2FAVerifyRateLimit(), twofaHandler.VerifyLogin)
 		// 2FA email code resend (public because it needs temp token during login)
 		public.POST("/2fa/email/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendEmail2FACode)
+		// 2FA SMS code resend (public because it needs temp token during login)
+		public.POST("/2fa/sms/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendSMS2FACode)
+		// 2FA backup email code resend (public because it needs temp token during login)
+		public.POST("/2fa/backup-email/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendBackupEmail2FACode)
+		// Backup email verification (public — token sent by email, no auth required)
+		public.GET("/2fa/backup-email/verify", twofaHandler.VerifyBackupEmail)
 		// 2FA available methods (public so login UI can show method options)
 		public.GET("/2fa/methods", twofaHandler.GetAvailableMethods)
 
@@ -361,6 +401,27 @@ func main() {
 		protected.POST("/2fa/recovery-codes", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.GenerateRecoveryCodes)
 		// Email 2FA routes
 		protected.POST("/2fa/email/enable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.EnableEmail2FA)
+
+		// SMS 2FA routes
+		protected.POST("/2fa/sms/enable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.EnableSMS2FA)
+
+		// Backup email 2FA routes
+		protected.POST("/2fa/backup-email", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.AddBackupEmail)
+		protected.DELETE("/2fa/backup-email", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.RemoveBackupEmail)
+		protected.GET("/2fa/backup-email/status", middleware.AuthorizePermission(rbacService, "settings", "read"), twofaHandler.BackupEmailStatus)
+		protected.POST("/2fa/backup-email/enable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.EnableBackupEmail2FA)
+		protected.POST("/2fa/backup-email/disable", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.DisableBackupEmail2FA)
+
+		// Phone management routes
+		protected.POST("/phone", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.AddPhone)
+		protected.POST("/phone/verify", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.VerifyPhone)
+		protected.DELETE("/phone", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.RemovePhone)
+		protected.GET("/phone/status", middleware.AuthorizePermission(rbacService, "settings", "read"), twofaHandler.PhoneStatus)
+
+		// Trusted device management routes
+		protected.GET("/2fa/trusted-devices", middleware.AuthorizePermission(rbacService, "settings", "read"), twofaHandler.ListTrustedDevices)
+		protected.DELETE("/2fa/trusted-devices/:id", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.RevokeTrustedDevice)
+		protected.DELETE("/2fa/trusted-devices", middleware.AuthorizePermission(rbacService, "settings", "write"), twofaHandler.RevokeAllTrustedDevices)
 
 		// Passkey management routes (require settings:write)
 		protected.POST("/passkey/register/begin", middleware.AuthorizePermission(rbacService, "settings", "write"), webauthnHandler.BeginRegistration)
@@ -456,6 +517,11 @@ func main() {
 		adminRoutes.DELETE("/webhooks/:id", webhookHandler.AdminDeleteEndpoint)
 		adminRoutes.GET("/webhooks/:id/deliveries", webhookHandler.AdminListDeliveriesByEndpoint)
 		adminRoutes.GET("/webhooks/apps/:app_id/deliveries", webhookHandler.AdminListDeliveriesByApp)
+
+		// Trusted Device Management (Admin)
+		adminRoutes.GET("/users/:id/trusted-devices", adminHandler.AdminListTrustedDevices)
+		adminRoutes.DELETE("/users/:id/trusted-devices/:device_id", adminHandler.AdminRevokeTrustedDevice)
+		adminRoutes.DELETE("/users/:id/trusted-devices", adminHandler.AdminRevokeAllTrustedDevices)
 	}
 
 	// App API routes (protected by per-application API key)
@@ -560,6 +626,8 @@ func main() {
 			guiAuth.DELETE("/users/social-accounts/:id", guiHandler.SocialAccountUnlink)
 			guiAuth.GET("/users/passkeys/:id/delete", guiHandler.PasskeyDeleteConfirm)
 			guiAuth.DELETE("/users/passkeys/:id", guiHandler.PasskeyDelete)
+			guiAuth.DELETE("/users/:id/trusted-devices/:device_id", guiHandler.UserRevokeTrustedDevice)
+			guiAuth.DELETE("/users/:id/trusted-devices", guiHandler.UserRevokeAllTrustedDevices)
 
 			// Activity logs viewer
 			guiAuth.GET("/logs", guiHandler.LogsPage)
@@ -697,6 +765,15 @@ func main() {
 			// Magic link management (admin self-service)
 			guiAuth.GET("/my-account/magic-link/status", guiHandler.MyAccountMagicLinkStatus)
 			guiAuth.POST("/my-account/magic-link/toggle", guiHandler.MyAccountMagicLinkToggle)
+
+			// Backup email management (admin self-service)
+			guiAuth.GET("/my-account/backup-email/status", guiHandler.MyAccountBackupEmailStatus)
+			guiAuth.POST("/my-account/backup-email", guiHandler.MyAccountSetBackupEmail)
+			guiAuth.DELETE("/my-account/backup-email", guiHandler.MyAccountRemoveBackupEmail)
+
+			// Trusted device management (admin self-service)
+			guiAuth.GET("/my-account/trusted-devices", guiHandler.MyAccountTrustedDevices)
+			guiAuth.DELETE("/my-account/trusted-devices/:device_id", guiHandler.MyAccountRevokeTrustedDevice)
 
 			// Webhook management
 			guiAuth.GET("/webhooks", guiHandler.WebhookPage)

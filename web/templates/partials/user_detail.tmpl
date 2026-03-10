@@ -291,6 +291,108 @@
                 </div>
             </div>
         </div>
+
+        <!-- Backup Email & Phone -->
+        <div class="mt-3 pt-3 border-top">
+            <h6 class="fw-bold mb-2">
+                <i class="bi bi-envelope-plus me-2"></i>Backup Email &amp; Phone
+            </h6>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label small text-muted mb-1">Backup Email</label>
+                    {{if .BackupEmail}}
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-semibold">{{.BackupEmail}}</span>
+                        {{if .BackupEmailVerified}}
+                        <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle me-1"></i>Verified</span>
+                        {{else}}
+                        <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-hourglass-split me-1"></i>Pending</span>
+                        {{end}}
+                    </div>
+                    {{else}}
+                    <div class="text-muted fst-italic small">Not set</div>
+                    {{end}}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small text-muted mb-1">Phone Number</label>
+                    {{if .PhoneNumber}}
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-semibold">{{.PhoneNumber}}</span>
+                        {{if .PhoneVerified}}
+                        <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle me-1"></i>Verified</span>
+                        {{else}}
+                        <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-hourglass-split me-1"></i>Pending</span>
+                        {{end}}
+                    </div>
+                    {{else}}
+                    <div class="text-muted fst-italic small">Not set</div>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+
+        <!-- Trusted Devices -->
+        <div class="mt-3 pt-3 border-top">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <h6 class="fw-bold mb-0">
+                    <i class="bi bi-device-hdd me-2"></i>Trusted Devices
+                </h6>
+                {{if .TrustedDevices}}
+                <button class="btn btn-sm btn-outline-danger"
+                        hx-delete="/gui/users/{{.ID}}/trusted-devices"
+                        hx-target="#trusted-devices-list-{{.ID}}"
+                        hx-swap="outerHTML"
+                        hx-confirm="Revoke all trusted devices for this user? They will need to pass 2FA on their next login from each device."
+                        title="Revoke all trusted devices">
+                    <i class="bi bi-x-circle me-1"></i>Revoke All
+                </button>
+                {{end}}
+            </div>
+            <div id="trusted-devices-list-{{.ID}}">
+            {{if .TrustedDevices}}
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Device Name</th>
+                            <th>Last Used</th>
+                            <th>Expires</th>
+                            <th class="text-center" style="width: 80px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .TrustedDevices}}
+                        <tr id="trusted-device-row-{{.ID}}">
+                            <td>
+                                <i class="bi bi-laptop me-1 text-muted"></i>
+                                {{if .Name}}{{.Name}}{{else}}<span class="text-muted fst-italic">Unknown device</span>{{end}}
+                            </td>
+                            <td>
+                                <small class="text-muted" title="{{formatDateTimeFull .LastUsedAt}}">{{timeAgo .LastUsedAt}}</small>
+                            </td>
+                            <td>
+                                <small class="text-muted" title="{{formatDateTimeFull .ExpiresAt}}">{{timeAgo .ExpiresAt}}</small>
+                            </td>
+                            <td class="text-center">
+                                <button class="btn btn-outline-danger btn-sm"
+                                        hx-delete="/gui/users/{{$.ID}}/trusted-devices/{{.ID}}"
+                                        hx-target="#trusted-device-row-{{.ID}}"
+                                        hx-swap="outerHTML"
+                                        hx-confirm="Revoke this trusted device? The user will need to pass 2FA on their next login from this device."
+                                        title="Revoke device">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{else}}
+            <p class="text-muted small mb-0">No trusted devices registered.</p>
+            {{end}}
+            </div>
+        </div>
     </div>
 </div>
 {{end}}

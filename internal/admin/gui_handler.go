@@ -5218,6 +5218,8 @@ type sessionItem struct {
 	LastActive          string
 	CreatedAtFormatted  string
 	LastActiveFormatted string
+	Status              string // "active", "idle", or "stale"
+	IdleMinutes         int    // minutes since last_active
 }
 
 // SessionList returns the paginated session list partial (HTMX fragment).
@@ -5281,6 +5283,12 @@ func (h *GUIHandler) SessionList(c *gin.Context) {
 	}
 	userEmails, _ := h.Repo.GetUserEmailsByIDs(userIDs)
 
+	// Active threshold: treat sessions with last_active within this window as "active"
+	activeThresholdMinutes := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")
+	if activeThresholdMinutes <= 0 {
+		activeThresholdMinutes = 15
+	}
+
 	// Build flattened items and apply in-memory filters
 	var items []sessionItem
 	for _, s := range allSessions {
@@ -5318,8 +5326,20 @@ func (h *GUIHandler) SessionList(c *gin.Context) {
 		}
 		if t, err := time.Parse(time.RFC3339, s["last_active"]); err == nil {
 			item.LastActiveFormatted = formatTimeAgo(t)
+			// Compute session status based on idle time
+			idle := int(time.Since(t).Minutes())
+			item.IdleMinutes = idle
+			switch {
+			case idle <= activeThresholdMinutes:
+				item.Status = "active"
+			case idle < 1440:
+				item.Status = "idle"
+			default:
+				item.Status = "stale"
+			}
 		} else {
 			item.LastActiveFormatted = s["last_active"]
+			item.Status = "stale"
 		}
 
 		items = append(items, item)
@@ -5330,6 +5350,7 @@ func (h *GUIHandler) SessionList(c *gin.Context) {
 
 	// Paginate
 	total := len(items)
+
 	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
 	start := (page - 1) * pageSize
 	end := start + pageSize
@@ -5370,16 +5391,37 @@ func (h *GUIHandler) SessionDetail(c *gin.Context) {
 	userEmails, _ := h.Repo.GetUserEmailsByIDs([]string{userID})
 	appNames, _ := h.Repo.GetAppNamesByIDs([]string{appID})
 
+	// Compute session status
+	activeThresholdMinutes := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")
+	if activeThresholdMinutes <= 0 {
+		activeThresholdMinutes = 15
+	}
+	detailStatus := "stale"
+	detailIdleMinutes := 0
+	if t, err := time.Parse(time.RFC3339, data["last_active"]); err == nil {
+		detailIdleMinutes = int(time.Since(t).Minutes())
+		switch {
+		case detailIdleMinutes <= activeThresholdMinutes:
+			detailStatus = "active"
+		case detailIdleMinutes < 1440:
+			detailStatus = "idle"
+		default:
+			detailStatus = "stale"
+		}
+	}
+
 	c.HTML(http.StatusOK, "session_detail", gin.H{
-		"SessionID":  sessionID,
-		"UserID":     userID,
-		"UserEmail":  userEmails[userID],
-		"AppID":      appID,
-		"AppName":    appNames[appID],
-		"IP":         data["ip"],
-		"UserAgent":  data["user_agent"],
-		"CreatedAt":  data["created_at"],
-		"LastActive": data["last_active"],
+		"SessionID":   sessionID,
+		"UserID":      userID,
+		"UserEmail":   userEmails[userID],
+		"AppID":       appID,
+		"AppName":     appNames[appID],
+		"IP":          data["ip"],
+		"UserAgent":   data["user_agent"],
+		"CreatedAt":   data["created_at"],
+		"LastActive":  data["last_active"],
+		"Status":      detailStatus,
+		"IdleMinutes": detailIdleMinutes,
 	})
 }
 
@@ -5401,6 +5443,19 @@ func (h *GUIHandler) SessionRevoke(c *gin.Context) {
 	if err := redis.DeleteSession(appID, sessionID, userID); err != nil {
 		c.String(http.StatusInternalServerError, "Failed to revoke session")
 		return
+	}
+
+	// Immediately invalidate any live access tokens belonging to this user so the
+	// client is forced out without waiting for the JWT to naturally expire.
+	// We use a user-wide blacklist keyed to the access-token TTL; the middleware
+	// checks this flag on every authenticated request and returns 401 when set.
+	if userID != "" {
+		accessTokenTTL := time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")) * time.Minute
+		if err := redis.BlacklistAllUserTokens(appID, userID, accessTokenTTL); err != nil {
+			// Non-fatal: log the error but continue — the session hash is already gone so the
+			// next request will still get a 401 via the SessionExists check.
+			_ = err
+		}
 	}
 
 	// Check if this was called from user detail page
@@ -5428,6 +5483,12 @@ func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
 	if err := redis.DeleteAllUserSessions(appID, userID, ""); err != nil {
 		c.String(http.StatusInternalServerError, "Failed to revoke sessions")
 		return
+	}
+
+	// Blacklist all live access tokens for the user so they are forced out immediately.
+	accessTokenTTL := time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")) * time.Minute
+	if err := redis.BlacklistAllUserTokens(appID, userID, accessTokenTTL); err != nil {
+		_ = err // non-fatal
 	}
 
 	// Check if this was called from user detail page
@@ -5472,6 +5533,11 @@ func (h *GUIHandler) renderUserSessions(c *gin.Context, appID, userID string) {
 		return
 	}
 
+	activeThresholdMinutes := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")
+	if activeThresholdMinutes <= 0 {
+		activeThresholdMinutes = 15
+	}
+
 	var items []sessionItem
 	for _, sid := range sessionIDs {
 		data, err := redis.GetSession(appID, sid)
@@ -5496,8 +5562,20 @@ func (h *GUIHandler) renderUserSessions(c *gin.Context, appID, userID string) {
 		}
 		if t, err := time.Parse(time.RFC3339, data["last_active"]); err == nil {
 			item.LastActiveFormatted = formatTimeAgo(t)
+			// Compute session status based on idle time
+			idle := int(time.Since(t).Minutes())
+			item.IdleMinutes = idle
+			switch {
+			case idle <= activeThresholdMinutes:
+				item.Status = "active"
+			case idle < 1440:
+				item.Status = "idle"
+			default:
+				item.Status = "stale"
+			}
 		} else {
 			item.LastActiveFormatted = data["last_active"]
+			item.Status = "stale"
 		}
 
 		items = append(items, item)

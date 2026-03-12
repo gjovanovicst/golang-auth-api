@@ -12,12 +12,13 @@
                         <th>User Agent</th>
                         <th>Created</th>
                         <th>Last Active</th>
+                        <th>Status</th>
                         <th class="pe-3 text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {{range .Sessions}}
-                    <tr>
+                    <tr{{if eq .Status "stale"}} class="table-secondary text-muted"{{end}}>
                         <td class="ps-3">
                             {{if .UserEmail}}
                             <small class="fw-semibold">{{.UserEmail}}</small>
@@ -47,6 +48,15 @@
                         </td>
                         <td class="text-nowrap">
                             <small class="text-muted" title="{{.LastActive}}">{{.LastActiveFormatted}}</small>
+                        </td>
+                        <td>
+                            {{if eq .Status "active"}}
+                            <span class="badge bg-success">Active</span>
+                            {{else if eq .Status "idle"}}
+                            <span class="badge bg-warning text-dark">Idle</span>
+                            {{else}}
+                            <span class="badge bg-secondary">Stale</span>
+                            {{end}}
                         </td>
                         <td class="pe-3 text-end text-nowrap">
                             <button class="btn btn-outline-primary btn-sm me-1"

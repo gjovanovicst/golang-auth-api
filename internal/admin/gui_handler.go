@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,8 +22,10 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
+	userimport "github.com/gjovanovicst/auth_api/internal/user"
 	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
 	"github.com/gjovanovicst/auth_api/internal/webhook"
+	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/gjovanovicst/auth_api/web"
 	"github.com/google/uuid"
@@ -6345,4 +6348,190 @@ func (h *GUIHandler) MyAccountRevokeTrustedDevice(c *gin.Context) {
 	// Trigger a list refresh
 	c.Header("HX-Trigger", "trustedDeviceRevoked")
 	c.String(http.StatusOK, `<span class="badge bg-success bg-opacity-10 text-success">Revoked</span>`)
+}
+
+// ============================================================
+// User Export / Import (Admin GUI)
+// ============================================================
+
+// UserExport streams all users as a downloadable CSV or JSON file.
+// GET /gui/users/export?format=csv|json&app_id=&search=
+func (h *GUIHandler) UserExport(c *gin.Context) {
+	format := c.DefaultQuery("format", "csv")
+	if format != "csv" && format != "json" {
+		format = "csv"
+	}
+	appID := c.Query("app_id")
+	search := c.Query("search")
+
+	items, truncated, err := h.Repo.ExportUsers(appID, search)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to export users")
+		return
+	}
+
+	timestamp := time.Now().UTC().Format("20060102_150405")
+	truncatedVal := "false"
+	if truncated {
+		truncatedVal = "true"
+	}
+	c.Header("X-Export-Truncated", truncatedVal)
+
+	switch format {
+	case "json":
+		filename := fmt.Sprintf("users_%s.json", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+
+		type jsonExport struct {
+			Data       []UserExportItem `json:"data"`
+			Count      int              `json:"count"`
+			Truncated  bool             `json:"truncated"`
+			ExportedAt string           `json:"exported_at"`
+		}
+		enc := json.NewEncoder(c.Writer)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(jsonExport{
+			Data:       items,
+			Count:      len(items),
+			Truncated:  truncated,
+			ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+
+	default: // csv
+		filename := fmt.Sprintf("users_%s.csv", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write([]byte("\xef\xbb\xbf")) // UTF-8 BOM for Excel compatibility
+		writeUserCSVGUI(c.Writer, items)
+	}
+}
+
+// UserImportModal returns the import modal partial for the Users page.
+// GET /gui/users/import/modal
+func (h *GUIHandler) UserImportModal(c *gin.Context) {
+	appID := c.Query("app_id")
+	csrfToken, _ := c.Get(web.CSRFTokenKey)
+	c.HTML(http.StatusOK, "user_import_modal", gin.H{
+		"AppID":     appID,
+		"CSRFToken": csrfToken,
+	})
+}
+
+// UserImport processes an uploaded CSV or JSON file and bulk-creates users.
+// POST /gui/users/import  (multipart/form-data)
+func (h *GUIHandler) UserImport(c *gin.Context) {
+	renderErr := func(msg string) {
+		c.HTML(http.StatusOK, "user_import_result", gin.H{
+			"Result": dto.UserImportResult{
+				Errors: []dto.UserImportRowError{{Error: msg}},
+			},
+			"HasErrors": true,
+		})
+	}
+
+	appID := strings.TrimSpace(c.PostForm("app_id"))
+	if appID == "" {
+		renderErr("Application ID is required. Select an application before importing.")
+		return
+	}
+
+	// Enforce 10 MB upload limit
+	if err := c.Request.ParseMultipartForm(10 << 20); err != nil {
+		renderErr("File too large or invalid form submission (max 10 MB)")
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		renderErr("No file uploaded. Please select a CSV or JSON file.")
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	var rows []dto.UserImportRow
+	var parseErrors []dto.UserImportRowError
+
+	switch ext {
+	case ".json":
+		rows, parseErrors = userimport.ParseJSONImport(file)
+	default: // .csv or unrecognised extension
+		rows, parseErrors = userimport.ParseCSVImport(file)
+	}
+
+	result, err := h.Repo.ImportUsers(appID, rows)
+	if err != nil {
+		renderErr("Import failed: " + err.Error())
+		return
+	}
+
+	// Prepend parse/validation errors (they come first so row numbers are meaningful)
+	result.Errors = append(parseErrors, result.Errors...)
+	result.Total += len(parseErrors)
+
+	// Log a USER_CREATED activity event for each successfully imported user.
+	// We use LogRegister because imported users are newly created accounts.
+	appUUID, parseErr := uuid.Parse(appID)
+	if parseErr == nil && result.Imported > 0 {
+		ipAddress := c.ClientIP()
+		userAgent := c.GetHeader("User-Agent")
+		// Re-query the just-created user IDs so we can attach them to log entries.
+		// We do a best-effort lookup — logging failures are not fatal.
+		var createdUsers []struct {
+			ID    uuid.UUID
+			Email string
+		}
+		emails := make([]string, 0, len(rows))
+		for _, row := range rows {
+			emails = append(emails, strings.ToLower(strings.TrimSpace(row.Email)))
+		}
+		if len(emails) > 0 {
+			_ = h.Repo.DB.Model(&models.User{}).
+				Select("id, email").
+				Where("email IN ? AND app_id = ?", emails, appID).
+				Scan(&createdUsers).Error
+		}
+		for _, u := range createdUsers {
+			logService.LogRegister(appUUID, u.ID, ipAddress, userAgent, u.Email)
+		}
+	}
+
+	c.HTML(http.StatusOK, "user_import_result", gin.H{
+		"Result":    result,
+		"HasErrors": len(result.Errors) > 0,
+	})
+}
+
+// writeUserCSVGUI encodes a slice of UserExportItem as CSV rows into w.
+// The first row is the header. Used exclusively by the GUI UserExport handler.
+func writeUserCSVGUI(w io.Writer, items []UserExportItem) {
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{
+		"id", "app_id", "email", "name", "first_name", "last_name",
+		"locale", "email_verified", "is_active",
+		"two_fa_enabled", "two_fa_method", "social_providers",
+		"created_at", "updated_at",
+	})
+	for _, item := range items {
+		_ = cw.Write([]string{
+			item.ID.String(),
+			item.AppID.String(),
+			item.Email,
+			item.Name,
+			item.FirstName,
+			item.LastName,
+			item.Locale,
+			fmt.Sprintf("%t", item.EmailVerified),
+			fmt.Sprintf("%t", item.IsActive),
+			fmt.Sprintf("%t", item.TwoFAEnabled),
+			item.TwoFAMethod,
+			item.SocialProviders,
+			item.CreatedAt.UTC().Format(time.RFC3339),
+			item.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	cw.Flush()
 }

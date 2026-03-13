@@ -518,6 +518,10 @@ func main() {
 		adminRoutes.GET("/webhooks/:id/deliveries", webhookHandler.AdminListDeliveriesByEndpoint)
 		adminRoutes.GET("/webhooks/apps/:app_id/deliveries", webhookHandler.AdminListDeliveriesByApp)
 
+		// User Import/Export (Admin)
+		adminRoutes.GET("/users/export", adminHandler.ExportUsers)
+		adminRoutes.POST("/users/import", adminHandler.ImportUsers)
+
 		// Trusted Device Management (Admin)
 		adminRoutes.GET("/users/:id/trusted-devices", adminHandler.AdminListTrustedDevices)
 		adminRoutes.DELETE("/users/:id/trusted-devices/:device_id", adminHandler.AdminRevokeTrustedDevice)
@@ -619,6 +623,9 @@ func main() {
 			// User management
 			guiAuth.GET("/users", guiHandler.UserPage)
 			guiAuth.GET("/users/list", guiHandler.UserList)
+			guiAuth.GET("/users/export", guiHandler.UserExport)
+			guiAuth.GET("/users/import/modal", guiHandler.UserImportModal)
+			guiAuth.POST("/users/import", guiHandler.UserImport)
 			guiAuth.GET("/users/:id", guiHandler.UserDetail)
 			guiAuth.PUT("/users/:id/toggle", guiHandler.UserToggleActive)
 			guiAuth.PUT("/users/:id/unlock", guiHandler.UserUnlock)

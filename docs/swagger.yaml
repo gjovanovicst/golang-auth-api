@@ -89,6 +89,12 @@ definitions:
         type: boolean
       passkey_login_enabled:
         type: boolean
+      sms_2fa_enabled:
+        description: whether SMS is available as a 2FA method
+        type: boolean
+      trusted_device_enabled:
+        description: whether "remember this device" is available
+        type: boolean
       two_fa_enabled:
         description: whether 2FA is allowed for this app
         type: boolean
@@ -1371,6 +1377,73 @@ definitions:
     - provider
     - redirect_url
     type: object
+  dto.UserExportItem:
+    properties:
+      app_id:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      first_name:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      last_name:
+        type: string
+      locale:
+        type: string
+      name:
+        type: string
+      social_providers:
+        description: comma-separated, e.g. "google,github"
+        type: string
+      two_fa_enabled:
+        type: boolean
+      two_fa_method:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.UserExportResponse:
+    properties:
+      count:
+        type: integer
+      data:
+        items:
+          $ref: '#/definitions/dto.UserExportItem'
+        type: array
+      exported_at:
+        type: string
+      truncated:
+        type: boolean
+    type: object
+  dto.UserImportResult:
+    properties:
+      errors:
+        items:
+          $ref: '#/definitions/dto.UserImportRowError'
+        type: array
+      imported:
+        type: integer
+      skipped:
+        type: integer
+      total:
+        type: integer
+    type: object
+  dto.UserImportRowError:
+    properties:
+      email:
+        type: string
+      error:
+        type: string
+      row:
+        type: integer
+    type: object
   dto.UserResponse:
     properties:
       created_at:
@@ -1627,6 +1700,100 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Add backup email
+      tags:
+      - 2FA
+  /2fa/backup-email/disable:
+    post:
+      description: Disable backup-email-based 2FA for the authenticated user. No verification
+        code required — authentication alone is sufficient.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Disable backup email 2FA
+      tags:
+      - 2FA
+  /2fa/backup-email/enable:
+    post:
+      description: Enable backup-email-based 2FA for the authenticated user. The backup
+        email must already be verified.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TwoFAEnableResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Enable backup email 2FA
+      tags:
+      - 2FA
+  /2fa/backup-email/resend:
+    post:
+      consumes:
+      - application/json
+      description: Resend a new 2FA verification code to the user's backup email during
+        login
+      parameters:
+      - description: Temporary login token
+        in: body
+        name: resend
+        required: true
+        schema:
+          properties:
+            temp_token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Resend backup email 2FA code
       tags:
       - 2FA
   /2fa/backup-email/status:
@@ -4341,6 +4508,97 @@ paths:
       summary: Revoke a trusted device
       tags:
       - Admin
+  /admin/users/export:
+    get:
+      description: |-
+        Export all users as CSV or JSON (max 10,000 rows). Optionally filter by app_id or search term.
+        Use the X-Export-Truncated response header to detect if the result was capped at 10,000 rows.
+      parameters:
+      - description: 'Export format: csv or json (default: csv)'
+        enum:
+        - csv
+        - json
+        in: query
+        name: format
+        type: string
+      - description: Filter by application UUID
+        in: query
+        name: app_id
+        type: string
+      - description: Filter by email or name (case-insensitive)
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      - text/csv
+      responses:
+        "200":
+          description: CSV export
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Export users as CSV or JSON (Admin)
+      tags:
+      - Users
+  /admin/users/import:
+    post:
+      consumes:
+      - multipart/form-data
+      description: |-
+        Upload a CSV or JSON file to bulk-create users under a specific application.
+        The app_id query parameter is required. Duplicate emails are skipped and reported.
+        Imported users have no password — they must use the password reset flow to set one.
+        CSV expected columns: email (required), name, first_name, last_name, locale (all optional).
+        JSON: top-level array or {"users":[...]} object, same fields.
+      parameters:
+      - description: Target application UUID
+        in: query
+        name: app_id
+        required: true
+        type: string
+      - description: CSV or JSON file to import
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UserImportResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Bulk import users from CSV or JSON (Admin)
+      tags:
+      - Users
   /admin/webhooks:
     get:
       description: Returns all registered webhook endpoints across all applications

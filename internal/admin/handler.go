@@ -1,14 +1,20 @@
 package admin
 
 import (
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
+	userimport "github.com/gjovanovicst/auth_api/internal/user"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
@@ -1705,4 +1711,197 @@ func (h *Handler) AdminRevokeAllTrustedDevices(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "All trusted devices revoked"})
+}
+
+// ============================================================
+// User Export / Import (Admin REST API)
+// ============================================================
+
+// ExportUsers streams all users as a downloadable CSV or JSON file.
+//
+// @Summary Export users as CSV or JSON (Admin)
+// @Description Export all users as CSV or JSON (max 10,000 rows). Optionally filter by app_id or search term.
+// @Description Use the X-Export-Truncated response header to detect if the result was capped at 10,000 rows.
+// @Tags Users
+// @Security AdminApiKey
+// @Produce json
+// @Produce text/csv
+// @Param format  query string false "Export format: csv or json (default: csv)" Enums(csv, json)
+// @Param app_id  query string false "Filter by application UUID"
+// @Param search  query string false "Filter by email or name (case-insensitive)"
+// @Success 200 {object} dto.UserExportResponse "JSON export"
+// @Success 200 {string} string "CSV export"
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /admin/users/export [get]
+func (h *Handler) ExportUsers(c *gin.Context) {
+	var req dto.UserExportRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+	if req.Format == "" {
+		req.Format = "csv"
+	}
+	if req.Format != "csv" && req.Format != "json" {
+		req.Format = "csv"
+	}
+
+	items, truncated, err := h.Repo.ExportUsers(req.AppID, req.Search)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to export users"})
+		return
+	}
+
+	timestamp := time.Now().UTC().Format("20060102_150405")
+	truncatedStr := "false"
+	if truncated {
+		truncatedStr = "true"
+	}
+	c.Header("X-Export-Truncated", truncatedStr)
+
+	switch req.Format {
+	case "json":
+		filename := fmt.Sprintf("users_%s.json", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+
+		resp := dto.UserExportResponse{
+			Data:       toUserExportDTOs(items),
+			Count:      len(items),
+			Truncated:  truncated,
+			ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		enc := json.NewEncoder(c.Writer)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(resp)
+
+	default: // csv
+		filename := fmt.Sprintf("users_%s.csv", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write([]byte("\xef\xbb\xbf")) // UTF-8 BOM for Excel
+		writeUserCSV(c.Writer, items)
+	}
+}
+
+// ImportUsers bulk-creates users from an uploaded CSV or JSON file.
+//
+// @Summary Bulk import users from CSV or JSON (Admin)
+// @Description Upload a CSV or JSON file to bulk-create users under a specific application.
+// @Description The app_id query parameter is required. Duplicate emails are skipped and reported.
+// @Description Imported users have no password — they must use the password reset flow to set one.
+// @Description CSV expected columns: email (required), name, first_name, last_name, locale (all optional).
+// @Description JSON: top-level array or {"users":[...]} object, same fields.
+// @Tags Users
+// @Security AdminApiKey
+// @Accept multipart/form-data
+// @Produce json
+// @Param app_id query    string true "Target application UUID"
+// @Param file   formData file   true "CSV or JSON file to import"
+// @Success 200 {object} dto.UserImportResult
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /admin/users/import [post]
+func (h *Handler) ImportUsers(c *gin.Context) {
+	appID := strings.TrimSpace(c.Query("app_id"))
+	if appID == "" {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "app_id query parameter is required"})
+		return
+	}
+
+	// Enforce 10 MB upload limit
+	if err := c.Request.ParseMultipartForm(10 << 20); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "file too large or invalid multipart form"})
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "missing file field; upload a CSV or JSON file as 'file'"})
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	var rows []dto.UserImportRow
+	var parseErrors []dto.UserImportRowError
+
+	switch ext {
+	case ".json":
+		rows, parseErrors = userimport.ParseJSONImport(file)
+	default: // .csv or unrecognised
+		rows, parseErrors = userimport.ParseCSVImport(file)
+	}
+
+	result, err := h.Repo.ImportUsers(appID, rows)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Import failed: " + err.Error()})
+		return
+	}
+
+	// Prepend parse/validation errors to the DB-level result errors
+	result.Errors = append(parseErrors, result.Errors...)
+	result.Total += len(parseErrors)
+
+	c.JSON(http.StatusOK, result)
+}
+
+// toUserExportDTOs converts repository-level UserExportItem slice to the public DTO slice.
+func toUserExportDTOs(items []UserExportItem) []dto.UserExportItem {
+	out := make([]dto.UserExportItem, len(items))
+	for i, item := range items {
+		out[i] = dto.UserExportItem{
+			ID:              item.ID.String(),
+			AppID:           item.AppID.String(),
+			Email:           item.Email,
+			Name:            item.Name,
+			FirstName:       item.FirstName,
+			LastName:        item.LastName,
+			Locale:          item.Locale,
+			EmailVerified:   item.EmailVerified,
+			IsActive:        item.IsActive,
+			TwoFAEnabled:    item.TwoFAEnabled,
+			TwoFAMethod:     item.TwoFAMethod,
+			SocialProviders: item.SocialProviders,
+			CreatedAt:       item.CreatedAt,
+			UpdatedAt:       item.UpdatedAt,
+		}
+	}
+	return out
+}
+
+// writeUserCSV encodes a slice of UserExportItem as CSV rows into w.
+// The first row is the header.
+func writeUserCSV(w interface{ Write([]byte) (int, error) }, items []UserExportItem) {
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{
+		"id", "app_id", "email", "name", "first_name", "last_name",
+		"locale", "email_verified", "is_active",
+		"two_fa_enabled", "two_fa_method", "social_providers",
+		"created_at", "updated_at",
+	})
+	for _, item := range items {
+		_ = cw.Write([]string{
+			item.ID.String(),
+			item.AppID.String(),
+			item.Email,
+			item.Name,
+			item.FirstName,
+			item.LastName,
+			item.Locale,
+			fmt.Sprintf("%t", item.EmailVerified),
+			fmt.Sprintf("%t", item.IsActive),
+			fmt.Sprintf("%t", item.TwoFAEnabled),
+			item.TwoFAMethod,
+			item.SocialProviders,
+			item.CreatedAt.UTC().Format(time.RFC3339),
+			item.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	cw.Flush()
 }

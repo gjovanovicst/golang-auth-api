@@ -1,8 +1,11 @@
 package admin
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
+	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -1198,5 +1201,135 @@ func (r *Repository) GetAppNamesByIDs(appIDs []string) (map[string]string, error
 	for _, r := range rows {
 		result[r.ID] = r.Name
 	}
+	return result, nil
+}
+
+// ============================================================
+// User Export / Import Operations
+// ============================================================
+
+// ExportUsersMaxRows is the hard cap for user export operations.
+const ExportUsersMaxRows = 10_000
+
+// UserExportItem is a flat projection used for user export queries.
+// It maps directly to the SELECT columns in ExportUsers.
+type UserExportItem struct {
+	ID              uuid.UUID `json:"id"`
+	AppID           uuid.UUID `json:"app_id"`
+	Email           string    `json:"email"`
+	Name            string    `json:"name"`
+	FirstName       string    `json:"first_name"`
+	LastName        string    `json:"last_name"`
+	Locale          string    `json:"locale"`
+	EmailVerified   bool      `json:"email_verified"`
+	IsActive        bool      `json:"is_active"`
+	TwoFAEnabled    bool      `json:"two_fa_enabled"`
+	TwoFAMethod     string    `json:"two_fa_method"`
+	SocialProviders string    `json:"social_providers"` // STRING_AGG result, comma-separated
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// ExportUsers returns up to ExportUsersMaxRows user rows, applying optional
+// filters for appID and a text search on email/name.
+// It fetches ExportUsersMaxRows+1 internally so the caller can detect truncation.
+func (r *Repository) ExportUsers(appID, search string) ([]UserExportItem, bool, error) {
+	var items []UserExportItem
+
+	applyFilters := func(q *gorm.DB) *gorm.DB {
+		q = q.Joins("LEFT JOIN (SELECT user_id, STRING_AGG(provider, ',') AS providers FROM social_accounts GROUP BY user_id) sa ON sa.user_id = users.id")
+		if appID != "" {
+			q = q.Where("users.app_id = ?", appID)
+		}
+		if search != "" {
+			term := "%" + search + "%"
+			q = q.Where("(users.email ILIKE ? OR users.name ILIKE ?)", term, term)
+		}
+		return q
+	}
+
+	limit := ExportUsersMaxRows + 1
+	dataQuery := applyFilters(r.DB.Model(&models.User{}).
+		Select(`users.id, users.app_id, users.email, users.name,
+			users.first_name, users.last_name, users.locale,
+			users.email_verified, users.is_active,
+			users.two_fa_enabled, users.two_fa_method,
+			COALESCE(sa.providers, '') AS social_providers,
+			users.created_at, users.updated_at`))
+
+	if err := dataQuery.Order("users.created_at DESC").Limit(limit).Scan(&items).Error; err != nil {
+		return nil, false, err
+	}
+
+	truncated := len(items) > ExportUsersMaxRows
+	if truncated {
+		items = items[:ExportUsersMaxRows]
+	}
+	return items, truncated, nil
+}
+
+// ImportUsers bulk-creates users from the provided rows under the given appID.
+// Each row is processed independently — a failure on one row does not roll back
+// previously inserted rows. Duplicate (email, app_id) pairs are skipped and
+// reported in the result. The caller is responsible for validating appID before
+// calling this method.
+func (r *Repository) ImportUsers(appID string, rows []dto.UserImportRow) (dto.UserImportResult, error) {
+	result := dto.UserImportResult{Total: len(rows)}
+
+	appUUID, err := uuid.Parse(appID)
+	if err != nil {
+		return result, fmt.Errorf("invalid app_id %q: %w", appID, err)
+	}
+
+	for i, row := range rows {
+		rowNum := i + 1
+		normalizedEmail := strings.ToLower(strings.TrimSpace(row.Email))
+
+		// Check for existing (email, app_id) pair
+		var count int64
+		if err := r.DB.Model(&models.User{}).
+			Where("email = ? AND app_id = ?", normalizedEmail, appID).
+			Count(&count).Error; err != nil {
+			result.Errors = append(result.Errors, dto.UserImportRowError{
+				Row:   rowNum,
+				Email: row.Email,
+				Error: "database error checking duplicate",
+			})
+			continue
+		}
+
+		if count > 0 {
+			result.Skipped++
+			result.Errors = append(result.Errors, dto.UserImportRowError{
+				Row:   rowNum,
+				Email: row.Email,
+				Error: "skipped: email already exists in this application",
+			})
+			continue
+		}
+
+		user := models.User{
+			ID:            uuid.New(),
+			AppID:         appUUID,
+			Email:         normalizedEmail,
+			Name:          strings.TrimSpace(row.Name),
+			FirstName:     strings.TrimSpace(row.FirstName),
+			LastName:      strings.TrimSpace(row.LastName),
+			Locale:        strings.TrimSpace(row.Locale),
+			PasswordHash:  "",
+			EmailVerified: false,
+			IsActive:      true,
+		}
+		if err := r.DB.Create(&user).Error; err != nil {
+			result.Errors = append(result.Errors, dto.UserImportRowError{
+				Row:   rowNum,
+				Email: row.Email,
+				Error: "failed to create user",
+			})
+			continue
+		}
+		result.Imported++
+	}
+
 	return result, nil
 }

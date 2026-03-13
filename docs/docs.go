@@ -116,6 +116,149 @@ const docTemplate = `{
                 }
             }
         },
+        "/2fa/backup-email/disable": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Disable backup-email-based 2FA for the authenticated user. No verification code required — authentication alone is sufficient.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "2FA"
+                ],
+                "summary": "Disable backup email 2FA",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/2fa/backup-email/enable": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Enable backup-email-based 2FA for the authenticated user. The backup email must already be verified.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "2FA"
+                ],
+                "summary": "Enable backup email 2FA",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.TwoFAEnableResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/2fa/backup-email/resend": {
+            "post": {
+                "description": "Resend a new 2FA verification code to the user's backup email during login",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "2FA"
+                ],
+                "summary": "Resend backup email 2FA code",
+                "parameters": [
+                    {
+                        "description": "Temporary login token",
+                        "name": "resend",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "temp_token": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/2fa/backup-email/status": {
             "get": {
                 "security": [
@@ -4152,6 +4295,136 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/users/export": {
+            "get": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Export all users as CSV or JSON (max 10,000 rows). Optionally filter by app_id or search term.\nUse the X-Export-Truncated response header to detect if the result was capped at 10,000 rows.",
+                "produces": [
+                    "application/json",
+                    "text/csv"
+                ],
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Export users as CSV or JSON (Admin)",
+                "parameters": [
+                    {
+                        "enum": [
+                            "csv",
+                            "json"
+                        ],
+                        "type": "string",
+                        "description": "Export format: csv or json (default: csv)",
+                        "name": "format",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by application UUID",
+                        "name": "app_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by email or name (case-insensitive)",
+                        "name": "search",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CSV export",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/users/import": {
+            "post": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Upload a CSV or JSON file to bulk-create users under a specific application.\nThe app_id query parameter is required. Duplicate emails are skipped and reported.\nImported users have no password — they must use the password reset flow to set one.\nCSV expected columns: email (required), name, first_name, last_name, locale (all optional).\nJSON: top-level array or {\"users\":[...]} object, same fields.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Bulk import users from CSV or JSON (Admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Target application UUID",
+                        "name": "app_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "CSV or JSON file to import",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.UserImportResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/users/{id}/trusted-devices": {
             "get": {
                 "security": [
@@ -7433,6 +7706,14 @@ const docTemplate = `{
                 "passkey_login_enabled": {
                     "type": "boolean"
                 },
+                "sms_2fa_enabled": {
+                    "description": "whether SMS is available as a 2FA method",
+                    "type": "boolean"
+                },
+                "trusted_device_enabled": {
+                    "description": "whether \"remember this device\" is available",
+                    "type": "boolean"
+                },
                 "two_fa_enabled": {
                     "description": "whether 2FA is allowed for this app",
                     "type": "boolean"
@@ -9320,6 +9601,108 @@ const docTemplate = `{
                 },
                 "redirect_url": {
                     "type": "string"
+                }
+            }
+        },
+        "dto.UserExportItem": {
+            "type": "object",
+            "properties": {
+                "app_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "email_verified": {
+                    "type": "boolean"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "locale": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "social_providers": {
+                    "description": "comma-separated, e.g. \"google,github\"",
+                    "type": "string"
+                },
+                "two_fa_enabled": {
+                    "type": "boolean"
+                },
+                "two_fa_method": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.UserExportResponse": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.UserExportItem"
+                    }
+                },
+                "exported_at": {
+                    "type": "string"
+                },
+                "truncated": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "dto.UserImportResult": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.UserImportRowError"
+                    }
+                },
+                "imported": {
+                    "type": "integer"
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "dto.UserImportRowError": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "row": {
+                    "type": "integer"
                 }
             }
         },

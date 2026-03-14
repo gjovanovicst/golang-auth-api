@@ -1,0 +1,127 @@
+{{define "monitoring_health"}}
+{{$overallHealthy := eq .Status "healthy"}}
+<!-- Overall status banner -->
+<div class="alert {{if $overallHealthy}}alert-success{{else}}alert-danger{{end}} d-flex align-items-center mb-4 border-0 shadow-sm" role="alert">
+    {{if $overallHealthy}}
+    <i class="bi bi-check-circle-fill me-2 fs-5"></i>
+    <div><strong>All systems operational</strong> &mdash; All configured components are reachable.</div>
+    {{else}}
+    <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+    <div><strong>One or more systems are down</strong> &mdash; Check component details below.</div>
+    {{end}}
+</div>
+
+<!-- Component cards -->
+<div class="row g-3 mb-4">
+
+    <!-- Database -->
+    {{with index .Checks "database"}}
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <div class="rounded-3 p-2 me-3
+                        {{if eq .Status "up"}}bg-success bg-opacity-10{{else if eq .Status "down"}}bg-danger bg-opacity-10{{else}}bg-secondary bg-opacity-10{{end}}">
+                        <i class="bi bi-database fs-4
+                            {{if eq .Status "up"}}text-success{{else if eq .Status "down"}}text-danger{{else}}text-secondary{{end}}"></i>
+                    </div>
+                    <div>
+                        <h6 class="mb-0 fw-bold">Database</h6>
+                        <small class="text-muted">PostgreSQL</small>
+                    </div>
+                    <div class="ms-auto">
+                        {{if eq .Status "up"}}
+                        <span class="badge bg-success">UP</span>
+                        {{else if eq .Status "down"}}
+                        <span class="badge bg-danger">DOWN</span>
+                        {{else}}
+                        <span class="badge bg-secondary text-uppercase">{{.Status}}</span>
+                        {{end}}
+                    </div>
+                </div>
+                {{if eq .Status "up"}}
+                <div class="text-muted small"><i class="bi bi-speedometer2 me-1"></i>Latency: <strong>{{.LatencyMs}}ms</strong></div>
+                {{else if eq .Status "down"}}
+                <div class="text-danger small"><i class="bi bi-x-circle me-1"></i>{{.Error}}</div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+    {{end}}
+
+    <!-- Redis -->
+    {{with index .Checks "redis"}}
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <div class="rounded-3 p-2 me-3
+                        {{if eq .Status "up"}}bg-success bg-opacity-10{{else if eq .Status "down"}}bg-danger bg-opacity-10{{else}}bg-secondary bg-opacity-10{{end}}">
+                        <i class="bi bi-lightning-charge fs-4
+                            {{if eq .Status "up"}}text-success{{else if eq .Status "down"}}text-danger{{else}}text-secondary{{end}}"></i>
+                    </div>
+                    <div>
+                        <h6 class="mb-0 fw-bold">Cache</h6>
+                        <small class="text-muted">Redis</small>
+                    </div>
+                    <div class="ms-auto">
+                        {{if eq .Status "up"}}
+                        <span class="badge bg-success">UP</span>
+                        {{else if eq .Status "down"}}
+                        <span class="badge bg-danger">DOWN</span>
+                        {{else}}
+                        <span class="badge bg-secondary text-uppercase">{{.Status}}</span>
+                        {{end}}
+                    </div>
+                </div>
+                {{if eq .Status "up"}}
+                <div class="text-muted small"><i class="bi bi-speedometer2 me-1"></i>Latency: <strong>{{.LatencyMs}}ms</strong></div>
+                {{else if eq .Status "down"}}
+                <div class="text-danger small"><i class="bi bi-x-circle me-1"></i>{{.Error}}</div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+    {{end}}
+
+    <!-- SMTP -->
+    {{with index .Checks "smtp"}}
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <div class="rounded-3 p-2 me-3
+                        {{if eq .Status "up"}}bg-success bg-opacity-10{{else if eq .Status "down"}}bg-danger bg-opacity-10{{else}}bg-secondary bg-opacity-10{{end}}">
+                        <i class="bi bi-envelope fs-4
+                            {{if eq .Status "up"}}text-success{{else if eq .Status "down"}}text-danger{{else}}text-secondary{{end}}"></i>
+                    </div>
+                    <div>
+                        <h6 class="mb-0 fw-bold">Email</h6>
+                        <small class="text-muted">SMTP</small>
+                    </div>
+                    <div class="ms-auto">
+                        {{if eq .Status "up"}}
+                        <span class="badge bg-success">UP</span>
+                        {{else if eq .Status "down"}}
+                        <span class="badge bg-danger">DOWN</span>
+                        {{else}}
+                        <span class="badge bg-secondary text-capitalize">{{.Status}}</span>
+                        {{end}}
+                    </div>
+                </div>
+                {{if eq .Status "up"}}
+                <div class="text-muted small"><i class="bi bi-speedometer2 me-1"></i>Latency: <strong>{{.LatencyMs}}ms</strong></div>
+                {{if .Host}}<div class="text-muted small mt-1"><i class="bi bi-hdd-network me-1"></i>{{.Host}}</div>{{end}}
+                {{else if eq .Status "down"}}
+                <div class="text-danger small"><i class="bi bi-x-circle me-1"></i>{{.Error}}</div>
+                {{if .Host}}<div class="text-muted small mt-1"><i class="bi bi-hdd-network me-1"></i>{{.Host}}</div>{{end}}
+                {{else}}
+                <div class="text-muted small"><i class="bi bi-info-circle me-1"></i>No SMTP server configured.</div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+    {{end}}
+
+</div>
+{{end}}

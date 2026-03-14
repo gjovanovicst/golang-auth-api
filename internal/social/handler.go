@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/config"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	"github.com/gjovanovicst/auth_api/internal/health"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	twofa "github.com/gjovanovicst/auth_api/internal/twofa"
@@ -338,6 +339,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 						redirectURI,
 						url.QueryEscape(accessToken),
 						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
 					c.Redirect(http.StatusFound, frontendURL)
 					return
 				}
@@ -394,6 +396,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		url.QueryEscape(accessToken),
 		url.QueryEscape(refreshToken))
 
+	health.IncLoginSuccess(appID.String())
 	c.Redirect(http.StatusFound, frontendURL)
 }
 
@@ -561,6 +564,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 						redirectURI,
 						url.QueryEscape(accessToken),
 						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
 					c.Redirect(http.StatusFound, frontendURL)
 					return
 				}
@@ -617,6 +621,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		url.QueryEscape(accessToken),
 		url.QueryEscape(refreshToken))
 
+	health.IncLoginSuccess(appID.String())
 	c.Redirect(http.StatusFound, frontendURL)
 }
 
@@ -783,6 +788,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 						redirectURI,
 						url.QueryEscape(accessToken),
 						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
 					c.Redirect(http.StatusFound, frontendURL)
 					return
 				}
@@ -842,6 +848,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		url.QueryEscape(accessToken),
 		url.QueryEscape(refreshToken))
 
+	health.IncLoginSuccess(appID.String())
 	c.Redirect(http.StatusFound, frontendURL)
 }
 

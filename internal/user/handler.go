@@ -8,6 +8,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/bruteforce"
 	"github.com/gjovanovicst/auth_api/internal/config"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	"github.com/gjovanovicst/auth_api/internal/health"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
@@ -47,6 +48,7 @@ func (h *Handler) checkIPAccess(c *gin.Context, appID uuid.UUID, ipAddress, user
 			"reason":  result.Reason,
 			"country": result.Country,
 		})
+		health.IncLoginFailure(appID.String(), "ip_blocked")
 		c.JSON(http.StatusForbidden, dto.ErrorResponse{Error: "Access denied from your location"})
 		return false
 	}
@@ -96,6 +98,9 @@ func (h *Handler) handleFailedLogin(appID uuid.UUID, email, ipAddress, userAgent
 	log.LogLoginFailed(appID, ipAddress, userAgent, map[string]interface{}{
 		"email": email,
 	})
+
+	// Increment login failure metric
+	health.IncLoginFailure(appID.String(), "invalid_credentials")
 
 	var wasLocked bool
 	var lockExpiresAt *time.Time
@@ -208,6 +213,9 @@ func (h *Handler) Register(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	log.LogRegister(appID, userID, ipAddress, userAgent, req.Email)
 
+	// Increment registration metric
+	health.IncRegister(appID.String())
+
 	c.JSON(http.StatusCreated, dto.MessageResponse{Message: "User registered successfully. Please check your email for verification."})
 }
 
@@ -281,6 +289,7 @@ func (h *Handler) Login(c *gin.Context) {
 
 			if req.CaptchaToken == "" {
 				// CAPTCHA is required but no token provided — tell client to solve CAPTCHA
+				health.IncLoginFailure(appID.String(), "captcha_required")
 				c.JSON(http.StatusForbidden, dto.CaptchaRequiredResponse{
 					Error:           "CAPTCHA verification required",
 					CaptchaRequired: true,
@@ -291,6 +300,7 @@ func (h *Handler) Login(c *gin.Context) {
 			}
 			// Verify the provided CAPTCHA token
 			if err := bruteforce.VerifyCaptcha(req.CaptchaToken, ipAddress, bfCfg); err != nil {
+				health.IncLoginFailure(appID.String(), "captcha_failed")
 				c.JSON(http.StatusForbidden, dto.CaptchaRequiredResponse{
 					Error:           "CAPTCHA verification failed",
 					CaptchaRequired: true,
@@ -371,6 +381,7 @@ func (h *Handler) Login(c *gin.Context) {
 						"trusted_device": true,
 					}
 					h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, details)
+					health.IncLoginSuccess(appID.String())
 					c.JSON(http.StatusOK, dto.LoginResponse{
 						AccessToken:  accessToken,
 						RefreshToken: refreshToken,
@@ -407,6 +418,7 @@ func (h *Handler) Login(c *gin.Context) {
 		"requires_2fa": false,
 	}
 	h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, details)
+	health.IncLoginSuccess(appID.String())
 
 	// Standard login response
 	c.JSON(http.StatusOK, dto.LoginResponse{
@@ -762,6 +774,9 @@ func (h *Handler) Logout(c *gin.Context) {
 	if parseErr == nil {
 		log.LogLogout(appID, userUUID, ipAddress, userAgent)
 	}
+
+	// Increment logout metric
+	health.IncLogout(appID.String())
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Successfully logged out"})
 }

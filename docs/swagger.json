@@ -5721,6 +5721,32 @@
                 }
             }
         },
+        "/health": {
+            "get": {
+                "description": "Checks the connectivity and latency of PostgreSQL, Redis, and SMTP. Returns 200 when all configured components are up, 503 when any are down.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "System health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.HealthResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/dto.HealthResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/login": {
             "post": {
                 "description": "Authenticate user and issue JWTs",
@@ -5957,6 +5983,37 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/metrics": {
+            "get": {
+                "security": [
+                    {
+                        "AdminApiKey": []
+                    }
+                ],
+                "description": "Exposes application and runtime metrics in Prometheus exposition format. Requires Admin API Key authentication.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Prometheus metrics",
+                "responses": {
+                    "200": {
+                        "description": "Prometheus text format metrics",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -7833,6 +7890,27 @@
                 }
             }
         },
+        "dto.ComponentStatus": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "description": "Error message when status is \"down\"",
+                    "type": "string"
+                },
+                "host": {
+                    "description": "Remote address (SMTP only)",
+                    "type": "string"
+                },
+                "latency_ms": {
+                    "description": "Round-trip time in milliseconds (0 when unconfigured)",
+                    "type": "integer"
+                },
+                "status": {
+                    "description": "\"up\", \"down\", or \"unconfigured\"",
+                    "type": "string"
+                }
+            }
+        },
         "dto.CreateAppRequest": {
             "type": "object",
             "required": [
@@ -8342,6 +8420,24 @@
             ],
             "properties": {
                 "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/dto.ComponentStatus"
+                    }
+                },
+                "status": {
+                    "description": "\"healthy\", \"degraded\", or \"unhealthy\"",
+                    "type": "string"
+                },
+                "timestamp": {
                     "type": "string"
                 }
             }

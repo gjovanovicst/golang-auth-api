@@ -524,7 +524,12 @@
     var savedTab = sessionStorage.getItem(tabStorageKey);
     if (savedTab) {
         var tabEl = document.querySelector('[data-bs-target="' + savedTab + '"]');
-        if (tabEl) {
+        // Only switch tabs if the target is not already the active tab.
+        // Calling bootstrap.Tab.show() on an already-active tab triggers its
+        // hide/show transition which temporarily removes the 'show' class from
+        // the active pane — causing blank General tab content when clicking
+        // Edit on a second application while staying on the General tab.
+        if (tabEl && !tabEl.classList.contains('active')) {
             // Defer one tick so HTMX's DOM swap fully settles before Bootstrap
             // re-evaluates the active pane — prevents blank content on first load.
             setTimeout(function() {

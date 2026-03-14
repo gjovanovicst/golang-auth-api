@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/config"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	"github.com/gjovanovicst/auth_api/internal/health"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
@@ -443,6 +444,7 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 		})
 	}
 
+	health.IncLoginSuccess(appID.String())
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -553,6 +555,7 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 		})
 	}
 
+	health.IncLoginSuccess(appID.String())
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,

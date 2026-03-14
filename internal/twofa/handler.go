@@ -10,6 +10,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/config"
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	"github.com/gjovanovicst/auth_api/internal/health"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
@@ -474,6 +475,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		})
 	}
 
+	health.IncLoginSuccess(appID.String())
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,

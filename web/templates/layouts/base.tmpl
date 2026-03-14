@@ -228,6 +228,13 @@
                     </a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link sidebar-link{{if eq .ActivePage "monitoring"}} active{{end}}" href="/gui/monitoring"
+                       data-page="monitoring"
+                       hx-get="/gui/monitoring" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
+                        <i class="bi bi-heart-pulse"></i> System Health
+                    </a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link sidebar-link{{if eq .ActivePage "settings"}} active{{end}}" href="/gui/settings"
                        data-page="settings"
                        hx-get="/gui/settings" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
@@ -347,6 +354,7 @@
                 'logs': 'Activity Logs',
                 'api-keys': 'API Keys',
                 'webhooks': 'Webhooks',
+                'monitoring': 'System Health',
                 'settings': 'Settings',
                 'my-account': 'My Account'
             };

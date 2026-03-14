@@ -16,6 +16,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/database"
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	"github.com/gjovanovicst/auth_api/internal/health"
 	logService "github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/middleware"
 	"github.com/gjovanovicst/auth_api/internal/oidc"
@@ -195,6 +196,10 @@ func main() {
 	adminRepo := admin.NewRepository(database.DB)
 	adminHandler := admin.NewHandler(adminRepo, emailService)
 
+	// Initialize Health & Metrics Handler
+	smtpAddr := health.ResolveSMTPAddr(database.DB)
+	healthHandler := health.NewHandler(database.DB, redis.Rdb, smtpAddr)
+
 	// Initialize WebAuthn/Passkey Services and Handler
 	webauthnRepo := passkey.NewRepository(database.DB)
 	webauthnService := passkey.NewService(webauthnRepo, userRepo, database.DB)
@@ -267,6 +272,9 @@ func main() {
 	guiHandler.GeoIPService = geoIPService
 	guiHandler.TrustedDeviceRepo = trustedDeviceRepo
 
+	// Wire health handler into admin GUI for the monitoring page
+	guiHandler.HealthHandler = healthHandler
+
 	// Wire anomaly notification callback: sends emails when anomalies are detected
 	logSvc.SetAnomalyCallback(func(appID, userID uuid.UUID, userEmail string, result logService.AnomalyResult) {
 		if result.NotificationDetails == nil {
@@ -309,6 +317,9 @@ func main() {
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.AppIDMiddleware())
 
+	// Instrument all requests with Prometheus metrics
+	r.Use(health.PrometheusMiddleware())
+
 	// Public routes (with rate limiting)
 	public := r.Group("/")
 	{
@@ -346,6 +357,15 @@ func main() {
 
 		// Public app login configuration (no auth required — used by login/register UI)
 		public.GET("/app-config/:app_id", adminHandler.GetAppLoginConfig)
+
+		// Health check (public — used by load balancers and Kubernetes probes)
+		public.GET("/health", healthHandler.Health)
+	}
+
+	// Metrics endpoint (Admin API Key required — prevents exposing internal telemetry)
+	metricsGroup := r.Group("", middleware.AdminAuthMiddleware(adminRepo))
+	{
+		metricsGroup.GET("/metrics", healthHandler.Metrics)
 	}
 
 	// Social authentication routes
@@ -666,6 +686,11 @@ func main() {
 			guiAuth.GET("/settings/section/:category", guiHandler.SettingsSection)
 			guiAuth.PUT("/settings/:key", guiHandler.SettingUpdate)
 			guiAuth.DELETE("/settings/:key", guiHandler.SettingReset)
+
+			// System health monitoring
+			guiAuth.GET("/monitoring", guiHandler.MonitoringPage)
+			guiAuth.GET("/monitoring/health", guiHandler.MonitoringHealth)
+			guiAuth.GET("/monitoring/metrics", guiHandler.MonitoringMetrics)
 
 			// Email server management
 			guiAuth.GET("/email-servers", guiHandler.EmailServersPage)

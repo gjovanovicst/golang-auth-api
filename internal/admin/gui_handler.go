@@ -17,6 +17,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/bruteforce"
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	healthpkg "github.com/gjovanovicst/auth_api/internal/health"
 	logService "github.com/gjovanovicst/auth_api/internal/log"
 	oidcpkg "github.com/gjovanovicst/auth_api/internal/oidc"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
@@ -68,6 +69,7 @@ type GUIHandler struct {
 	WebhookService    *webhook.Service               // Webhook management service (nil = webhooks disabled)
 	OIDCService       *oidcpkg.Service               // OIDC provider service (nil = OIDC disabled)
 	TrustedDeviceRepo *twofa.TrustedDeviceRepository // Trusted device repository (nil = feature disabled)
+	HealthHandler     *healthpkg.Handler             // System health + metrics (nil = monitoring disabled)
 }
 
 // NewGUIHandler creates a new GUIHandler
@@ -6656,4 +6658,42 @@ func writeUserCSVGUI(w io.Writer, items []UserExportItem) {
 		})
 	}
 	cw.Flush()
+}
+
+// --- Monitoring (System Health) ---
+
+// MonitoringPage renders the system health monitoring page.
+// GET /gui/monitoring
+func (h *GUIHandler) MonitoringPage(c *gin.Context) {
+	data := web.TemplateData{
+		ActivePage:    "monitoring",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+	}
+	c.HTML(http.StatusOK, "monitoring", data)
+}
+
+// MonitoringHealth returns the health check status partial for HTMX polling.
+// GET /gui/monitoring/health
+func (h *GUIHandler) MonitoringHealth(c *gin.Context) {
+	if h.HealthHandler == nil {
+		c.String(http.StatusOK,
+			`<div class="alert alert-secondary"><i class="bi bi-slash-circle me-2"></i>Health monitoring is not available.</div>`)
+		return
+	}
+	healthData := h.HealthHandler.GetHealthData()
+	c.HTML(http.StatusOK, "monitoring_health", healthData)
+}
+
+// MonitoringMetrics returns the Prometheus metrics summary partial for HTMX polling.
+// GET /gui/monitoring/metrics
+func (h *GUIHandler) MonitoringMetrics(c *gin.Context) {
+	if h.HealthHandler == nil {
+		c.String(http.StatusOK,
+			`<div class="alert alert-secondary"><i class="bi bi-slash-circle me-2"></i>Metrics monitoring is not available.</div>`)
+		return
+	}
+	summary := h.HealthHandler.GetMetricsSummary()
+	c.HTML(http.StatusOK, "monitoring_metrics", summary)
 }

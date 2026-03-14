@@ -183,6 +183,21 @@ definitions:
         description: reCAPTCHA site key for the client to render the widget
         type: string
     type: object
+  dto.ComponentStatus:
+    properties:
+      error:
+        description: Error message when status is "down"
+        type: string
+      host:
+        description: Remote address (SMTP only)
+        type: string
+      latency_ms:
+        description: Round-trip time in milliseconds (0 when unconfigured)
+        type: integer
+      status:
+        description: '"up", "down", or "unconfigured"'
+        type: string
+    type: object
   dto.CreateAppRequest:
     properties:
       description:
@@ -531,6 +546,18 @@ definitions:
         type: string
     required:
     - email
+    type: object
+  dto.HealthResponse:
+    properties:
+      checks:
+        additionalProperties:
+          $ref: '#/definitions/dto.ComponentStatus'
+        type: object
+      status:
+        description: '"healthy", "degraded", or "unhealthy"'
+        type: string
+      timestamp:
+        type: string
     type: object
   dto.IPAccessCheckRequest:
     properties:
@@ -5381,6 +5408,24 @@ paths:
       summary: Request password reset
       tags:
       - Auth
+  /health:
+    get:
+      description: Checks the connectivity and latency of PostgreSQL, Redis, and SMTP.
+        Returns 200 when all configured components are up, 503 when any are down.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.HealthResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/dto.HealthResponse'
+      summary: System health check
+      tags:
+      - Health
   /login:
     post:
       consumes:
@@ -5541,6 +5586,26 @@ paths:
       summary: Verify a magic link token and log in
       tags:
       - Auth
+  /metrics:
+    get:
+      description: Exposes application and runtime metrics in Prometheus exposition
+        format. Requires Admin API Key authentication.
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: Prometheus text format metrics
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Prometheus metrics
+      tags:
+      - Health
   /oidc/{app_id}/.well-known/jwks.json:
     get:
       parameters:

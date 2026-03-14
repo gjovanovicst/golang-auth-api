@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/health"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/google/uuid"
 )
@@ -98,6 +99,7 @@ func (h *Handler) RevokeSession(c *gin.Context) {
 		return
 	}
 
+	health.IncLogout(appIDVal.(string))
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Session revoked successfully"})
 }
 
@@ -135,5 +137,6 @@ func (h *Handler) RevokeAllSessions(c *gin.Context) {
 		return
 	}
 
+	health.IncLogout(appIDVal.(string))
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "All other sessions revoked successfully"})
 }

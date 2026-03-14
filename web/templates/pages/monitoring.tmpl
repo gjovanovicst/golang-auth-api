@@ -1,0 +1,57 @@
+{{define "monitoring"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}System Health{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-heart-pulse me-2"></i>System Health
+    </h4>
+    <span class="text-muted small" id="monitoring-last-updated">Loading...</span>
+</div>
+
+<!-- Health checks (auto-refresh every 30s) -->
+<div id="monitoring-health"
+     hx-get="/gui/monitoring/health"
+     hx-trigger="load, every 30s"
+     hx-swap="innerHTML"
+     hx-on::after-settle="document.getElementById('monitoring-last-updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString()">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white border-bottom">
+            <h6 class="mb-0 fw-bold">
+                <i class="bi bi-activity me-2"></i>Component Health
+            </h6>
+        </div>
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Checking component health...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Metrics (auto-refresh every 30s) -->
+<div id="monitoring-metrics"
+     hx-get="/gui/monitoring/metrics"
+     hx-trigger="load, every 30s"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white border-bottom">
+            <h6 class="mb-0 fw-bold">
+                <i class="bi bi-bar-chart me-2"></i>Application Metrics
+            </h6>
+        </div>
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Gathering metrics...</p>
+        </div>
+    </div>
+</div>
+{{end}}

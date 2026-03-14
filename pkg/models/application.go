@@ -53,6 +53,26 @@ type Application struct {
 	OIDCIDTokenTTL    int    `gorm:"column:oidc_id_token_ttl;default:3600" json:"oidc_id_token_ttl"`             // ID token lifetime in seconds (default 1h)
 	OIDCIssuerURL     string `gorm:"column:oidc_issuer_url;type:varchar(500);default:''" json:"oidc_issuer_url"` // Optional custom issuer URL override (empty = auto-generated)
 
+	// Login Page Branding — customize the look of login UIs for this application
+	LoginLogoURL        string `gorm:"type:varchar(500);default:''" json:"login_logo_url"`       // URL to the app logo shown on login pages
+	LoginPrimaryColor   string `gorm:"type:varchar(20);default:''" json:"login_primary_color"`   // Primary brand color (e.g. "#4f46e5")
+	LoginSecondaryColor string `gorm:"type:varchar(20);default:''" json:"login_secondary_color"` // Secondary brand color (e.g. "#7c3aed")
+	LoginDisplayName    string `gorm:"type:varchar(200);default:''" json:"login_display_name"`   // Display name shown on login page (falls back to Name if empty)
+
+	// Password Policy — per-app overrides for password strength and rotation requirements
+	PwMinLength     int  `gorm:"default:8" json:"pw_min_length"`         // Minimum password length (default 8)
+	PwMaxLength     int  `gorm:"default:128" json:"pw_max_length"`       // Maximum password length (default 128)
+	PwRequireUpper  bool `gorm:"default:false" json:"pw_require_upper"`  // Require at least one uppercase letter
+	PwRequireLower  bool `gorm:"default:false" json:"pw_require_lower"`  // Require at least one lowercase letter
+	PwRequireDigit  bool `gorm:"default:false" json:"pw_require_digit"`  // Require at least one digit
+	PwRequireSymbol bool `gorm:"default:false" json:"pw_require_symbol"` // Require at least one special character
+	PwHistoryCount  int  `gorm:"default:0" json:"pw_history_count"`      // Number of previous passwords to remember (0 = disabled)
+	PwMaxAgeDays    int  `gorm:"default:0" json:"pw_max_age_days"`       // Days before password expires (0 = never)
+
+	// Token TTL overrides — per-app token lifetimes (0 = use global env var defaults)
+	AccessTokenTTLMinutes int `gorm:"default:0" json:"access_token_ttl_minutes"` // Access token lifetime in minutes (0 = use ACCESS_TOKEN_EXPIRATION_MINUTES)
+	RefreshTokenTTLHours  int `gorm:"default:0" json:"refresh_token_ttl_hours"`  // Refresh token lifetime in hours (0 = use REFRESH_TOKEN_EXPIRATION_HOURS)
+
 	CreatedAt            time.Time             `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt            time.Time             `gorm:"autoUpdateTime" json:"updated_at"`
 	OAuthProviderConfigs []OAuthProviderConfig `gorm:"foreignKey:AppID" json:"oauth_provider_configs"`

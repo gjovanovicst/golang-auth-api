@@ -257,6 +257,18 @@ func (h *Handler) GetAppLoginConfig(c *gin.Context) {
 		TwoFARequired:          app.TwoFARequired,
 		SMS2FAEnabled:          app.SMS2FAEnabled,
 		TrustedDeviceEnabled:   app.TrustedDeviceEnabled,
+		// Login Page Branding
+		LoginLogoURL:        app.LoginLogoURL,
+		LoginPrimaryColor:   app.LoginPrimaryColor,
+		LoginSecondaryColor: app.LoginSecondaryColor,
+		LoginDisplayName:    app.LoginDisplayName,
+		// Password Policy
+		PwMinLength:     app.PwMinLength,
+		PwMaxLength:     app.PwMaxLength,
+		PwRequireUpper:  app.PwRequireUpper,
+		PwRequireLower:  app.PwRequireLower,
+		PwRequireDigit:  app.PwRequireDigit,
+		PwRequireSymbol: app.PwRequireSymbol,
 	})
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
+	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
@@ -347,6 +348,15 @@ func (h *Handler) Login(c *gin.Context) {
 		h.BruteForceService.ResetOnSuccess(appID, req.Email, ipAddress)
 	}
 
+	// Password expired: inform the client so it can redirect to change-password flow.
+	// No tokens are issued in this case.
+	if loginResult.PasswordExpired {
+		c.JSON(http.StatusOK, dto.LoginResponse{
+			PasswordExpired: true,
+		})
+		return
+	}
+
 	// Trusted device check: if the client presents a valid trusted-device cookie and
 	// it matches this app + user, skip 2FA entirely and issue tokens immediately.
 	if loginResult.RequiresTwoFA && h.ValidateTrustedDevice != nil {
@@ -424,7 +434,19 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	newAccessToken, newRefreshToken, userID, err := h.Service.RefreshUserToken(req.RefreshToken)
+	// Parse the refresh token claims to determine the app, then load per-app TTL overrides.
+	// Fail-open: if parsing fails or the app can't be loaded, fall through with zero TTLs
+	// (which causes jwt.Generate* to use the global defaults).
+	var accessTTL, refreshTTL time.Duration
+	if claims, parseErr := jwt.ParseToken(req.RefreshToken); parseErr == nil && claims.AppID != "" {
+		var app models.Application
+		if h.Service.DB.Select("access_token_ttl_minutes, refresh_token_ttl_hours").
+			First(&app, "id = ?", claims.AppID).Error == nil {
+			accessTTL, refreshTTL = ResolveTokenTTLs(&app)
+		}
+	}
+
+	newAccessToken, newRefreshToken, userID, err := h.Service.RefreshUserToken(req.RefreshToken, accessTTL, refreshTTL)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return

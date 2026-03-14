@@ -541,6 +541,23 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		BfCaptchaSiteKey   string
 		BfCaptchaThreshold string
 		BfCaptchaHasSecret bool
+		// Login Page Branding
+		LoginLogoURL        string
+		LoginPrimaryColor   string
+		LoginSecondaryColor string
+		LoginDisplayName    string
+		// Password Policy
+		PwMinLength     int
+		PwMaxLength     int
+		PwRequireUpper  bool
+		PwRequireLower  bool
+		PwRequireDigit  bool
+		PwRequireSymbol bool
+		PwHistoryCount  int
+		PwMaxAgeDays    int
+		// Token TTL overrides
+		AccessTokenTTLMinutes int
+		RefreshTokenTTLHours  int
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
 		TwoFAEnabled: true, // Default: 2FA enabled for new apps
@@ -559,6 +576,9 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		BfCaptchaThreshold: bfDefaultCaptchaThreshold,
 		BfCaptchaSiteKey:   bfDefaultCaptchaSiteKey,
 		BfCaptchaHasSecret: true, // System default secret key is configured
+		// Password Policy defaults
+		PwMinLength: 8,
+		PwMaxLength: 128,
 	})
 }
 
@@ -664,6 +684,40 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 		}
 	}
 
+	// Login Page Branding
+	app.LoginLogoURL = strings.TrimSpace(c.PostForm("login_logo_url"))
+	app.LoginPrimaryColor = strings.TrimSpace(c.PostForm("login_primary_color"))
+	app.LoginSecondaryColor = strings.TrimSpace(c.PostForm("login_secondary_color"))
+	app.LoginDisplayName = strings.TrimSpace(c.PostForm("login_display_name"))
+
+	// Password Policy
+	app.PwMinLength = 8
+	if v, err := strconv.Atoi(c.PostForm("pw_min_length")); err == nil && v > 0 {
+		app.PwMinLength = v
+	}
+	app.PwMaxLength = 128
+	if v, err := strconv.Atoi(c.PostForm("pw_max_length")); err == nil && v > 0 {
+		app.PwMaxLength = v
+	}
+	app.PwRequireUpper = c.PostForm("pw_require_upper") == "on"
+	app.PwRequireLower = c.PostForm("pw_require_lower") == "on"
+	app.PwRequireDigit = c.PostForm("pw_require_digit") == "on"
+	app.PwRequireSymbol = c.PostForm("pw_require_symbol") == "on"
+	if v, err := strconv.Atoi(c.PostForm("pw_history_count")); err == nil && v >= 0 {
+		app.PwHistoryCount = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_max_age_days")); err == nil && v >= 0 {
+		app.PwMaxAgeDays = v
+	}
+
+	// Token TTL overrides
+	if v, err := strconv.Atoi(c.PostForm("access_token_ttl_minutes")); err == nil && v >= 0 {
+		app.AccessTokenTTLMinutes = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("refresh_token_ttl_hours")); err == nil && v >= 0 {
+		app.RefreshTokenTTLHours = v
+	}
+
 	if err := h.Repo.CreateApp(app); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
@@ -731,6 +785,23 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		BfCaptchaSiteKey   string
 		BfCaptchaThreshold string
 		BfCaptchaHasSecret bool
+		// Login Page Branding
+		LoginLogoURL        string
+		LoginPrimaryColor   string
+		LoginSecondaryColor string
+		LoginDisplayName    string
+		// Password Policy
+		PwMinLength     int
+		PwMaxLength     int
+		PwRequireUpper  bool
+		PwRequireLower  bool
+		PwRequireDigit  bool
+		PwRequireSymbol bool
+		PwHistoryCount  int
+		PwMaxAgeDays    int
+		// Token TTL overrides
+		AccessTokenTTLMinutes int
+		RefreshTokenTTLHours  int
 	}
 
 	fd := formData{
@@ -751,6 +822,23 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		TrustedDeviceMaxDays: app.TrustedDeviceMaxDays,
 		Tenants:              tenants,
 		IsEdit:               true,
+		// Login Page Branding
+		LoginLogoURL:        app.LoginLogoURL,
+		LoginPrimaryColor:   app.LoginPrimaryColor,
+		LoginSecondaryColor: app.LoginSecondaryColor,
+		LoginDisplayName:    app.LoginDisplayName,
+		// Password Policy
+		PwMinLength:     app.PwMinLength,
+		PwMaxLength:     app.PwMaxLength,
+		PwRequireUpper:  app.PwRequireUpper,
+		PwRequireLower:  app.PwRequireLower,
+		PwRequireDigit:  app.PwRequireDigit,
+		PwRequireSymbol: app.PwRequireSymbol,
+		PwHistoryCount:  app.PwHistoryCount,
+		PwMaxAgeDays:    app.PwMaxAgeDays,
+		// Token TTL overrides
+		AccessTokenTTLMinutes: app.AccessTokenTTLMinutes,
+		RefreshTokenTTLHours:  app.RefreshTokenTTLHours,
 	}
 
 	// Pre-fill brute-force defaults so fields are never blank
@@ -906,7 +994,41 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	}
 	// If override toggles are off, all bf fields remain nil -> clears overrides in DB
 
-	if err := h.Repo.UpdateApp(id, name, description, frontendURL, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, bf); err != nil {
+	// Build customization settings
+	custom := AppCustomizationSettings{
+		// Login Page Branding
+		LoginLogoURL:        strings.TrimSpace(c.PostForm("login_logo_url")),
+		LoginPrimaryColor:   strings.TrimSpace(c.PostForm("login_primary_color")),
+		LoginSecondaryColor: strings.TrimSpace(c.PostForm("login_secondary_color")),
+		LoginDisplayName:    strings.TrimSpace(c.PostForm("login_display_name")),
+		// Password Policy
+		PwMinLength:     8,
+		PwMaxLength:     128,
+		PwRequireUpper:  c.PostForm("pw_require_upper") == "on",
+		PwRequireLower:  c.PostForm("pw_require_lower") == "on",
+		PwRequireDigit:  c.PostForm("pw_require_digit") == "on",
+		PwRequireSymbol: c.PostForm("pw_require_symbol") == "on",
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_min_length")); err == nil && v > 0 {
+		custom.PwMinLength = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_max_length")); err == nil && v > 0 {
+		custom.PwMaxLength = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_history_count")); err == nil && v >= 0 {
+		custom.PwHistoryCount = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_max_age_days")); err == nil && v >= 0 {
+		custom.PwMaxAgeDays = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("access_token_ttl_minutes")); err == nil && v >= 0 {
+		custom.AccessTokenTTLMinutes = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("refresh_token_ttl_hours")); err == nil && v >= 0 {
+		custom.RefreshTokenTTLHours = v
+	}
+
+	if err := h.Repo.UpdateApp(id, name, description, frontendURL, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, bf, custom); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return

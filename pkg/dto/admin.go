@@ -72,4 +72,16 @@ type AppLoginConfigResponse struct {
 	TwoFARequired          bool     `json:"two_fa_required"`        // whether every user must set up 2FA before accessing the app
 	SMS2FAEnabled          bool     `json:"sms_2fa_enabled"`        // whether SMS is available as a 2FA method
 	TrustedDeviceEnabled   bool     `json:"trusted_device_enabled"` // whether "remember this device" is available
+	// Login Page Branding
+	LoginLogoURL        string `json:"login_logo_url,omitempty"`        // URL to the app logo shown on login pages
+	LoginPrimaryColor   string `json:"login_primary_color,omitempty"`   // Primary brand color (e.g. "#4f46e5")
+	LoginSecondaryColor string `json:"login_secondary_color,omitempty"` // Secondary brand color
+	LoginDisplayName    string `json:"login_display_name,omitempty"`    // Display name shown on login page
+	// Password Policy — exposed so the frontend can show real-time requirements before submission
+	PwMinLength     int  `json:"pw_min_length"`     // Minimum password length (default 8)
+	PwMaxLength     int  `json:"pw_max_length"`     // Maximum password length (default 128)
+	PwRequireUpper  bool `json:"pw_require_upper"`  // Require at least one uppercase letter
+	PwRequireLower  bool `json:"pw_require_lower"`  // Require at least one lowercase letter
+	PwRequireDigit  bool `json:"pw_require_digit"`  // Require at least one digit
+	PwRequireSymbol bool `json:"pw_require_symbol"` // Require at least one special character
 }

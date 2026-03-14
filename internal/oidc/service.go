@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	userpkg "github.com/gjovanovicst/auth_api/internal/user"
 	pkgjwt "github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
@@ -331,17 +332,21 @@ func (s *Service) MintTokensForUser(app *models.Application, client *models.OIDC
 
 	// Reuse existing session token infrastructure (HS256)
 	sessionID := uuid.New().String()
-	accessToken, err = pkgjwt.GenerateAccessToken(app.ID.String(), user.ID.String(), sessionID, roles)
+	accessTTL, refreshTTL := userpkg.ResolveTokenTTLs(app)
+	accessToken, err = pkgjwt.GenerateAccessToken(app.ID.String(), user.ID.String(), sessionID, roles, accessTTL)
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("generate access token: %w", err)
 	}
-	refreshToken, err = pkgjwt.GenerateRefreshToken(app.ID.String(), user.ID.String(), sessionID, roles)
+	refreshToken, err = pkgjwt.GenerateRefreshToken(app.ID.String(), user.ID.String(), sessionID, roles, refreshTTL)
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("generate refresh token: %w", err)
 	}
 
 	// Persist session in Redis so AuthMiddleware's SessionExists check passes.
-	sessionTTL := time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS"))
+	sessionTTL := refreshTTL
+	if sessionTTL <= 0 {
+		sessionTTL = pkgjwt.DefaultRefreshTokenTTL()
+	}
 	if sessionTTL <= 0 {
 		sessionTTL = 720 * time.Hour
 	}
@@ -383,11 +388,14 @@ func (s *Service) MintTokensForUser(app *models.Application, client *models.OIDC
 		return "", "", "", 0, fmt.Errorf("mint id token: %w", err)
 	}
 
-	accessTTL := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES") * 60
-	if accessTTL <= 0 {
-		accessTTL = 900
+	accessTTLSec := int(accessTTL.Seconds())
+	if accessTTLSec <= 0 {
+		accessTTLSec = viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES") * 60
 	}
-	return accessToken, refreshToken, idToken, accessTTL, nil
+	if accessTTLSec <= 0 {
+		accessTTLSec = 900
+	}
+	return accessToken, refreshToken, idToken, accessTTLSec, nil
 }
 
 // ─── Client credentials grant ─────────────────────────────────────────────────
@@ -413,24 +421,31 @@ func (s *Service) ClientCredentialsGrant(app *models.Application, clientID, clie
 	}
 
 	sessionID := uuid.New().String()
-	accessToken, err = pkgjwt.GenerateAccessToken(app.ID.String(), client.ID.String(), sessionID, nil)
+	ccAccessTTL, ccRefreshTTL := userpkg.ResolveTokenTTLs(app)
+	accessToken, err = pkgjwt.GenerateAccessToken(app.ID.String(), client.ID.String(), sessionID, nil, ccAccessTTL)
 	if err != nil {
 		return "", 0, fmt.Errorf("generate access token: %w", err)
 	}
 	// Fix #9: Persist session in Redis so SessionExists checks in AuthMiddleware pass.
-	sessionTTL := time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS"))
-	if sessionTTL <= 0 {
-		sessionTTL = 720 * time.Hour
+	ccSessionTTL := ccRefreshTTL
+	if ccSessionTTL <= 0 {
+		ccSessionTTL = pkgjwt.DefaultRefreshTokenTTL()
 	}
-	if err := redis.CreateSession(app.ID.String(), sessionID, client.ID.String(), "", "", "", sessionTTL); err != nil {
+	if ccSessionTTL <= 0 {
+		ccSessionTTL = 720 * time.Hour
+	}
+	if err := redis.CreateSession(app.ID.String(), sessionID, client.ID.String(), "", "", "", ccSessionTTL); err != nil {
 		log.Printf("[OIDC] ClientCredentialsGrant: failed to create Redis session: %v", err)
 	}
 
-	accessTTL := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES") * 60
-	if accessTTL <= 0 {
-		accessTTL = 900
+	ccAccessTTLSec := int(ccAccessTTL.Seconds())
+	if ccAccessTTLSec <= 0 {
+		ccAccessTTLSec = viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES") * 60
 	}
-	return accessToken, accessTTL, nil
+	if ccAccessTTLSec <= 0 {
+		ccAccessTTLSec = 900
+	}
+	return accessToken, ccAccessTTLSec, nil
 }
 
 // ─── UserInfo ─────────────────────────────────────────────────────────────────

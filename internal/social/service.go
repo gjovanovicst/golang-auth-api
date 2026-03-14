@@ -74,11 +74,20 @@ func (s *Service) assignDefaultRole(appID, userID string) {
 
 // CreateSessionOrTokens creates a session via the session service if available,
 // otherwise falls back to legacy token generation.
+// Per-app token TTL overrides are resolved via ResolveTokenTTLs.
 func (s *Service) CreateSessionOrTokens(appID, userID, ip, userAgent string) (accessToken, refreshToken string, appErr *errors.AppError) {
 	roles := s.getUserRoles(appID, userID)
 
+	// Load per-app token TTL overrides
+	var app models.Application
+	var appPtr *models.Application
+	if s.SocialRepo.DB.Select("access_token_ttl_minutes, refresh_token_ttl_hours").First(&app, "id = ?", appID).Error == nil {
+		appPtr = &app
+	}
+	accessTTL, refreshTTL := user.ResolveTokenTTLs(appPtr)
+
 	if s.SessionService != nil {
-		at, rt, _, sErr := s.SessionService.CreateSession(appID, userID, ip, userAgent, roles)
+		at, rt, _, sErr := s.SessionService.CreateSession(appID, userID, ip, userAgent, roles, accessTTL, refreshTTL)
 		if sErr != nil {
 			return "", "", sErr
 		}
@@ -87,11 +96,11 @@ func (s *Service) CreateSessionOrTokens(appID, userID, ip, userAgent string) (ac
 
 	// Legacy fallback
 	var err error
-	accessToken, err = jwt.GenerateAccessToken(appID, userID, "", roles)
+	accessToken, err = jwt.GenerateAccessToken(appID, userID, "", roles, accessTTL)
 	if err != nil {
 		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, "", roles)
+	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, "", roles, refreshTTL)
 	if err != nil {
 		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}

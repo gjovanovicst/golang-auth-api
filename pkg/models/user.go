@@ -31,12 +31,15 @@ type User struct {
 	TwoFAPreviousMethod string `gorm:"type:varchar(20);default:''" json:"-"`
 	TwoFAPreviousSecret string `gorm:"type:text;default:''" json:"-"`
 	// Phone number for SMS-based recovery
-	PhoneNumber    string          `gorm:"type:varchar(30);default:''" json:"phone_number,omitempty"`
-	PhoneVerified  bool            `gorm:"default:false" json:"phone_verified"`
-	LockedAt       *time.Time      `gorm:"" json:"locked_at,omitempty"`                               // When the account was locked (nil = not locked)
-	LockReason     string          `gorm:"type:varchar(255);default:''" json:"lock_reason,omitempty"` // Reason for lockout (e.g., "Too many failed login attempts")
-	LockExpiresAt  *time.Time      `gorm:"" json:"lock_expires_at,omitempty"`                         // When the lockout expires (nil = permanent until admin unlock)
-	CreatedAt      time.Time       `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt      time.Time       `gorm:"autoUpdateTime" json:"updated_at"`
-	SocialAccounts []SocialAccount `gorm:"foreignKey:UserID" json:"social_accounts"` // One-to-many relationship
+	PhoneNumber   string     `gorm:"type:varchar(30);default:''" json:"phone_number,omitempty"`
+	PhoneVerified bool       `gorm:"default:false" json:"phone_verified"`
+	LockedAt      *time.Time `gorm:"" json:"locked_at,omitempty"`                               // When the account was locked (nil = not locked)
+	LockReason    string     `gorm:"type:varchar(255);default:''" json:"lock_reason,omitempty"` // Reason for lockout (e.g., "Too many failed login attempts")
+	LockExpiresAt *time.Time `gorm:"" json:"lock_expires_at,omitempty"`                         // When the lockout expires (nil = permanent until admin unlock)
+	// Password history and expiry tracking
+	PasswordHistory   datatypes.JSON  `gorm:"type:jsonb;default:'[]'" json:"-"`      // Array of previous bcrypt hashes (for history enforcement)
+	PasswordChangedAt *time.Time      `gorm:"" json:"password_changed_at,omitempty"` // When the password was last changed (nil = never changed)
+	CreatedAt         time.Time       `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time       `gorm:"autoUpdateTime" json:"updated_at"`
+	SocialAccounts    []SocialAccount `gorm:"foreignKey:UserID" json:"social_accounts"` // One-to-many relationship
 }

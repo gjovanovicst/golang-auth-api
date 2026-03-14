@@ -1,6 +1,8 @@
 package user
 
 import (
+	"time"
+
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"gorm.io/gorm"
 )
@@ -35,6 +37,16 @@ func (r *Repository) UpdateUser(user *models.User) error {
 
 func (r *Repository) UpdateUserPassword(userID, hashedPassword string) error {
 	return r.DB.Model(&models.User{}).Where("id = ?", userID).Update("password_hash", hashedPassword).Error
+}
+
+// UpdateUserPasswordWithHistory sets password_hash, password_history, and password_changed_at atomically.
+func (r *Repository) UpdateUserPasswordWithHistory(userID, hashedPassword string, history []byte) error {
+	now := time.Now()
+	return r.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"password_hash":       hashedPassword,
+		"password_history":    history,
+		"password_changed_at": &now,
+	}).Error
 }
 
 func (r *Repository) UpdateUserEmailVerified(userID string, verified bool) error {

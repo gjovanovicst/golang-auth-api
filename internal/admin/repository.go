@@ -275,7 +275,28 @@ type BruteForceAppSettings struct {
 	CaptchaThreshold *int
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, frontendURL string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, bf BruteForceAppSettings) error {
+// AppCustomizationSettings holds per-application branding, password policy, and token TTL fields.
+type AppCustomizationSettings struct {
+	// Login Page Branding
+	LoginLogoURL        string
+	LoginPrimaryColor   string
+	LoginSecondaryColor string
+	LoginDisplayName    string
+	// Password Policy
+	PwMinLength     int
+	PwMaxLength     int
+	PwRequireUpper  bool
+	PwRequireLower  bool
+	PwRequireDigit  bool
+	PwRequireSymbol bool
+	PwHistoryCount  int
+	PwMaxAgeDays    int
+	// Token TTL overrides (0 = use global defaults)
+	AccessTokenTTLMinutes int
+	RefreshTokenTTLHours  int
+}
+
+func (r *Repository) UpdateApp(id string, name string, description string, frontendURL string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, bf BruteForceAppSettings, custom AppCustomizationSettings) error {
 	updates := map[string]interface{}{
 		"name":                  name,
 		"description":           description,
@@ -302,6 +323,23 @@ func (r *Repository) UpdateApp(id string, name string, description string, front
 		"bf_captcha_enabled":   bf.CaptchaEnabled,
 		"bf_captcha_site_key":  bf.CaptchaSiteKey,
 		"bf_captcha_threshold": bf.CaptchaThreshold,
+		// Login Page Branding
+		"login_logo_url":        custom.LoginLogoURL,
+		"login_primary_color":   custom.LoginPrimaryColor,
+		"login_secondary_color": custom.LoginSecondaryColor,
+		"login_display_name":    custom.LoginDisplayName,
+		// Password Policy
+		"pw_min_length":     custom.PwMinLength,
+		"pw_max_length":     custom.PwMaxLength,
+		"pw_require_upper":  custom.PwRequireUpper,
+		"pw_require_lower":  custom.PwRequireLower,
+		"pw_require_digit":  custom.PwRequireDigit,
+		"pw_require_symbol": custom.PwRequireSymbol,
+		"pw_history_count":  custom.PwHistoryCount,
+		"pw_max_age_days":   custom.PwMaxAgeDays,
+		// Token TTL overrides
+		"access_token_ttl_minutes": custom.AccessTokenTTLMinutes,
+		"refresh_token_ttl_hours":  custom.RefreshTokenTTLHours,
 	}
 
 	// Only update CAPTCHA secret key if explicitly provided (non-nil and non-empty).

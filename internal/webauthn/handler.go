@@ -13,12 +13,14 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
+	"github.com/gjovanovicst/auth_api/internal/user"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // RoleLookupFunc is a function that returns role names for a user in an app.
@@ -36,6 +38,7 @@ type Handler struct {
 	IPRuleEvaluator   *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
 	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
 	WebhookService    *webhook.Service       // Optional: webhook dispatcher (nil = disabled)
+	DB                *gorm.DB               // for loading per-app token TTL overrides
 }
 
 // NewHandler creates a new WebAuthn handler.
@@ -582,13 +585,13 @@ func extractUserAndApp(c *gin.Context) (uuid.UUID, uuid.UUID, error) {
 }
 
 // generateTokensForUser generates access and refresh tokens for a user (legacy, no session).
-func generateTokensForUser(appID string, userID string, roles []string) (string, string, error) {
-	accessToken, err := jwt.GenerateAccessToken(appID, userID, "", roles)
+func generateTokensForUser(appID string, userID string, roles []string, accessTTL, refreshTTL time.Duration) (string, string, error) {
+	accessToken, err := jwt.GenerateAccessToken(appID, userID, "", roles, accessTTL)
 	if err != nil {
 		return "", "", err
 	}
 
-	refreshToken, err := jwt.GenerateRefreshToken(appID, userID, "", roles)
+	refreshToken, err := jwt.GenerateRefreshToken(appID, userID, "", roles, refreshTTL)
 	if err != nil {
 		return "", "", err
 	}
@@ -602,15 +605,26 @@ func generateTokensForUser(appID string, userID string, roles []string) (string,
 
 // createSessionOrTokens creates a session via the session service if available,
 // otherwise falls back to legacy token generation.
+// Per-app token TTL overrides are resolved via user.ResolveTokenTTLs.
 func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent string, roles []string) (string, string, error) {
+	// Load per-app token TTL overrides
+	var app models.Application
+	var appPtr *models.Application
+	if h.DB != nil {
+		if h.DB.Select("access_token_ttl_minutes, refresh_token_ttl_hours").First(&app, "id = ?", appID).Error == nil {
+			appPtr = &app
+		}
+	}
+	accessTTL, refreshTTL := user.ResolveTokenTTLs(appPtr)
+
 	if h.SessionService != nil {
-		accessToken, refreshToken, _, appErr := h.SessionService.CreateSession(appID, userID, ip, userAgent, roles)
+		accessToken, refreshToken, _, appErr := h.SessionService.CreateSession(appID, userID, ip, userAgent, roles, accessTTL, refreshTTL)
 		if appErr != nil {
 			return "", "", fmt.Errorf("%s", appErr.Message)
 		}
 		return accessToken, refreshToken, nil
 	}
-	return generateTokensForUser(appID, userID, roles)
+	return generateTokensForUser(appID, userID, roles, accessTTL, refreshTTL)
 }
 
 // clearTempSession clears the temporary 2FA session.

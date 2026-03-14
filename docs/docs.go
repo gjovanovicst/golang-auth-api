@@ -7697,6 +7697,22 @@ const docTemplate = `{
                 "has_oidc_clients": {
                     "type": "boolean"
                 },
+                "login_display_name": {
+                    "description": "Display name shown on login page",
+                    "type": "string"
+                },
+                "login_logo_url": {
+                    "description": "Login Page Branding",
+                    "type": "string"
+                },
+                "login_primary_color": {
+                    "description": "Primary brand color (e.g. \"#4f46e5\")",
+                    "type": "string"
+                },
+                "login_secondary_color": {
+                    "description": "Secondary brand color",
+                    "type": "string"
+                },
                 "magic_link_enabled": {
                     "type": "boolean"
                 },
@@ -7704,6 +7720,30 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "passkey_login_enabled": {
+                    "type": "boolean"
+                },
+                "pw_max_length": {
+                    "description": "Maximum password length (default 128)",
+                    "type": "integer"
+                },
+                "pw_min_length": {
+                    "description": "Password Policy — exposed so the frontend can show real-time requirements before submission",
+                    "type": "integer"
+                },
+                "pw_require_digit": {
+                    "description": "Require at least one digit",
+                    "type": "boolean"
+                },
+                "pw_require_lower": {
+                    "description": "Require at least one lowercase letter",
+                    "type": "boolean"
+                },
+                "pw_require_symbol": {
+                    "description": "Require at least one special character",
+                    "type": "boolean"
+                },
+                "pw_require_upper": {
+                    "description": "Require at least one uppercase letter",
                     "type": "boolean"
                 },
                 "sms_2fa_enabled": {
@@ -8502,6 +8542,10 @@ const docTemplate = `{
                 "access_token": {
                     "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",
                     "type": "string"
+                },
+                "password_expired": {
+                    "description": "true when the password has expired; no tokens are issued in this case",
+                    "type": "boolean"
                 },
                 "refresh_token": {
                     "description": "#nosec G101,G117 -- This is a DTO field, not a hardcoded credential",

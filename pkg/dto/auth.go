@@ -42,8 +42,9 @@ type ResetPasswordRequest struct {
 
 // LoginResponse represents the response payload for successful login
 type LoginResponse struct {
-	AccessToken  string `json:"access_token"`  // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
-	RefreshToken string `json:"refresh_token"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	AccessToken     string `json:"access_token"`               // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	RefreshToken    string `json:"refresh_token"`              // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	PasswordExpired bool   `json:"password_expired,omitempty"` // true when the password has expired; no tokens are issued in this case
 }
 
 // TwoFARequiredResponse represents response when 2FA is required during login

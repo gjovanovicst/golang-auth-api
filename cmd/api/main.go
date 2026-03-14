@@ -180,6 +180,8 @@ func main() {
 	twofaHandler.AssignDefaultRole = rbacService.AssignDefaultRole
 	// Wire trusted device repo into twofa handler
 	twofaHandler.TrustedDeviceRepo = trustedDeviceRepo
+	// Wire DB for per-app token TTL overrides
+	twofaHandler.DB = database.DB
 	// Wire trusted device validation callback into user handler (avoids circular import)
 	userHandler.ValidateTrustedDevice = func(plainToken string) (uuid.UUID, uuid.UUID, bool) {
 		device, appErr := twofaService.ValidateTrustedDevice(plainToken)
@@ -200,6 +202,8 @@ func main() {
 	webauthnHandler.LookupRoles = rbacService.GetUserRoleNames
 	webauthnHandler.SessionService = sessionService
 	webauthnHandler.AssignDefaultRole = rbacService.AssignDefaultRole
+	// Wire DB for per-app token TTL overrides
+	webauthnHandler.DB = database.DB
 
 	// Initialize Admin GUI Services and Handler
 	accountRepo := admin.NewAccountRepository(database.DB)

@@ -313,6 +313,14 @@ func UpdateSessionRefreshToken(appID, sessionID, newRefreshToken string) error {
 	return Rdb.HSet(ctx, key, "refresh_token", newRefreshToken).Err()
 }
 
+// ResetSessionTTL resets the TTL on a session hash key.
+// Call this on every token rotation so the session lifetime slides forward
+// with the newly issued refresh token instead of expiring at the original login time.
+func ResetSessionTTL(appID, sessionID string, ttl time.Duration) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.Expire(ctx, key, ttl).Err()
+}
+
 // TouchSession updates the last_active timestamp of a session.
 func TouchSession(appID, sessionID string) error {
 	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)

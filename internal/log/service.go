@@ -41,6 +41,7 @@ const (
 	EventMagicLinkRequested    = "MAGIC_LINK_REQUESTED"
 	EventMagicLinkLogin        = "MAGIC_LINK_LOGIN"
 	EventMagicLinkFailed       = "MAGIC_LINK_FAILED"
+	EventOIDCLogin             = "OIDC_LOGIN"
 	EventLoginFailed           = "LOGIN_FAILED"
 	EventBruteForceDetected    = "BRUTE_FORCE_DETECTED"
 	EventIPBlocked             = "IP_BLOCKED"
@@ -523,6 +524,14 @@ func LogMagicLinkFailed(appID uuid.UUID, ipAddress, userAgent string, reason str
 		"reason": reason,
 	}
 	GetLogService().LogActivity(appID, uuid.Nil, EventMagicLinkFailed, ipAddress, userAgent, details)
+}
+
+// LogOIDCLogin logs a successful login completed via the OIDC authorization_code grant
+func LogOIDCLogin(appID, userID uuid.UUID, ipAddress, userAgent string, clientID string) {
+	details := map[string]interface{}{
+		"client_id": clientID,
+	}
+	GetLogService().LogActivity(appID, userID, EventOIDCLogin, ipAddress, userAgent, details)
 }
 
 // LogAccountLocked logs when a user account is locked due to repeated failed login attempts

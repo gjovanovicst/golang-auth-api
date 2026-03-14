@@ -56,11 +56,11 @@ func (h *Handler) checkIPAccess(c *gin.Context, appID uuid.UUID, ipAddress, user
 }
 
 // runLoginAnomalyDetection runs anomaly detection for a successful login and logs with the result.
-// It replaces the plain LogLogin call to enable anomaly-based notifications.
-func (h *Handler) runLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAddress, userAgent string, details map[string]interface{}) {
+// eventType allows callers to emit the appropriate event (e.g. EventLogin, EventMagicLinkLogin).
+func (h *Handler) runLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAddress, userAgent string, eventType string, details map[string]interface{}) {
 	if h.AnomalyDetector == nil {
 		// Fall back to standard logging
-		log.LogLogin(appID, userID, ipAddress, userAgent, details)
+		log.GetLogService().LogActivity(appID, userID, eventType, ipAddress, userAgent, details)
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *Handler) runLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAdd
 		NotificationCooldown:   cfg.AnomalyDetection.NotificationCooldown,
 	}
 	anomalyResult := h.AnomalyDetector.DetectAnomaly(ctx, anomalyCfg)
-	log.GetLogService().LogActivityWithAnomalyResult(appID, userID, email, log.EventLogin, ipAddress, userAgent, details, &anomalyResult)
+	log.GetLogService().LogActivityWithAnomalyResult(appID, userID, email, eventType, ipAddress, userAgent, details, &anomalyResult)
 }
 
 // handleFailedLogin tracks a failed login attempt for brute-force detection.
@@ -380,7 +380,7 @@ func (h *Handler) Login(c *gin.Context) {
 						"requires_2fa":   false,
 						"trusted_device": true,
 					}
-					h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, details)
+					h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
 					health.IncLoginSuccess(appID.String())
 					c.JSON(http.StatusOK, dto.LoginResponse{
 						AccessToken:  accessToken,
@@ -417,7 +417,7 @@ func (h *Handler) Login(c *gin.Context) {
 	details := map[string]interface{}{
 		"requires_2fa": false,
 	}
-	h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, details)
+	h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
 	health.IncLoginSuccess(appID.String())
 
 	// Standard login response
@@ -1186,9 +1186,10 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 	}
 
 	// Log successful magic link login with anomaly detection
-	h.runLoginAnomalyDetection(appID, result.UserID, userEmail, ipAddress, userAgent, map[string]interface{}{
+	h.runLoginAnomalyDetection(appID, result.UserID, userEmail, ipAddress, userAgent, log.EventMagicLinkLogin, map[string]interface{}{
 		"login_method": "magic_link",
 	})
+	health.IncLoginSuccess(appID.String())
 
 	// Dispatch webhook event (non-fatal)
 	if h.Service.WebhookService != nil {

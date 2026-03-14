@@ -14,7 +14,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/health"
+	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	pkgjwt "github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
@@ -383,6 +386,12 @@ func (h *Handler) handleAuthCodeGrant(c *gin.Context, app *models.Application, r
 	if containsScope(ac.Scopes, "offline_access") {
 		resp.RefreshToken = refreshToken
 	}
+
+	// Log successful OIDC login and increment the Authentication Metrics counter.
+	ipAddress, userAgent := util.GetClientInfo(c)
+	log.LogOIDCLogin(app.ID, user.ID, ipAddress, userAgent, req.ClientID)
+	health.IncLoginSuccess(app.ID.String())
+
 	c.JSON(http.StatusOK, resp)
 }
 

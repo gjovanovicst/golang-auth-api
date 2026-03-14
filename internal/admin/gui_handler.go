@@ -560,6 +560,10 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		// Token TTL overrides
 		AccessTokenTTLMinutes int
 		RefreshTokenTTLHours  int
+		// Email Action Link Paths
+		ResetPasswordPath string
+		MagicLinkPath     string
+		VerifyEmailPath   string
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
 		TwoFAEnabled: true, // Default: 2FA enabled for new apps
@@ -804,6 +808,10 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		// Token TTL overrides
 		AccessTokenTTLMinutes int
 		RefreshTokenTTLHours  int
+		// Email Action Link Paths
+		ResetPasswordPath string
+		MagicLinkPath     string
+		VerifyEmailPath   string
 	}
 
 	fd := formData{
@@ -841,6 +849,10 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		// Token TTL overrides
 		AccessTokenTTLMinutes: app.AccessTokenTTLMinutes,
 		RefreshTokenTTLHours:  app.RefreshTokenTTLHours,
+		// Email Action Link Paths
+		ResetPasswordPath: app.ResetPasswordPath,
+		MagicLinkPath:     app.MagicLinkPath,
+		VerifyEmailPath:   app.VerifyEmailPath,
 	}
 
 	// Pre-fill brute-force defaults so fields are never blank
@@ -1010,6 +1022,10 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 		PwRequireLower:  c.PostForm("pw_require_lower") == "on",
 		PwRequireDigit:  c.PostForm("pw_require_digit") == "on",
 		PwRequireSymbol: c.PostForm("pw_require_symbol") == "on",
+		// Email Action Link Paths
+		ResetPasswordPath: strings.TrimSpace(c.PostForm("reset_password_path")),
+		MagicLinkPath:     strings.TrimSpace(c.PostForm("magic_link_path")),
+		VerifyEmailPath:   strings.TrimSpace(c.PostForm("verify_email_path")),
 	}
 	if v, err := strconv.Atoi(c.PostForm("pw_min_length")); err == nil && v > 0 {
 		custom.PwMinLength = v

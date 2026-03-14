@@ -5,20 +5,19 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"strings"
 	"time"
 
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/sms"
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -478,12 +477,14 @@ func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.Ap
 		return errors.NewAppError(errors.ErrInternal, "Failed to generate reset token")
 	}
 
-	// Resolve per-app frontend URL so the reset link points to the correct frontend.
+	// Resolve per-app frontend URL and reset-password path so the link points to the correct frontend.
 	var app models.Application
-	if dbErr := s.DB.Select("frontend_url").First(&app, "id = ?", appID).Error; dbErr != nil {
-		app.FrontendURL = "" // fall through to global default
+	if dbErr := s.DB.Select("frontend_url, reset_password_path").First(&app, "id = ?", appID).Error; dbErr != nil {
+		app.FrontendURL = ""
+		app.ResetPasswordPath = ""
 	}
-	resetLink := fmt.Sprintf("%s/reset-password?token=%s", resolveAppFrontendURL(app.FrontendURL), resetToken)
+	resetPath := util.ResolveLinkPath(app.ResetPasswordPath, util.DefaultResetPasswordPath)
+	resetLink := fmt.Sprintf("%s%s?token=%s", util.ResolveFrontendURL(app.FrontendURL), resetPath, resetToken)
 	if err := s.EmailService.SendPasswordResetEmail(appID, user.Email, resetLink, &user.ID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send password reset email")
 	}
@@ -823,7 +824,7 @@ func generateSecure6DigitCode() string {
 func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppError {
 	// Check if magic link is enabled for this application
 	var app models.Application
-	if err := s.DB.Select("magic_link_enabled, frontend_url").First(&app, "id = ?", appID).Error; err != nil {
+	if err := s.DB.Select("magic_link_enabled, frontend_url, magic_link_path").First(&app, "id = ?", appID).Error; err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to load application settings")
 	}
 	if !app.MagicLinkEnabled {
@@ -856,8 +857,9 @@ func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppErr
 		return errors.NewAppError(errors.ErrInternal, "Failed to generate magic link")
 	}
 
-	// Build the magic link URL — prefer per-app FrontendURL, fall back to global env var.
-	magicLink := fmt.Sprintf("%s/magic-link?token=%s&app_id=%s", resolveAppFrontendURL(app.FrontendURL), magicToken, appID.String())
+	// Build the magic link URL — use per-app FrontendURL and MagicLinkPath, falling back to global defaults.
+	magicPath := util.ResolveLinkPath(app.MagicLinkPath, util.DefaultMagicLinkPath)
+	magicLink := fmt.Sprintf("%s%s?token=%s&app_id=%s", util.ResolveFrontendURL(app.FrontendURL), magicPath, magicToken, appID.String())
 
 	if err := s.EmailService.SendMagicLinkEmail(appID, user.Email, magicLink, &user.ID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send magic link email")
@@ -923,16 +925,4 @@ func (s *Service) VerifyMagicLink(appID uuid.UUID, token, ip, userAgent string) 
 		RefreshToken:  refreshToken,
 		SessionID:     sessionID,
 	}, nil
-}
-
-// resolveAppFrontendURL returns the effective frontend URL for an application.
-// Priority: per-app FrontendURL → FRONTEND_URL env var → http://localhost:8080
-func resolveAppFrontendURL(appFrontendURL string) string {
-	if u := strings.TrimRight(appFrontendURL, "/"); u != "" {
-		return u
-	}
-	if u := strings.TrimRight(viper.GetString("FRONTEND_URL"), "/"); u != "" {
-		return u
-	}
-	return "http://localhost:8080"
 }

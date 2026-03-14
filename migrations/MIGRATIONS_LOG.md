@@ -15,13 +15,50 @@ This file tracks all applied database migrations in chronological order.
 
 ## Current Database Version
 
-**Latest Migration:** `20260306_add_oidc`  
-**Database Schema Version:** v1.3.0  
-**Compatible Application Version:** v1.3.0+
+**Latest Migration:** `20260314_add_app_link_paths`  
+**Database Schema Version:** v1.4.0  
+**Compatible Application Version:** v1.4.0+
 
 ---
 
 ## Applied Migrations
+
+### 2026-03-14: Configurable Email Action Link Paths
+
+| Field | Value |
+|-------|-------|
+| **Migration ID** | `20260314_add_app_link_paths` |
+| **Date Applied** | 2026-03-14 |
+| **App Version** | v1.4.0 |
+| **Type** | Schema Change |
+| **Breaking** | No |
+| **Status** | ✅ Applied |
+
+**Description:**
+Adds per-application configurable URL path suffixes for email action links
+(password-reset, magic-link, and email-verification). When a field is left
+empty the system falls back to its original hardcoded default path, so all
+existing integrations continue to work without change.
+
+**Files:**
+- `migrations/20260314_add_app_link_paths.sql`
+- `migrations/20260314_add_app_link_paths_rollback.sql`
+
+**Changes:**
+- Extended `applications` with 3 new columns: `reset_password_path`, `magic_link_path`, `verify_email_path` (all `VARCHAR(500) NOT NULL DEFAULT ''`)
+- Shared URL-resolution utility extracted to `internal/util/frontend_url.go`
+- Duplicate `resolveAppFrontendURL` function removed from `internal/user/service.go` and `internal/email/resolver.go`
+
+**Impact:**
+- Database size: negligible (3 short VARCHAR columns)
+- Query performance: no regression
+- Downtime required: None
+- Rollback available: Yes (drops the 3 columns)
+
+**Dependencies:**
+- `20260105_add_multi_tenancy` (requires `applications` table)
+
+---
 
 ### 2026-03-06: OIDC Provider Support
 

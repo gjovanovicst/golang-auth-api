@@ -26,6 +26,10 @@ type CreateAppRequest struct {
 	Description      string `json:"description"`
 	FrontendURL      string `json:"frontend_url"`
 	MagicLinkEnabled bool   `json:"magic_link_enabled"`
+	// Email Action Link Paths (optional; empty = use system defaults)
+	ResetPasswordPath string `json:"reset_password_path"`
+	MagicLinkPath     string `json:"magic_link_path"`
+	VerifyEmailPath   string `json:"verify_email_path"`
 }
 
 // AppResponse represents the application data returned to clients
@@ -35,8 +39,12 @@ type AppResponse struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	FrontendURL string    `json:"frontend_url"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// Email Action Link Paths (empty = system defaults apply)
+	ResetPasswordPath string    `json:"reset_password_path"`
+	MagicLinkPath     string    `json:"magic_link_path"`
+	VerifyEmailPath   string    `json:"verify_email_path"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // UpsertOAuthConfigRequest represents the payload for setting OAuth credentials

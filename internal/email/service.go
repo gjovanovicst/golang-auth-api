@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -77,8 +78,13 @@ func (s *Service) SendEmailWithContext(appID uuid.UUID, emailTypeCode string, to
 // SendVerificationEmail sends an email verification email.
 // The userID parameter enables auto-population of user profile variables in the template.
 func (s *Service) SendVerificationEmail(appID uuid.UUID, toEmail, token string, userID *uuid.UUID) error {
-	frontendURL := s.resolver.resolveAppFrontendURL(appID)
-	verificationLink := fmt.Sprintf("%s/verify-email?token=%s", frontendURL, token)
+	// Load per-app verify_email_path so the link is configurable per application.
+	var app models.Application
+	if s.resolver.db != nil {
+		s.resolver.db.Select("frontend_url, verify_email_path").First(&app, "id = ?", appID)
+	}
+	verifyPath := util.ResolveLinkPath(app.VerifyEmailPath, util.DefaultVerifyEmailPath)
+	verificationLink := fmt.Sprintf("%s%s?token=%s", util.ResolveFrontendURL(app.FrontendURL), verifyPath, token)
 
 	return s.SendEmailWithContext(appID, TypeEmailVerification, toEmail, userID, map[string]string{
 		VarVerificationLink:  verificationLink,

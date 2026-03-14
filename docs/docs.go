@@ -7836,13 +7836,23 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "magic_link_path": {
+                    "type": "string"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "reset_password_path": {
+                    "description": "Email Action Link Paths (empty = system defaults apply)",
                     "type": "string"
                 },
                 "tenant_id": {
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "verify_email_path": {
                     "type": "string"
                 }
             }
@@ -7933,10 +7943,20 @@ const docTemplate = `{
                 "magic_link_enabled": {
                     "type": "boolean"
                 },
+                "magic_link_path": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
+                "reset_password_path": {
+                    "description": "Email Action Link Paths (optional; empty = use system defaults)",
+                    "type": "string"
+                },
                 "tenant_id": {
+                    "type": "string"
+                },
+                "verify_email_path": {
                     "type": "string"
                 }
             }

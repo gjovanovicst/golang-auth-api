@@ -136,10 +136,13 @@ func (h *Handler) CreateApp(c *gin.Context) {
 	}
 
 	app := &models.Application{
-		TenantID:    tenantID,
-		Name:        req.Name,
-		Description: req.Description,
-		FrontendURL: req.FrontendURL,
+		TenantID:          tenantID,
+		Name:              req.Name,
+		Description:       req.Description,
+		FrontendURL:       req.FrontendURL,
+		ResetPasswordPath: req.ResetPasswordPath,
+		MagicLinkPath:     req.MagicLinkPath,
+		VerifyEmailPath:   req.VerifyEmailPath,
 	}
 
 	if err := h.Repo.CreateApp(app); err != nil {
@@ -151,25 +154,31 @@ func (h *Handler) CreateApp(c *gin.Context) {
 	if err := h.Repo.SeedDefaultRolesForApp(app.ID); err != nil {
 		// Log but don't fail — the app was created, roles can be seeded later
 		c.JSON(http.StatusCreated, dto.AppResponse{
-			ID:          app.ID,
-			TenantID:    app.TenantID,
-			Name:        app.Name,
-			Description: app.Description,
-			FrontendURL: app.FrontendURL,
-			CreatedAt:   app.CreatedAt,
-			UpdatedAt:   app.UpdatedAt,
+			ID:                app.ID,
+			TenantID:          app.TenantID,
+			Name:              app.Name,
+			Description:       app.Description,
+			FrontendURL:       app.FrontendURL,
+			ResetPasswordPath: app.ResetPasswordPath,
+			MagicLinkPath:     app.MagicLinkPath,
+			VerifyEmailPath:   app.VerifyEmailPath,
+			CreatedAt:         app.CreatedAt,
+			UpdatedAt:         app.UpdatedAt,
 		})
 		return
 	}
 
 	c.JSON(http.StatusCreated, dto.AppResponse{
-		ID:          app.ID,
-		TenantID:    app.TenantID,
-		Name:        app.Name,
-		Description: app.Description,
-		FrontendURL: app.FrontendURL,
-		CreatedAt:   app.CreatedAt,
-		UpdatedAt:   app.UpdatedAt,
+		ID:                app.ID,
+		TenantID:          app.TenantID,
+		Name:              app.Name,
+		Description:       app.Description,
+		FrontendURL:       app.FrontendURL,
+		ResetPasswordPath: app.ResetPasswordPath,
+		MagicLinkPath:     app.MagicLinkPath,
+		VerifyEmailPath:   app.VerifyEmailPath,
+		CreatedAt:         app.CreatedAt,
+		UpdatedAt:         app.UpdatedAt,
 	})
 }
 
@@ -195,13 +204,16 @@ func (h *Handler) GetAppDetails(c *gin.Context) {
 
 	// Simple mapping for now, ideally we'd map OAuth configs too in DTO
 	c.JSON(http.StatusOK, dto.AppResponse{
-		ID:          app.ID,
-		TenantID:    app.TenantID,
-		Name:        app.Name,
-		Description: app.Description,
-		FrontendURL: app.FrontendURL,
-		CreatedAt:   app.CreatedAt,
-		UpdatedAt:   app.UpdatedAt,
+		ID:                app.ID,
+		TenantID:          app.TenantID,
+		Name:              app.Name,
+		Description:       app.Description,
+		FrontendURL:       app.FrontendURL,
+		ResetPasswordPath: app.ResetPasswordPath,
+		MagicLinkPath:     app.MagicLinkPath,
+		VerifyEmailPath:   app.VerifyEmailPath,
+		CreatedAt:         app.CreatedAt,
+		UpdatedAt:         app.UpdatedAt,
 	})
 }
 

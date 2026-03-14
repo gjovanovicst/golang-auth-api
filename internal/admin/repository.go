@@ -275,7 +275,7 @@ type BruteForceAppSettings struct {
 	CaptchaThreshold *int
 }
 
-// AppCustomizationSettings holds per-application branding, password policy, and token TTL fields.
+// AppCustomizationSettings holds per-application branding, password policy, token TTL, and email link path fields.
 type AppCustomizationSettings struct {
 	// Login Page Branding
 	LoginLogoURL        string
@@ -294,6 +294,10 @@ type AppCustomizationSettings struct {
 	// Token TTL overrides (0 = use global defaults)
 	AccessTokenTTLMinutes int
 	RefreshTokenTTLHours  int
+	// Email Action Link Paths (empty = use system defaults)
+	ResetPasswordPath string
+	MagicLinkPath     string
+	VerifyEmailPath   string
 }
 
 func (r *Repository) UpdateApp(id string, name string, description string, frontendURL string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, bf BruteForceAppSettings, custom AppCustomizationSettings) error {
@@ -340,6 +344,10 @@ func (r *Repository) UpdateApp(id string, name string, description string, front
 		// Token TTL overrides
 		"access_token_ttl_minutes": custom.AccessTokenTTLMinutes,
 		"refresh_token_ttl_hours":  custom.RefreshTokenTTLHours,
+		// Email Action Link Paths
+		"reset_password_path": custom.ResetPasswordPath,
+		"magic_link_path":     custom.MagicLinkPath,
+		"verify_email_path":   custom.VerifyEmailPath,
 	}
 
 	// Only update CAPTCHA secret key if explicitly provided (non-nil and non-empty).

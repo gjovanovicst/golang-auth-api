@@ -62,6 +62,7 @@ type Application struct {
 
 	// Login Page Branding — customize the look of login UIs for this application
 	LoginLogoURL        string `gorm:"type:varchar(500);default:''" json:"login_logo_url"`       // URL to the app logo shown on login pages
+	LoginTheme          string `gorm:"type:varchar(20);default:'auto'" json:"login_theme"`       // Color scheme for OIDC pages when no client theme is available: "auto", "light", "dark"
 	LoginPrimaryColor   string `gorm:"type:varchar(20);default:''" json:"login_primary_color"`   // Primary brand color (e.g. "#4f46e5")
 	LoginSecondaryColor string `gorm:"type:varchar(20);default:''" json:"login_secondary_color"` // Secondary brand color (e.g. "#7c3aed")
 	LoginDisplayName    string `gorm:"type:varchar(200);default:''" json:"login_display_name"`   // Display name shown on login page (falls back to Name if empty)

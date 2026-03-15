@@ -13,6 +13,11 @@ type CreateOIDCClientRequest struct {
 	IsConfidential    bool   `json:"is_confidential"`
 	PKCERequired      bool   `json:"pkce_required"`
 	LogoURL           string `json:"logo_url,omitempty"`
+	// LoginTheme controls the color scheme of OIDC pages: "app" (inherit from Application),
+	// "auto" (default, follow OS preference), "light", or "dark".
+	LoginTheme string `json:"login_theme,omitempty"`
+	// LoginPrimaryColor overrides Bootstrap's default primary color (e.g. "#4f46e5"). Empty = Bootstrap default.
+	LoginPrimaryColor string `json:"login_primary_color,omitempty"`
 }
 
 // UpdateOIDCClientRequest is the payload for PUT /admin/oidc/apps/:id/clients/:cid
@@ -27,6 +32,11 @@ type UpdateOIDCClientRequest struct {
 	PKCERequired      *bool  `json:"pkce_required,omitempty"`
 	LogoURL           string `json:"logo_url,omitempty"`
 	IsActive          *bool  `json:"is_active,omitempty"`
+	// LoginTheme controls the color scheme of OIDC pages: "app" (inherit from Application),
+	// "auto", "light", or "dark".
+	LoginTheme string `json:"login_theme,omitempty"`
+	// LoginPrimaryColor overrides Bootstrap's default primary color. Empty = Bootstrap default.
+	LoginPrimaryColor string `json:"login_primary_color,omitempty"`
 }
 
 // OIDCClientResponse is the read-only view returned by the admin API.
@@ -45,6 +55,9 @@ type OIDCClientResponse struct {
 	IsConfidential    bool   `json:"is_confidential"`
 	PKCERequired      bool   `json:"pkce_required"`
 	LogoURL           string `json:"logo_url"`
+	// LoginTheme: "app" (inherit from Application), "auto", "light", or "dark".
+	LoginTheme        string `json:"login_theme"`
+	LoginPrimaryColor string `json:"login_primary_color"`
 	IsActive          bool   `json:"is_active"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at"`

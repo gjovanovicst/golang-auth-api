@@ -85,6 +85,10 @@ type AppLoginConfigResponse struct {
 	LoginPrimaryColor   string `json:"login_primary_color,omitempty"`   // Primary brand color (e.g. "#4f46e5")
 	LoginSecondaryColor string `json:"login_secondary_color,omitempty"` // Secondary brand color
 	LoginDisplayName    string `json:"login_display_name,omitempty"`    // Display name shown on login page
+	// OIDCClientLoginTheme is the login_theme of the first active OIDC client for this app.
+	// "app" means the client follows the app's own theme (frontend should send ?ui_theme=).
+	// Empty string means no active OIDC client exists.
+	OIDCClientLoginTheme string `json:"oidc_client_login_theme,omitempty"`
 	// Password Policy — exposed so the frontend can show real-time requirements before submission
 	PwMinLength     int  `json:"pw_min_length"`     // Minimum password length (default 8)
 	PwMaxLength     int  `json:"pw_max_length"`     // Maximum password length (default 128)

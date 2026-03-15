@@ -1,12 +1,44 @@
 {{define "oidc_login"}}
 <!DOCTYPE html>
+{{if eq .Theme "light"}}
+<html lang="en" data-bs-theme="light">
+{{else if eq .Theme "dark"}}
+<html lang="en" data-bs-theme="dark">
+{{else}}
 <html lang="en">
+{{end}}
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign In — {{.AppName}}</title>
+    {{if eq .Theme "auto"}}
+    <script>
+        (function(){var d=document.documentElement;var m=window.matchMedia('(prefers-color-scheme: dark)');d.setAttribute('data-bs-theme',m.matches?'dark':'light');m.addEventListener('change',function(e){d.setAttribute('data-bs-theme',e.matches?'dark':'light');});})();
+    </script>
+    {{end}}
     <link rel="stylesheet" href="/gui/static/css/bootstrap.min.css">
     <link rel="stylesheet" href="/gui/static/css/bootstrap-icons.min.css">
+    {{if .PrimaryColor}}
+    <style>
+        :root {
+            --bs-primary: {{.PrimaryColor}};
+            --bs-primary-rgb: 0, 0, 0; /* overridden below via JS for full compat */
+            --bs-btn-bg: {{.PrimaryColor}};
+            --bs-btn-border-color: {{.PrimaryColor}};
+            --bs-btn-hover-bg: color-mix(in srgb, {{.PrimaryColor}} 85%, black);
+            --bs-btn-hover-border-color: color-mix(in srgb, {{.PrimaryColor}} 85%, black);
+            --bs-link-color: {{.PrimaryColor}};
+        }
+        .btn-primary {
+            --bs-btn-bg: {{.PrimaryColor}};
+            --bs-btn-border-color: {{.PrimaryColor}};
+            --bs-btn-hover-bg: color-mix(in srgb, {{.PrimaryColor}} 85%, black);
+            --bs-btn-hover-border-color: color-mix(in srgb, {{.PrimaryColor}} 85%, black);
+            --bs-btn-active-bg: color-mix(in srgb, {{.PrimaryColor}} 75%, black);
+            --bs-btn-active-border-color: color-mix(in srgb, {{.PrimaryColor}} 75%, black);
+        }
+    </style>
+    {{end}}
     <style>
         body {
             background-color: var(--bs-body-bg);
@@ -44,6 +76,7 @@
 
                 <form method="POST" action="/oidc/{{.AppID}}/authorize">
                     <input type="hidden" name="consent_token" value="{{.ConsentToken}}">
+                    {{if .UITheme}}<input type="hidden" name="ui_theme" value="{{.UITheme}}">{{end}}
 
                     <div class="mb-3">
                         <label for="email" class="form-label">Email</label>

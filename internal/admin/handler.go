@@ -258,6 +258,12 @@ func (h *Handler) GetAppLoginConfig(c *gin.Context) {
 		return
 	}
 
+	oidcClientLoginTheme, err := h.Repo.GetFirstActiveOIDCClientLoginTheme(appIDStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to retrieve OIDC client theme"})
+		return
+	}
+
 	c.JSON(http.StatusOK, dto.AppLoginConfigResponse{
 		AppID:                  appIDStr,
 		EnabledSocialProviders: providers,
@@ -274,6 +280,8 @@ func (h *Handler) GetAppLoginConfig(c *gin.Context) {
 		LoginPrimaryColor:   app.LoginPrimaryColor,
 		LoginSecondaryColor: app.LoginSecondaryColor,
 		LoginDisplayName:    app.LoginDisplayName,
+		// OIDC client theme — "app" means frontend should forward its own theme via ?ui_theme=
+		OIDCClientLoginTheme: oidcClientLoginTheme,
 		// Password Policy
 		PwMinLength:     app.PwMinLength,
 		PwMaxLength:     app.PwMaxLength,

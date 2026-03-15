@@ -145,6 +145,8 @@ func (h *Handler) Authorize(c *gin.Context) {
 
 	// Check if the session cookie has an authenticated user
 	userID := h.sessionUserID(c, app.ID.String())
+	uiThemeOverride := c.Query("ui_theme")
+	theme, primaryColor := clientThemeWithOverride(client, app, uiThemeOverride)
 	if userID == "" {
 		// Not logged in — render the OIDC login page
 		c.HTML(http.StatusOK, "oidc_login", gin.H{
@@ -155,6 +157,8 @@ func (h *Handler) Authorize(c *gin.Context) {
 			"ConsentToken": consentToken,
 			"Scopes":       scopes,
 			"Error":        "",
+			"Theme":        theme,
+			"PrimaryColor": primaryColor,
 		})
 		return
 	}
@@ -186,6 +190,8 @@ func (h *Handler) Authorize(c *gin.Context) {
 		"ConsentToken": consentToken,
 		"Scopes":       scopes,
 		"UserID":       userID,
+		"Theme":        theme,
+		"PrimaryColor": primaryColor,
 	})
 }
 
@@ -226,6 +232,9 @@ func (h *Handler) AuthorizeSubmit(c *gin.Context) {
 	// ── Login form submission ──────────────────────────────────────────────
 	email := c.PostForm("email")
 	password := c.PostForm("password") // #nosec G101 -- form field, not a credential constant
+	// ui_theme may be forwarded as a hidden form field from the login page
+	postUITheme := c.PostForm("ui_theme")
+	theme, primaryColor := clientThemeWithOverride(client, app, postUITheme)
 
 	if email != "" && password != "" {
 		// Validate credentials
@@ -240,6 +249,9 @@ func (h *Handler) AuthorizeSubmit(c *gin.Context) {
 				"ConsentToken": req.ConsentToken,
 				"Scopes":       scopes,
 				"Error":        "Invalid email or password",
+				"Theme":        theme,
+				"PrimaryColor": primaryColor,
+				"UITheme":      postUITheme,
 			})
 			return
 		}
@@ -273,6 +285,9 @@ func (h *Handler) AuthorizeSubmit(c *gin.Context) {
 			"ConsentToken": req.ConsentToken,
 			"Scopes":       scopes,
 			"UserID":       user.ID.String(),
+			"Theme":        theme,
+			"PrimaryColor": primaryColor,
+			"UITheme":      postUITheme,
 		})
 		return
 	}
@@ -764,9 +779,12 @@ func (h *Handler) EndSession(c *gin.Context) {
 	}
 
 	// No redirect URI — render signed-out confirmation page.
+	theme, primaryColor := appTheme(app)
 	c.HTML(http.StatusOK, "oidc_logout", gin.H{
-		"AppID":   app.ID.String(),
-		"AppName": app.Name,
+		"AppID":        app.ID.String(),
+		"AppName":      app.Name,
+		"Theme":        theme,
+		"PrimaryColor": primaryColor,
 	})
 }
 
@@ -799,6 +817,7 @@ func (h *Handler) AdminCreateClient(c *gin.Context) {
 		appID, req.Name, req.Description, req.RedirectURIs,
 		req.AllowedGrantTypes, req.AllowedScopes,
 		req.RequireConsent, req.IsConfidential, req.PKCERequired, req.LogoURL,
+		req.LoginTheme, req.LoginPrimaryColor,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "failed to create client"})
@@ -879,7 +898,7 @@ func (h *Handler) AdminUpdateClient(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
 		return
 	}
-	client, err := h.Service.UpdateClient(cid, req.Name, req.Description, req.RedirectURIs, req.AllowedGrantTypes, req.AllowedScopes, req.LogoURL, req.RequireConsent, req.IsConfidential, req.PKCERequired, req.IsActive)
+	client, err := h.Service.UpdateClient(cid, req.Name, req.Description, req.RedirectURIs, req.AllowedGrantTypes, req.AllowedScopes, req.LogoURL, req.LoginTheme, req.LoginPrimaryColor, req.RequireConsent, req.IsConfidential, req.PKCERequired, req.IsActive)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "failed to update client"})
 		return
@@ -952,11 +971,51 @@ func (h *Handler) loadApp(c *gin.Context) (*models.Application, bool) {
 
 // renderError renders the OIDC error page.
 func (h *Handler) renderError(c *gin.Context, app *models.Application, msg string) {
+	theme, primaryColor := appTheme(app)
 	c.HTML(http.StatusBadRequest, "oidc_error", gin.H{
-		"AppID":   app.ID.String(),
-		"AppName": app.Name,
-		"Error":   msg,
+		"AppID":        app.ID.String(),
+		"AppName":      app.Name,
+		"Error":        msg,
+		"Theme":        theme,
+		"PrimaryColor": primaryColor,
 	})
+}
+
+// appTheme returns the login theme and primary color for an Application,
+// used as the fallback when no OIDC client is available (logout, error pages).
+func appTheme(app *models.Application) (string, string) {
+	theme := app.LoginTheme
+	if theme == "" {
+		theme = "auto"
+	}
+	return theme, app.LoginPrimaryColor
+}
+
+// clientThemeWithOverride returns the login theme and primary color for an OIDC client,
+// with an optional ui_theme query parameter override.
+//
+// Theme resolution order (highest priority first):
+//  1. uiThemeOverride ("light", "dark", "auto") — set via ?ui_theme= query param or hidden form field
+//  2. client.LoginTheme == "app" → delegate to app-level theme/color (app.LoginTheme / app.LoginPrimaryColor)
+//  3. client.LoginTheme ("auto", "light", "dark") + client.LoginPrimaryColor
+func clientThemeWithOverride(client *models.OIDCClient, app *models.Application, uiThemeOverride string) (string, string) {
+	theme := client.LoginTheme
+	primaryColor := client.LoginPrimaryColor
+
+	// "app" sentinel: inherit theme and primary color from the owning Application.
+	if theme == "app" {
+		theme, primaryColor = appTheme(app)
+	}
+	if theme == "" {
+		theme = "auto"
+	}
+
+	// ?ui_theme= / hidden form field always wins over everything.
+	switch uiThemeOverride {
+	case "light", "dark", "auto":
+		theme = uiThemeOverride
+	}
+	return theme, primaryColor
 }
 
 // buildConsentToken encodes the original authorization request into a signed token
@@ -1164,6 +1223,8 @@ func clientToResponse(c *models.OIDCClient) dto.OIDCClientResponse {
 		IsConfidential:    c.IsConfidential,
 		PKCERequired:      c.PKCERequired,
 		LogoURL:           c.LogoURL,
+		LoginTheme:        c.LoginTheme,
+		LoginPrimaryColor: c.LoginPrimaryColor,
 		IsActive:          c.IsActive,
 		CreatedAt:         c.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         c.UpdatedAt.Format(time.RFC3339),

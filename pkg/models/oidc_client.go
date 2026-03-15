@@ -47,6 +47,14 @@ type OIDCClient struct {
 	// LogoURL: optional URL to client logo shown on consent screen
 	LogoURL string `gorm:"default:''" json:"logo_url"`
 
+	// LoginTheme controls the color scheme of OIDC login/consent pages for this client.
+	// "auto" (default) follows the user's OS preference; "light" and "dark" force a mode.
+	LoginTheme string `gorm:"type:varchar(20);default:'auto'" json:"login_theme"`
+
+	// LoginPrimaryColor is an optional hex color (e.g. "#4f46e5") that overrides Bootstrap's
+	// default primary blue on OIDC pages. Empty string means use Bootstrap default (#0d6efd).
+	LoginPrimaryColor string `gorm:"type:varchar(20);default:''" json:"login_primary_color"`
+
 	// IsActive: soft-disable a client without deleting it
 	IsActive bool `gorm:"default:true" json:"is_active"`
 

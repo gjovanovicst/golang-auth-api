@@ -110,11 +110,15 @@ func (s *Service) IssuerURL(app *models.Application) string {
 
 // CreateClient registers a new OIDC client for the given application.
 // Returns the client model *and* the plain-text secret (shown only once).
-func (s *Service) CreateClient(appID uuid.UUID, name, description, redirectURIs, grantTypes, scopes string, requireConsent, isConfidential, pkceRequired bool, logoURL string) (*models.OIDCClient, string, error) {
+func (s *Service) CreateClient(appID uuid.UUID, name, description, redirectURIs, grantTypes, scopes string, requireConsent, isConfidential, pkceRequired bool, logoURL, loginTheme, loginPrimaryColor string) (*models.OIDCClient, string, error) {
 	clientID := generateClientID()
 	plainSecret, hash, err := generateClientSecret()
 	if err != nil {
 		return nil, "", fmt.Errorf("generate client secret: %w", err)
+	}
+
+	if loginTheme == "" {
+		loginTheme = "auto"
 	}
 
 	client := &models.OIDCClient{
@@ -130,6 +134,8 @@ func (s *Service) CreateClient(appID uuid.UUID, name, description, redirectURIs,
 		IsConfidential:    isConfidential,
 		PKCERequired:      pkceRequired,
 		LogoURL:           logoURL,
+		LoginTheme:        loginTheme,
+		LoginPrimaryColor: loginPrimaryColor,
 		IsActive:          true,
 	}
 	if err := s.repo.CreateClient(client); err != nil {
@@ -149,7 +155,7 @@ func (s *Service) ListClients(appID uuid.UUID) ([]models.OIDCClient, error) {
 }
 
 // UpdateClient applies partial updates to an OIDC client.
-func (s *Service) UpdateClient(id uuid.UUID, name, description, redirectURIs, grantTypes, scopes, logoURL string, requireConsent, isConfidential, pkceRequired, isActive *bool) (*models.OIDCClient, error) {
+func (s *Service) UpdateClient(id uuid.UUID, name, description, redirectURIs, grantTypes, scopes, logoURL, loginTheme, loginPrimaryColor string, requireConsent, isConfidential, pkceRequired, isActive *bool) (*models.OIDCClient, error) {
 	client, err := s.repo.GetClientByID(id)
 	if err != nil {
 		return nil, err
@@ -172,6 +178,11 @@ func (s *Service) UpdateClient(id uuid.UUID, name, description, redirectURIs, gr
 	if logoURL != "" {
 		client.LogoURL = logoURL
 	}
+	if loginTheme != "" {
+		client.LoginTheme = loginTheme
+	}
+	// loginPrimaryColor can be explicitly cleared to "" so always overwrite when the param differs
+	client.LoginPrimaryColor = loginPrimaryColor
 	if requireConsent != nil {
 		client.RequireConsent = *requireConsent
 	}

@@ -52,6 +52,8 @@ type oidcClientFormData struct {
 	IsConfidential    bool
 	PKCERequired      bool
 	LogoURL           string
+	LoginTheme        string
+	LoginPrimaryColor string
 	IsActive          bool
 	Apps              []AppWithTenant
 	IsEdit            bool
@@ -224,6 +226,7 @@ func (h *GUIHandler) OIDCClientCreateForm(c *gin.Context) {
 		IsConfidential:    true,
 		RequireConsent:    true,
 		IsActive:          true,
+		LoginTheme:        "auto",
 		Apps:              apps,
 	})
 }
@@ -243,9 +246,15 @@ func (h *GUIHandler) OIDCClientCreate(c *gin.Context) {
 	grantTypes := strings.TrimSpace(c.PostForm("allowed_grant_types"))
 	scopes := strings.TrimSpace(c.PostForm("allowed_scopes"))
 	logoURL := strings.TrimSpace(c.PostForm("logo_url"))
+	loginTheme := strings.TrimSpace(c.PostForm("login_theme"))
+	loginPrimaryColor := strings.TrimSpace(c.PostForm("login_primary_color"))
 	isConfidential := c.PostForm("is_confidential") == "true"
 	pkceRequired := c.PostForm("pkce_required") == "true"
 	requireConsent := c.PostForm("require_consent") == "true"
+
+	if loginTheme == "" {
+		loginTheme = "auto"
+	}
 
 	if appIDStr == "" {
 		c.String(http.StatusBadRequest,
@@ -280,7 +289,7 @@ func (h *GUIHandler) OIDCClientCreate(c *gin.Context) {
 		return
 	}
 
-	client, plainSecret, err := h.OIDCService.CreateClient(appID, name, description, redirectURIs, grantTypes, scopes, requireConsent, isConfidential, pkceRequired, logoURL)
+	client, plainSecret, err := h.OIDCService.CreateClient(appID, name, description, redirectURIs, grantTypes, scopes, requireConsent, isConfidential, pkceRequired, logoURL, loginTheme, loginPrimaryColor)
 	if err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create OIDC client. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
@@ -336,6 +345,8 @@ func (h *GUIHandler) OIDCClientEditForm(c *gin.Context) {
 		IsConfidential:    client.IsConfidential,
 		PKCERequired:      client.PKCERequired,
 		LogoURL:           client.LogoURL,
+		LoginTheme:        client.LoginTheme,
+		LoginPrimaryColor: client.LoginPrimaryColor,
 		IsActive:          client.IsActive,
 		Apps:              apps,
 		IsEdit:            true,
@@ -364,6 +375,8 @@ func (h *GUIHandler) OIDCClientUpdate(c *gin.Context) {
 	grantTypes := strings.TrimSpace(c.PostForm("allowed_grant_types"))
 	scopes := strings.TrimSpace(c.PostForm("allowed_scopes"))
 	logoURL := strings.TrimSpace(c.PostForm("logo_url"))
+	loginTheme := strings.TrimSpace(c.PostForm("login_theme"))
+	loginPrimaryColor := strings.TrimSpace(c.PostForm("login_primary_color"))
 
 	isConfidentialVal := c.PostForm("is_confidential") == "true"
 	pkceVal := c.PostForm("pkce_required") == "true"
@@ -378,6 +391,8 @@ func (h *GUIHandler) OIDCClientUpdate(c *gin.Context) {
 		grantTypes,
 		scopes,
 		logoURL,
+		loginTheme,
+		loginPrimaryColor,
 		&consentVal,
 		&isConfidentialVal,
 		&pkceVal,

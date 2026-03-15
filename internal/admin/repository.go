@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -540,6 +541,25 @@ func (r *Repository) HasActiveOIDCClients(appID string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// GetFirstActiveOIDCClientLoginTheme returns the login_theme of the first active
+// OIDC client for the given app, or an empty string if none exists.
+// Used by the public /app-config endpoint so the frontend knows whether to send
+// a ?ui_theme= parameter when initiating the OIDC authorization flow.
+func (r *Repository) GetFirstActiveOIDCClientLoginTheme(appID string) (string, error) {
+	var client models.OIDCClient
+	err := r.DB.Select("login_theme").
+		Where("app_id = ? AND is_active = true", appID).
+		Order("created_at ASC").
+		First(&client).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return client.LoginTheme, nil
 }
 
 // AppWithTenant holds an application ID, name, and its tenant name for dropdown selects.

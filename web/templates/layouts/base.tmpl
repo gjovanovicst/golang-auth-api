@@ -1,6 +1,6 @@
 {{define "base"}}
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="light">
+<html lang="en" data-bs-theme="{{if .Theme}}{{.Theme}}{{else}}light{{end}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -23,6 +23,7 @@
             top: 0;
             left: 0;
             z-index: 100;
+            box-shadow: 2px 0 12px rgba(0, 0, 0, 0.15);
         }
         .sidebar-nav-scroll {
             flex: 1;
@@ -73,6 +74,12 @@
             .main-content {
                 margin-left: 0;
             }
+        }
+        /* Dark mode: deepen the sidebar so it reads as a distinct surface */
+        [data-bs-theme="dark"] .sidebar {
+            background-color: #101214 !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 2px 0 12px rgba(0, 0, 0, 0.5);
         }
     </style>
 </head>
@@ -257,7 +264,16 @@
                 </li>
             </ul>
             <hr class="text-secondary mx-3 my-0">
-            <div class="p-3">
+            <!-- Theme toggle -->
+            <div class="px-3 pt-2 pb-1">
+                <button id="theme-toggle" class="btn btn-sm w-100 text-start border-0 text-white-50 px-1 py-1"
+                        onclick="toggleTheme()" style="background:transparent;" title="Toggle light/dark theme">
+                    <i class="bi bi-sun-fill me-2" id="theme-icon-light"></i>
+                    <i class="bi bi-moon-stars-fill me-2" id="theme-icon-dark"></i>
+                    <span id="theme-label"></span>
+                </button>
+            </div>
+            <div class="p-3 pt-1">
                 <div class="d-flex align-items-center text-white-50">
                     <i class="bi bi-person-circle me-2"></i>
                     <small>{{.AdminUsername}}</small>
@@ -272,8 +288,8 @@
     <!-- Main content -->
     <div class="main-content" id="main-content">
         <!-- Top navbar (mobile toggle + breadcrumb) -->
-        <nav class="navbar navbar-light bg-white border-bottom px-3 d-md-none">
-            <button class="btn btn-outline-dark btn-sm" onclick="document.querySelector('.sidebar').classList.toggle('show')">
+        <nav class="navbar bg-body-tertiary border-bottom px-3 d-md-none">
+            <button class="btn btn-outline-secondary btn-sm" onclick="document.querySelector('.sidebar').classList.toggle('show')">
                 <i class="bi bi-list"></i>
             </button>
             <span class="navbar-text fw-semibold">Auth API Admin</span>
@@ -393,6 +409,37 @@
                 });
             }
         });
+
+        // ---- Theme toggle ----
+        function toggleTheme() {
+            var html = document.documentElement;
+            var current = html.getAttribute('data-bs-theme');
+            var next = current === 'dark' ? 'light' : 'dark';
+            html.setAttribute('data-bs-theme', next);
+            // Persist in a 1-year cookie (not HttpOnly — must be readable by JS)
+            var secure = location.protocol === 'https:' ? '; Secure' : '';
+            document.cookie = 'gui_theme=' + next + '; path=/gui; max-age=31536000; SameSite=Strict' + secure;
+            updateThemeToggleUI(next);
+        }
+
+        function updateThemeToggleUI(theme) {
+            var iconLight = document.getElementById('theme-icon-light');
+            var iconDark  = document.getElementById('theme-icon-dark');
+            var label     = document.getElementById('theme-label');
+            if (!iconLight || !iconDark || !label) return;
+            if (theme === 'dark') {
+                iconLight.style.display = 'none';
+                iconDark.style.display  = 'inline';
+                label.textContent = 'Dark mode';
+            } else {
+                iconLight.style.display = 'inline';
+                iconDark.style.display  = 'none';
+                label.textContent = 'Light mode';
+            }
+        }
+
+        // Initialize theme toggle UI on first load
+        updateThemeToggleUI(document.documentElement.getAttribute('data-bs-theme') || 'light');
     </script>
 </body>
 </html>

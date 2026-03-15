@@ -4,7 +4,7 @@
     <!-- Auth Metrics -->
     <div class="col-lg-8">
         <div class="card border-0 shadow-sm h-100">
-            <div class="card-header bg-white border-bottom">
+            <div class="card-header bg-body-tertiary border-bottom">
                 <h6 class="mb-0 fw-bold">
                     <i class="bi bi-shield-check me-2"></i>Authentication Metrics
                     <small class="text-muted fw-normal ms-2">(since process start)</small>
@@ -26,7 +26,7 @@
                             <td class="pe-3 py-2 text-end fw-bold">{{printf "%.0f" .LoginFailureTotal}}</td>
                         </tr>
                         {{range $reason, $count := .LoginFailureByReason}}
-                        <tr class="table-light">
+                        <tr class="">
                             <td class="ps-4 py-1 text-muted small">
                                 <i class="bi bi-arrow-return-right me-2"></i>{{$reason}}
                             </td>
@@ -60,7 +60,7 @@
     <!-- Infrastructure / Runtime -->
     <div class="col-lg-4">
         <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header bg-white border-bottom">
+            <div class="card-header bg-body-tertiary border-bottom">
                 <h6 class="mb-0 fw-bold">
                     <i class="bi bi-database me-2"></i>DB Connection Pool
                 </h6>
@@ -86,7 +86,7 @@
         </div>
 
         <div class="card border-0 shadow-sm">
-            <div class="card-header bg-white border-bottom">
+            <div class="card-header bg-body-tertiary border-bottom">
                 <h6 class="mb-0 fw-bold">
                     <i class="bi bi-cpu me-2"></i>Go Runtime
                 </h6>

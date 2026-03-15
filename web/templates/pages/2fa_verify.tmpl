@@ -1,6 +1,6 @@
 {{define "2fa_verify"}}
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="light">
+<html lang="en" data-bs-theme="{{if .Theme}}{{.Theme}}{{else}}light{{end}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="/gui/static/css/bootstrap-icons.min.css">
     <style>
         body {
-            background-color: #f8f9fa;
+            background-color: var(--bs-body-bg);
             display: flex;
             align-items: center;
             justify-content: center;

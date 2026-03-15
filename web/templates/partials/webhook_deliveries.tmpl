@@ -4,7 +4,7 @@
     <div class="alert alert-danger m-3">{{.Error}}</div>
     {{else}}
     {{if .Endpoint}}
-    <div class="px-3 pt-3 pb-2 border-bottom bg-light">
+    <div class="px-3 pt-3 pb-2 border-bottom bg-body-secondary">
         <div class="d-flex align-items-center gap-2 flex-wrap">
             <span class="badge bg-primary bg-opacity-10 text-primary font-monospace">{{.Endpoint.EventType}}</span>
             <code class="small text-muted">{{.Endpoint.URL}}</code>
@@ -15,7 +15,7 @@
     {{if .Deliveries}}
     <div class="table-responsive">
         <table class="table table-sm table-hover align-middle mb-0">
-            <thead class="table-light">
+            <thead class="">
                 <tr>
                     <th class="ps-3">Time</th>
                     <th>Attempt</th>

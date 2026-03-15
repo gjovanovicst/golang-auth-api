@@ -121,7 +121,7 @@
                 <div class="tab-pane fade" id="tab-auth" role="tabpanel" aria-labelledby="tab-auth-btn">
 
                     <!-- Two-Factor Authentication -->
-                    <div class="border rounded p-3 mb-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-shield-lock me-2"></i>Two-Factor Authentication</h6>
                         <div class="row g-3">
                             <div class="col-md-4">
@@ -154,7 +154,7 @@
                     </div>
 
                     <!-- Passkey / WebAuthn -->
-                    <div class="border rounded p-3 mb-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-key me-2"></i>Passkey / WebAuthn</h6>
                         <div class="row g-3">
                             <div class="col-md-6 d-flex align-items-center">
@@ -181,7 +181,7 @@
                     </div>
 
                     <!-- Magic Link -->
-                    <div class="border rounded p-3 mb-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-envelope-arrow-up me-2"></i>Magic Link Login</h6>
                         <div class="row g-3">
                             <div class="col-md-6 d-flex align-items-center">
@@ -198,7 +198,7 @@
                     </div>
 
                     <!-- OIDC -->
-                    <div class="border rounded p-3 mb-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-diagram-3 me-2"></i>OpenID Connect (OIDC) Provider</h6>
                         <div class="row g-3">
                             <div class="col-md-6 d-flex align-items-center">
@@ -215,7 +215,7 @@
                     </div>
 
                     <!-- SMS 2FA & Trusted Devices -->
-                    <div class="border rounded p-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-phone me-2"></i>SMS 2FA &amp; Trusted Devices</h6>
                         <div class="row g-3">
                             <div class="col-md-4 d-flex align-items-center">
@@ -255,7 +255,7 @@
                     <p class="small text-muted mb-3">Override brute-force protection settings for this application. When a section is toggled off, the system defaults (shown as pre-filled values) are used.</p>
 
                     <!-- Account Lockout -->
-                    <div class="border rounded p-3 mb-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
                         <div class="form-check form-switch mb-2">
                             <input class="form-check-input" type="checkbox" role="switch" id="bfLockoutOverride"
                                    name="bf_lockout_override" {{if .BfLockoutOverride}}checked{{end}}
@@ -303,7 +303,7 @@
                     </div>
 
                     <!-- Progressive Delay -->
-                    <div class="border rounded p-3 mb-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
                         <div class="form-check form-switch mb-2">
                             <input class="form-check-input" type="checkbox" role="switch" id="bfDelayOverride"
                                    name="bf_delay_override" {{if .BfDelayOverride}}checked{{end}}
@@ -344,7 +344,7 @@
                     </div>
 
                     <!-- CAPTCHA -->
-                    <div class="border rounded p-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
                         <div class="form-check form-switch mb-2">
                             <input class="form-check-input" type="checkbox" role="switch" id="bfCaptchaOverride"
                                    name="bf_captcha_override" {{if .BfCaptchaOverride}}checked{{end}}
@@ -388,7 +388,7 @@
                 <div class="tab-pane fade" id="tab-custom" role="tabpanel" aria-labelledby="tab-custom-btn">
 
                     <!-- Login Page Branding -->
-                    <div class="border rounded p-3 mb-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-palette me-2"></i>Login Page Branding</h6>
                         <div class="row g-3">
                             <div class="col-md-6">
@@ -419,7 +419,7 @@
                     </div>
 
                     <!-- Password Policy -->
-                    <div class="border rounded p-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-file-lock me-2"></i>Password Policy</h6>
                         <div class="row g-3">
                             <div class="col-md-3">
@@ -478,7 +478,7 @@
                 <div class="tab-pane fade" id="tab-advanced" role="tabpanel" aria-labelledby="tab-advanced-btn">
 
                     <!-- Token Lifetimes -->
-                    <div class="border rounded p-3 bg-light bg-opacity-50">
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-clock me-2"></i>Token Lifetimes</h6>
                         <p class="small text-muted mb-3">Override per-app token TTLs. Set to 0 to use the global defaults from environment variables.</p>
                         <div class="row g-3">

@@ -4,7 +4,7 @@
         {{if .Logs}}
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
-                <thead class="table-light">
+                <thead class="">
                     <tr>
                         <th class="ps-3">Time</th>
                         <th>Event</th>
@@ -79,7 +79,7 @@
 
         <!-- Pagination -->
         {{if gt .TotalPages 1}}
-        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+        <div class="card-footer bg-body-tertiary border-top d-flex align-items-center justify-content-between">
             <small class="text-muted">
                 Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
             </small>

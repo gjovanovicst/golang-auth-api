@@ -89,6 +89,7 @@ func NewGUIHandler(accountService *AccountService, dashboardService *DashboardSe
 // GET /gui/login
 func (h *GUIHandler) LoginPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:    web.GetTheme(c),
 		Redirect: c.Query("redirect"),
 	}
 	c.HTML(http.StatusOK, "login", data)
@@ -103,6 +104,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	if errMsg, exists := c.Get(web.RateLimitErrorKey); exists {
 		msg, _ := errMsg.(string)
 		data := web.TemplateData{
+			Theme:    web.GetTheme(c),
 			Error:    msg,
 			Username: c.PostForm("username"),
 			Redirect: c.PostForm("redirect"),
@@ -118,6 +120,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	// Validate input
 	if username == "" || password == "" {
 		data := web.TemplateData{
+			Theme:    web.GetTheme(c),
 			Error:    "Username or email and password are required.",
 			Username: username,
 			Redirect: redirect,
@@ -130,6 +133,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	account, err := h.AccountService.Authenticate(username, password)
 	if err != nil {
 		data := web.TemplateData{
+			Theme:    web.GetTheme(c),
 			Error:    "Invalid username/email or password.",
 			Username: username,
 			Redirect: redirect,
@@ -144,6 +148,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 		tempToken, err := h.AccountService.Create2FATempSession(account.ID.String())
 		if err != nil {
 			data := web.TemplateData{
+				Theme:    web.GetTheme(c),
 				Error:    "An internal error occurred. Please try again.",
 				Username: username,
 				Redirect: redirect,
@@ -156,6 +161,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 		if account.TwoFAMethod == "email" {
 			if err := h.AccountService.GenerateAndSendEmail2FACode(account.ID.String()); err != nil {
 				data := web.TemplateData{
+					Theme:    web.GetTheme(c),
 					Error:    "Failed to send verification code. Please try again.",
 					Username: username,
 					Redirect: redirect,
@@ -178,6 +184,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	sessionID, err := h.AccountService.CreateSession(account.ID.String())
 	if err != nil {
 		data := web.TemplateData{
+			Theme:    web.GetTheme(c),
 			Error:    "An internal error occurred. Please try again.",
 			Username: username,
 			Redirect: redirect,
@@ -223,6 +230,7 @@ func (h *GUIHandler) Logout(c *gin.Context) {
 // GET /gui/
 func (h *GUIHandler) Dashboard(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "dashboard",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -261,6 +269,7 @@ func (h *GUIHandler) DashboardActivity(c *gin.Context) {
 // GET /gui/tenants
 func (h *GUIHandler) TenantPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "tenants",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -456,6 +465,7 @@ func (h *GUIHandler) AppPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "applications",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -1144,6 +1154,7 @@ func (h *GUIHandler) OAuthPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "oauth",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -2296,6 +2307,7 @@ func (h *GUIHandler) SettingsPage(c *gin.Context) {
 	categories, err := h.SettingsService.ResolveAllByCategory()
 	if err != nil {
 		data := web.TemplateData{
+			Theme:         web.GetTheme(c),
 			ActivePage:    "settings",
 			AdminUsername: c.GetString(web.GUIAdminUsernameKey),
 			CSRFToken:     c.GetString(web.CSRFTokenKey),
@@ -2306,6 +2318,7 @@ func (h *GUIHandler) SettingsPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "settings",
 		AdminUsername: c.GetString(web.GUIAdminUsernameKey),
 		CSRFToken:     c.GetString(web.CSRFTokenKey),
@@ -2440,6 +2453,7 @@ func (h *GUIHandler) EmailServersPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "email-servers",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -2881,6 +2895,7 @@ func (h *GUIHandler) EmailTemplatesPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "email-templates",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -3321,9 +3336,10 @@ func (h *GUIHandler) EmailTemplateReset(c *gin.Context) {
 }
 
 // EmailTemplateFormCancel clears the form container.
+// Also clears the preview container via HTMX out-of-band swap.
 // GET /gui/email-templates/form-cancel
 func (h *GUIHandler) EmailTemplateFormCancel(c *gin.Context) {
-	c.String(http.StatusOK, "")
+	c.String(http.StatusOK, `<div id="email-template-preview-container" hx-swap-oob="true"></div>`)
 }
 
 // EmailTemplatePreview renders a preview of the template.
@@ -3364,8 +3380,13 @@ func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
 
 	c.String(http.StatusOK, fmt.Sprintf(`
 <div class="card border-0 shadow-sm">
-    <div class="card-header bg-light">
-        <small class="text-muted">Subject:</small> <strong>%s</strong>
+    <div class="card-header bg-body-tertiary d-flex align-items-center justify-content-between">
+        <span><small class="text-muted">Subject:</small> <strong>%s</strong></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                onclick="document.getElementById('email-template-preview-container').innerHTML=''"
+                aria-label="Close preview">
+            <i class="bi bi-x-lg me-1"></i>Close Preview
+        </button>
     </div>
     <div class="card-body p-0">
         <iframe srcdoc="%s" style="width:100%%;min-height:400px;border:none;" sandbox="allow-same-origin"></iframe>
@@ -3381,6 +3402,7 @@ func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
 // GET /gui/email-types
 func (h *GUIHandler) EmailTypesPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "email-types",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -3661,6 +3683,7 @@ func (h *GUIHandler) TwoFAVerifyPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:       web.GetTheme(c),
 		TempToken:   tempToken,
 		TwoFAMethod: method,
 		Redirect:    redirect,
@@ -3680,6 +3703,7 @@ func (h *GUIHandler) TwoFAVerifySubmit(c *gin.Context) {
 
 	if tempToken == "" || code == "" {
 		data := web.TemplateData{
+			Theme:       web.GetTheme(c),
 			Error:       "Verification code is required.",
 			TempToken:   tempToken,
 			TwoFAMethod: method,
@@ -3708,6 +3732,7 @@ func (h *GUIHandler) TwoFAVerifySubmit(c *gin.Context) {
 
 	if err != nil {
 		data := web.TemplateData{
+			Theme:       web.GetTheme(c),
 			Error:       "Invalid verification code. Please try again.",
 			TempToken:   tempToken,
 			TwoFAMethod: method,
@@ -3723,6 +3748,7 @@ func (h *GUIHandler) TwoFAVerifySubmit(c *gin.Context) {
 	sessionID, err := h.AccountService.CreateSession(adminID)
 	if err != nil {
 		data := web.TemplateData{
+			Theme:       web.GetTheme(c),
 			Error:       "An internal error occurred. Please try again.",
 			TempToken:   tempToken,
 			TwoFAMethod: method,
@@ -3802,6 +3828,7 @@ func (h *GUIHandler) MyAccountPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "my-account",
 		AdminUsername: c.GetString(web.GUIAdminUsernameKey),
 		AdminID:       adminID,
@@ -3893,6 +3920,7 @@ func (h *GUIHandler) MyAccount2FAGenerateTOTP(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: map[string]interface{}{
 			"Secret":     setup.Secret,
@@ -3931,6 +3959,7 @@ func (h *GUIHandler) MyAccount2FAVerifyTOTP(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: map[string]interface{}{
 			"RecoveryCodes": recoveryCodes,
@@ -3955,6 +3984,7 @@ func (h *GUIHandler) MyAccount2FAEnableEmail(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: map[string]interface{}{
 			"RecoveryCodes": recoveryCodes,
@@ -4008,6 +4038,7 @@ func (h *GUIHandler) MyAccount2FAStatus(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: MyAccountData{
 			Email:              account.Email,
@@ -4039,6 +4070,7 @@ func (h *GUIHandler) MyAccount2FARegenerateCodes(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: map[string]interface{}{
 			"RecoveryCodes": codes,
@@ -4081,6 +4113,7 @@ func (h *GUIHandler) MyAccountPasskeyStatus(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: MyAccountPasskeyData{
 			Passkeys: creds,
@@ -4213,6 +4246,7 @@ func (h *GUIHandler) RolesPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "roles",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -4518,6 +4552,7 @@ func (h *GUIHandler) RolePermissionsUpdate(c *gin.Context) {
 // GET /gui/permissions
 func (h *GUIHandler) PermissionsPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "permissions",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -4597,6 +4632,7 @@ func (h *GUIHandler) UserRolesPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "user-roles",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -5163,6 +5199,7 @@ func (h *GUIHandler) MyAccountMagicLinkStatus(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: MyAccountMagicLinkData{
 			MagicLinkEnabled: account.MagicLinkEnabled,
@@ -5201,6 +5238,7 @@ func (h *GUIHandler) MyAccountMagicLinkToggle(c *gin.Context) {
 
 	// Re-render the status partial with the updated state
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: MyAccountMagicLinkData{
 			MagicLinkEnabled: newState,
@@ -5262,6 +5300,7 @@ func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
 		c.HTML(http.StatusBadRequest, "login", web.TemplateData{
+			Theme: web.GetTheme(c),
 			Error: "Invalid or missing magic link token.",
 		})
 		return
@@ -5271,6 +5310,7 @@ func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
 	adminID, err := redis.GetAdminMagicLinkToken(token)
 	if err != nil || adminID == "" {
 		c.HTML(http.StatusUnauthorized, "login", web.TemplateData{
+			Theme: web.GetTheme(c),
 			Error: "This magic link is invalid or has expired. Please request a new one.",
 		})
 		return
@@ -5283,6 +5323,7 @@ func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
 	account, accErr := h.AccountService.Repo.GetByID(adminID)
 	if accErr != nil || account == nil {
 		c.HTML(http.StatusUnauthorized, "login", web.TemplateData{
+			Theme: web.GetTheme(c),
 			Error: "Account not found. Please contact an administrator.",
 		})
 		return
@@ -5295,6 +5336,7 @@ func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
 	sessionID, sessErr := h.AccountService.CreateSession(adminID)
 	if sessErr != nil {
 		c.HTML(http.StatusInternalServerError, "login", web.TemplateData{
+			Theme: web.GetTheme(c),
 			Error: "Failed to create session. Please try again.",
 		})
 		return
@@ -5785,6 +5827,7 @@ func (h *GUIHandler) IPRulePage(c *gin.Context) {
 	apps, _ := h.Repo.ListAllAppsWithTenantName()
 
 	c.HTML(http.StatusOK, "ip_rules", web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "ip-rules",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -6682,6 +6725,7 @@ func writeUserCSVGUI(w io.Writer, items []UserExportItem) {
 // GET /gui/monitoring
 func (h *GUIHandler) MonitoringPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "monitoring",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),

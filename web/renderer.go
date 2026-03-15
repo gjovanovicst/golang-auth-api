@@ -44,6 +44,10 @@ type TemplateData struct {
 	TempToken   string // Temporary token for 2FA login verification
 	TwoFAMethod string // "totp" or "email" — which 2FA method is required
 
+	// Theme is the active UI theme: "light" or "dark".
+	// Read from the gui_theme cookie via web.GetTheme(c).
+	Theme string
+
 	// Page-specific data (each page can put arbitrary data here)
 	Data interface{}
 }

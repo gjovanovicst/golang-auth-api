@@ -54,8 +54,8 @@ func ResolveConfig(app *models.Application) BruteForceConfig {
 		DelayTierTTL:    30 * time.Minute,
 
 		CaptchaEnabled:   true,
-		CaptchaSiteKey:   "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI",
-		CaptchaSecretKey: "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe",
+		CaptchaSiteKey:   "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI", // #nosec G101 -- Google's public reCAPTCHA v2 test site key, always passes; intended to be overridden per-app
+		CaptchaSecretKey: "6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe", // #nosec G101 -- Google's public reCAPTCHA v2 test secret key, always passes; intended to be overridden per-app
 		CaptchaThreshold: 3,
 	}
 

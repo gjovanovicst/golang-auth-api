@@ -13,7 +13,7 @@ const (
 	TypeMagicLink          = "magic_link"
 	TypeNewDeviceLogin     = "new_device_login"
 	TypeSuspiciousActivity = "suspicious_activity"
-	TypeApiKeyExpiringSoon = "api_key_expiring_soon"
+	TypeApiKeyExpiringSoon = "api_key_expiring_soon" // #nosec G101 -- email type code string, not a credential
 )
 
 // Template variable names used across email types
@@ -40,9 +40,9 @@ const (
 	VarAlertType         = "alert_type"
 	VarAlertDetails      = "alert_details"
 	VarApiKeyName        = "api_key_name"
-	VarApiKeyPrefix      = "api_key_prefix"
-	VarApiKeyType        = "api_key_type"
-	VarApiKeyExpiresAt   = "api_key_expires_at"
+	VarApiKeyPrefix      = "api_key_prefix"     // #nosec G101 -- template variable name string, not a credential
+	VarApiKeyType        = "api_key_type"       // #nosec G101 -- template variable name string, not a credential
+	VarApiKeyExpiresAt   = "api_key_expires_at" // #nosec G101 -- template variable name string, not a credential
 	VarDaysUntilExpiry   = "days_until_expiry"
 	VarBackupEmail       = "backup_email"
 )

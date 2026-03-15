@@ -175,7 +175,9 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		// Check if lock has expired (auto-unlock)
 		if user.LockExpiresAt != nil && time.Now().UTC().After(*user.LockExpiresAt) {
 			// Auto-unlock: clear lockout fields
-			s.Repo.ClearLockout(user.ID.String())
+			if err := s.Repo.ClearLockout(user.ID.String()); err != nil {
+				log.Printf("Warning: failed to clear lockout for user %s: %v", user.ID.String(), err)
+			}
 			user.LockedAt = nil
 			user.LockReason = ""
 			user.LockExpiresAt = nil

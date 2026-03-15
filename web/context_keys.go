@@ -48,7 +48,7 @@ const (
 
 	// ApiKeyScopesKey is the Gin context key for the scopes granted by the validated API key.
 	// Value is []string; set by AppApiKeyMiddleware and AdminAuthMiddleware after successful validation.
-	ApiKeyScopesKey = "api_key_scopes"
+	ApiKeyScopesKey = "api_key_scopes" // #nosec G101 -- context key string, not a credential
 )
 
 // SessionValidator is the interface used by GUI middleware to validate sessions

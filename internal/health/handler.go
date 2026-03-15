@@ -252,7 +252,7 @@ func checkSMTP(addr string) dto.ComponentStatus {
 	if err != nil {
 		return dto.ComponentStatus{Status: "down", Host: addr, Error: err.Error()}
 	}
-	conn.Close()
+	_ = conn.Close() // error is inconsequential for a health-check probe
 	return dto.ComponentStatus{
 		Status:    "up",
 		LatencyMs: time.Since(start).Milliseconds(),

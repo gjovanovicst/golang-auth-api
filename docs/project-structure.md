@@ -12,12 +12,18 @@ project-root/
 ├── internal/                   # Private application code
 │   ├── admin/                  # Admin API (tenant/app/OAuth management) + Admin GUI
 │   ├── auth/                   # Authentication handlers
-│   ├── user/                   # User management (includes magic link login)
+│   ├── user/                   # User management (includes magic link login, import/export)
 │   ├── social/                 # Social OAuth2 providers + social account linking
-│   ├── twofa/                  # Two-factor authentication
+│   ├── twofa/                  # Two-factor authentication (TOTP, email, SMS, backup email, trusted devices)
 │   ├── webauthn/               # WebAuthn/passkey registration, 2FA, and passwordless login
 │   ├── rbac/                   # Role-based access control (roles, permissions, user-roles)
 │   ├── session/                # Session management (list/revoke active sessions)
+│   ├── oidc/                   # OIDC provider (Authorization Code + PKCE, RS256 ID tokens, JWKS)
+│   ├── webhook/                # Webhook system (endpoint registry, async delivery queue, retries)
+│   ├── bruteforce/             # Brute-force protection (account lockout, progressive delays, CAPTCHA)
+│   ├── geoip/                  # GeoIP service (MaxMind) + IP access rules (CIDR/country per app)
+│   ├── health/                 # Health check + Prometheus metrics endpoint
+│   ├── sms/                    # SMS sender interface + Twilio implementation
 │   ├── log/                    # Activity logging system
 │   ├── email/                  # Email verification & reset
 │   ├── middleware/             # JWT auth, AppID, CORS, rate limiting, security headers, session validation
@@ -65,6 +71,13 @@ project-root/
 | `pkg/models/` | GORM database models |
 | `pkg/models/webauthn_credential.go` | WebAuthn/passkey credential model |
 | `pkg/models/role.go` | Role, Permission, and UserRole models |
+| `pkg/models/oidc_client.go` | OIDC relying-party client model |
+| `pkg/models/oidc_auth_code.go` | OIDC authorization code model |
+| `pkg/models/webhook_endpoint.go` | Webhook endpoint model |
+| `pkg/models/webhook_delivery.go` | Webhook delivery history model |
+| `pkg/models/ip_rule.go` | IP access rule model (CIDR/country) |
+| `pkg/models/api_key_usage.go` | Per-API-key daily usage analytics model |
+| `pkg/models/trusted_device.go` | Trusted device (2FA bypass) model |
 | `pkg/dto/` | API request/response data transfer objects |
 | `pkg/dto/webauthn.go` | Passkey registration/login DTOs |
 | `pkg/dto/rbac.go` | RBAC DTOs (roles, permissions, user-roles) |

@@ -33,6 +33,9 @@ POST /resend-verification         -> userHandler.ResendVerification [APIResendVe
 
 POST /2fa/login-verify            -> twofaHandler.VerifyLogin       [API2FAVerifyRateLimit: 5/min, lockout 10->15min]
 POST /2fa/email/resend            -> twofaHandler.ResendEmail2FACode [API2FAVerifyRateLimit]
+POST /2fa/sms/resend              -> twofaHandler.ResendSMS2FACode  [API2FAVerifyRateLimit]
+POST /2fa/backup-email/resend     -> twofaHandler.ResendBackupEmail2FACode [API2FAVerifyRateLimit]
+GET  /2fa/backup-email/verify     -> twofaHandler.VerifyBackupEmail
 GET  /2fa/methods                 -> twofaHandler.GetAvailableMethods
 
 POST /2fa/passkey/begin           -> webauthnHandler.BeginPasskey2FA    [APIPasskey2FARateLimit: 10/min]
@@ -43,6 +46,9 @@ POST /passkey/login/finish        -> webauthnHandler.FinishPasswordlessLogin [AP
 
 POST /magic-link/request          -> userHandler.RequestMagicLink    [APIMagicLinkRateLimit: 5/15min]
 POST /magic-link/verify           -> userHandler.VerifyMagicLink     [APIMagicLinkRateLimit]
+
+GET  /health                      -> healthHandler.Health             (no auth)
+GET  /app-config/:app_id          -> adminHandler.GetAppLoginConfig   (no auth)
 ```
 
 ## Social OAuth2 Routes (public, no rate limit)
@@ -96,6 +102,21 @@ POST /2fa/enable                  -> twofaHandler.Enable2FA         [settings:wr
 POST /2fa/disable                 -> twofaHandler.Disable2FA        [settings:write]
 POST /2fa/recovery-codes          -> twofaHandler.GenerateRecoveryCodes [settings:write]
 POST /2fa/email/enable            -> twofaHandler.EnableEmail2FA    [settings:write]
+POST /2fa/sms/enable              -> twofaHandler.EnableSMS2FA      [settings:write]
+POST /2fa/backup-email            -> twofaHandler.AddBackupEmail    [settings:write]
+DELETE /2fa/backup-email          -> twofaHandler.RemoveBackupEmail [settings:write]
+GET    /2fa/backup-email/status   -> twofaHandler.BackupEmailStatus [settings:read]
+POST /2fa/backup-email/enable     -> twofaHandler.EnableBackupEmail2FA  [settings:write]
+POST /2fa/backup-email/disable    -> twofaHandler.DisableBackupEmail2FA [settings:write]
+GET  /2fa/trusted-devices         -> twofaHandler.ListTrustedDevices    [settings:read]
+DELETE /2fa/trusted-devices/:id   -> twofaHandler.RevokeTrustedDevice   [settings:write]
+DELETE /2fa/trusted-devices       -> twofaHandler.RevokeAllTrustedDevices [settings:write]
+
+# Phone / SMS management (settings:write, settings:read)
+POST   /phone                     -> twofaHandler.AddPhone          [settings:write]
+POST   /phone/verify              -> twofaHandler.VerifyPhone       [settings:write]
+DELETE /phone                     -> twofaHandler.RemovePhone       [settings:write]
+GET    /phone/status              -> twofaHandler.PhoneStatus       [settings:read]
 
 # Passkey management (settings:write, settings:read)
 POST   /passkey/register/begin    -> webauthnHandler.BeginRegistration   [settings:write]
@@ -108,6 +129,7 @@ DELETE /passkeys/:id              -> webauthnHandler.DeleteCredential    [settin
 GET /activity-logs                -> logHandler.GetUserActivityLogs      [log:read]
 GET /activity-logs/event-types    -> logHandler.GetEventTypes            [log:read]
 GET /activity-logs/:id            -> logHandler.GetActivityLogByID       [log:read]
+GET /activity-logs/export         -> logHandler.ExportUserActivityLogs   [log:read]
 
 # Sessions (no extra permission)
 GET    /sessions                  -> sessionHandler.ListSessions
@@ -120,8 +142,12 @@ DELETE /sessions                  -> sessionHandler.RevokeAllSessions
 All routes use `AdminAuthMiddleware(adminRepo)`. Header: `X-Admin-API-Key`.
 
 ```
+# Metrics (Admin API Key required)
+GET  /metrics                     -> healthHandler.Metrics
+
 # Activity logs
 GET /admin/activity-logs          -> logHandler.GetAllActivityLogs
+GET /admin/activity-logs/export   -> logHandler.ExportAllActivityLogs
 
 # Tenants
 POST /admin/tenants               -> adminHandler.CreateTenant
@@ -131,6 +157,39 @@ GET  /admin/tenants               -> adminHandler.ListTenants
 POST /admin/apps                  -> adminHandler.CreateApp
 GET  /admin/apps/:id              -> adminHandler.GetAppDetails
 POST /admin/apps/:id/oauth-config -> adminHandler.UpsertOAuthConfig
+
+# IP Rules (per-app)
+GET    /admin/apps/:id/ip-rules           -> adminHandler.ListIPRules
+POST   /admin/apps/:id/ip-rules           -> adminHandler.CreateIPRule
+GET    /admin/apps/:id/ip-rules/:rule_id  -> adminHandler.GetIPRule
+PUT    /admin/apps/:id/ip-rules/:rule_id  -> adminHandler.UpdateIPRule
+DELETE /admin/apps/:id/ip-rules/:rule_id  -> adminHandler.DeleteIPRule
+POST   /admin/apps/:id/ip-rules/check     -> adminHandler.CheckIPAccess
+
+# User import/export
+GET  /admin/users/export          -> adminHandler.ExportUsers
+POST /admin/users/import          -> adminHandler.ImportUsers
+
+# Trusted devices (admin)
+GET    /admin/users/:id/trusted-devices -> adminHandler.ListUserTrustedDevices
+DELETE /admin/users/:id/trusted-devices -> adminHandler.RevokeAllUserTrustedDevices
+
+# Webhooks
+GET    /admin/webhooks                         -> webhookHandler.AdminListEndpoints
+GET    /admin/webhooks/apps/:app_id            -> webhookHandler.AdminListEndpointsByApp
+POST   /admin/webhooks/apps/:app_id            -> webhookHandler.AdminCreateEndpoint
+PUT    /admin/webhooks/:id/toggle              -> webhookHandler.AdminToggleEndpoint
+DELETE /admin/webhooks/:id                     -> webhookHandler.AdminDeleteEndpoint
+GET    /admin/webhooks/:id/deliveries          -> webhookHandler.AdminListDeliveriesByEndpoint
+GET    /admin/webhooks/apps/:app_id/deliveries -> webhookHandler.AdminListDeliveriesByApp
+
+# OIDC client management
+POST   /admin/oidc/apps/:id/clients           -> oidcHandler.AdminCreateClient
+GET    /admin/oidc/apps/:id/clients           -> oidcHandler.AdminListClients
+GET    /admin/oidc/apps/:id/clients/:cid      -> oidcHandler.AdminGetClient
+PUT    /admin/oidc/apps/:id/clients/:cid      -> oidcHandler.AdminUpdateClient
+DELETE /admin/oidc/apps/:id/clients/:cid      -> oidcHandler.AdminDeleteClient
+POST   /admin/oidc/apps/:id/clients/:cid/rotate-secret -> oidcHandler.AdminRotateClientSecret
 
 # Email types
 GET    /admin/email-types         -> adminHandler.ListEmailTypes
@@ -192,6 +251,31 @@ GET  /app/:id/email-config        -> adminHandler.GetEmailServerConfig
 GET  /app/:id/email-servers       -> adminHandler.ListEmailServerConfigsByApp
 POST /app/:id/email-test          -> adminHandler.SendTestEmail
 POST /app/:id/send-email          -> adminHandler.SendCustomEmail
+
+# Webhooks (App API Key)
+GET    /app/:id/webhooks                  -> webhookHandler.AppListEndpoints
+POST   /app/:id/webhooks                  -> webhookHandler.AppCreateEndpoint
+PUT    /app/:id/webhooks/:wid/toggle      -> webhookHandler.AppToggleEndpoint
+DELETE /app/:id/webhooks/:wid             -> webhookHandler.AppDeleteEndpoint
+GET    /app/:id/webhooks/:wid/deliveries  -> webhookHandler.AppListDeliveries
+```
+
+## OIDC Provider Routes (opt-in, requires OIDC_ENABLED on application)
+
+```
+GET  /.well-known/openid-configuration    -> redirect to /oidc/:app_id/.well-known/openid-configuration
+
+GET  /oidc/:app_id/.well-known/openid-configuration -> oidcHandler.WellKnownConfiguration
+GET  /oidc/:app_id/.well-known/jwks.json             -> oidcHandler.JWKS
+GET  /oidc/:app_id/authorize             -> oidcHandler.Authorize              [OIDCAuthorizeRateLimit]
+POST /oidc/:app_id/authorize             -> oidcHandler.AuthorizeSubmit        [OIDCAuthorizeRateLimit]
+POST /oidc/:app_id/token                 -> oidcHandler.Token                  [OIDCTokenRateLimit]
+GET  /oidc/:app_id/userinfo              -> oidcHandler.UserInfo               [OIDCUserInfoRateLimit]
+POST /oidc/:app_id/userinfo              -> oidcHandler.UserInfo               [OIDCUserInfoRateLimit]
+POST /oidc/:app_id/introspect            -> oidcHandler.Introspect             [OIDCIntrospectRateLimit]
+POST /oidc/:app_id/revoke                -> oidcHandler.Revoke                 [OIDCRevokeRateLimit]
+GET  /oidc/:app_id/end_session           -> oidcHandler.EndSession
+POST /oidc/:app_id/end_session           -> oidcHandler.EndSession
 ```
 
 ## GUI Routes (Admin Web Interface)
@@ -214,7 +298,7 @@ POST /gui/2fa-resend-email        -> guiHandler.TwoFAResendEmail
 
 ### Authenticated GUI routes (cookie session + CSRF)
 
-Covers: Dashboard, Tenants, Applications, OAuth, Users, Logs, API Keys, Settings, Email Servers, Email Templates, Email Types, Roles, Permissions, User Roles, Sessions, My Account (email, password, 2FA, passkeys, magic link), Social Account/Passkey management for users.
+Covers: Dashboard, Tenants, Applications, OAuth, Users (with export/import, trusted device management), Logs (with CSV export), API Keys (with scope config and usage stats), Settings, Email Servers, Email Templates, Email Types, Roles, Permissions, User Roles, Sessions, Webhooks, OIDC Clients, IP Rules, Monitoring, My Account (email, password, 2FA, passkeys, magic link, backup email, trusted devices), Social Account/Passkey management for users.
 
 Each entity follows the HTMX CRUD pattern:
 ```
@@ -246,6 +330,11 @@ DELETE /gui/<entity>/:id          -> Delete
 | API Magic Link | `api:magic-link` | 5/15min | 15min | none |
 | GUI Magic Link | `gui:magic-link` | 3/15min | 15min | none |
 | GUI Passkey Login | `gui:passkey-login` | 10/min | 60s | 20 -> 15min |
+| OIDC Authorize | `oidc:authorize` | 20/min | 60s | none |
+| OIDC Token | `oidc:token` | 30/min | 60s | none |
+| OIDC UserInfo | `oidc:userinfo` | 60/min | 60s | none |
+| OIDC Introspect | `oidc:introspect` | 30/min | 60s | none |
+| OIDC Revoke | `oidc:revoke` | 30/min | 60s | none |
 
 ## When To Use This Skill
 

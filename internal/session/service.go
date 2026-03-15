@@ -9,7 +9,6 @@ import (
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 )
 
 // Service handles session lifecycle management backed by Redis.
@@ -20,28 +19,41 @@ func NewService() *Service {
 	return &Service{}
 }
 
-// refreshTokenTTL returns the configured refresh token TTL (used as session TTL).
-func refreshTokenTTL() time.Duration {
-	return time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS"))
-}
-
 // CreateSession creates a new session in Redis and returns the session ID.
 // It generates tokens and stores the refresh token inside the session hash.
-func (s *Service) CreateSession(appID, userID, ip, userAgent string, roles []string) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
+// Any prior user-wide token blacklist (set on password reset / account compromise)
+// is cleared here because a fresh credential check already proved identity.
+//
+// accessTTL and refreshTTL control token lifetimes. Pass 0 to use the global
+// defaults configured via environment variables.
+func (s *Service) CreateSession(appID, userID, ip, userAgent string, roles []string, accessTTL, refreshTTL time.Duration) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
 	sessionID = uuid.New().String()
 
-	accessToken, err := jwt.GenerateAccessToken(appID, userID, sessionID, roles)
+	// Resolve effective refresh TTL for Redis session expiry
+	effectiveRefreshTTL := refreshTTL
+	if effectiveRefreshTTL <= 0 {
+		effectiveRefreshTTL = jwt.DefaultRefreshTokenTTL()
+	}
+
+	accessToken, err := jwt.GenerateAccessToken(appID, userID, sessionID, roles, accessTTL)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
 
-	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, sessionID, roles)
+	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, sessionID, roles, refreshTTL)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
 
-	if err := redis.CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent, refreshTokenTTL()); err != nil {
+	if err := redis.CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent, effectiveRefreshTTL); err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to create session")
+	}
+
+	// Clear any user-wide token blacklist so the newly issued tokens are not immediately
+	// rejected by AuthMiddleware. The blacklist was set to invalidate pre-reset tokens;
+	// a successful new login proves identity and a fresh token pair is now in use.
+	if clearErr := redis.ClearUserTokenBlacklist(appID, userID); clearErr != nil {
+		log.Printf("Warning: Failed to clear user token blacklist for user %s: %v\n", userID, clearErr)
 	}
 
 	return accessToken, refreshToken, sessionID, nil
@@ -49,7 +61,9 @@ func (s *Service) CreateSession(appID, userID, ip, userAgent string, roles []str
 
 // RefreshSession validates the old refresh token against the session, rotates tokens,
 // and updates the session metadata. Returns new access token, new refresh token, and userID.
-func (s *Service) RefreshSession(oldRefreshToken string) (string, string, string, *errors.AppError) {
+//
+// accessTTL and refreshTTL control the new token lifetimes. Pass 0 to use the global defaults.
+func (s *Service) RefreshSession(oldRefreshToken string, accessTTL, refreshTTL time.Duration) (string, string, string, *errors.AppError) {
 	claims, err := jwt.ParseToken(oldRefreshToken)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid refresh token")
@@ -75,18 +89,30 @@ func (s *Service) RefreshSession(oldRefreshToken string) (string, string, string
 	}
 
 	// Generate new token pair (same session ID)
-	newAccessToken, tokenErr := jwt.GenerateAccessToken(claims.AppID, claims.UserID, claims.SessionID, claims.Roles)
+	newAccessToken, tokenErr := jwt.GenerateAccessToken(claims.AppID, claims.UserID, claims.SessionID, claims.Roles, accessTTL)
 	if tokenErr != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new access token")
 	}
-	newRefreshToken, tokenErr := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, claims.SessionID, claims.Roles)
+	newRefreshToken, tokenErr := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, claims.SessionID, claims.Roles, refreshTTL)
 	if tokenErr != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new refresh token")
+	}
+
+	// Resolve effective refresh TTL for Redis session expiry
+	effectiveRefreshTTL := refreshTTL
+	if effectiveRefreshTTL <= 0 {
+		effectiveRefreshTTL = jwt.DefaultRefreshTokenTTL()
 	}
 
 	// Update session with new refresh token and touch last_active
 	if err := redis.UpdateSessionRefreshToken(claims.AppID, claims.SessionID, newRefreshToken); err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to update session")
+	}
+	// Reset the Redis session TTL so it slides forward with the newly issued
+	// refresh token. Without this, the session key expires at the original
+	// login time regardless of per-app TTL overrides or token rotation.
+	if err := redis.ResetSessionTTL(claims.AppID, claims.SessionID, effectiveRefreshTTL); err != nil {
+		log.Printf("Warning: Failed to reset session TTL: %v\n", err)
 	}
 	if err := redis.TouchSession(claims.AppID, claims.SessionID); err != nil {
 		log.Printf("Warning: Failed to touch session: %v\n", err)

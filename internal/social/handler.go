@@ -9,8 +9,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/config"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
+	"github.com/gjovanovicst/auth_api/internal/health"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	twofa "github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/google/uuid"
@@ -19,13 +23,96 @@ import (
 )
 
 type Handler struct {
-	Service *Service
+	Service               *Service
+	IPRuleEvaluator       *geoip.IPRuleEvaluator                               // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector       *log.AnomalyDetector                                 // Anomaly detector for login monitoring (nil = disabled)
+	TwoFAService          *twofa.Service                                       // Optional: if set, auto-sends SMS 2FA code on social login with SMS 2FA
+	ValidateTrustedDevice func(plainToken string) (uuid.UUID, uuid.UUID, bool) // Optional: if set, trusted device bypass is checked before requiring 2FA
 }
 
 func NewHandler(s *Service) *Handler {
 	return &Handler{
 		Service: s,
 	}
+}
+
+// trySendSMSCode auto-sends an SMS 2FA code when a social-login user has SMS 2FA enabled.
+// Failures are non-fatal and logged as warnings — the user can still request a resend via /2fa/sms/resend.
+func (h *Handler) trySendSMSCode(appID uuid.UUID, userID string) {
+	if h.TwoFAService == nil {
+		return
+	}
+	if err := h.TwoFAService.GenerateSMS2FACode(appID, userID); err != nil {
+		stdlog.Printf("Warning: failed to auto-send SMS 2FA code for user %s in app %s: %v", userID, appID, err.Message)
+	}
+}
+
+// trySendBackupEmailCode auto-sends a backup-email 2FA code when a social-login user has
+// backup_email 2FA enabled. Failures are non-fatal — the user can still request a resend.
+func (h *Handler) trySendBackupEmailCode(appID uuid.UUID, userID string) {
+	if h.TwoFAService == nil {
+		return
+	}
+	if err := h.TwoFAService.GenerateBackupEmail2FACode(appID, userID); err != nil {
+		stdlog.Printf("Warning: failed to auto-send backup email 2FA code for user %s in app %s: %v", userID, appID, err.Message)
+	}
+}
+
+// checkIPAccessRedirect evaluates IP rules for the given app and IP address.
+// Returns true if access is allowed, false if blocked.
+// When blocked, it redirects with an error parameter and logs the event.
+func (h *Handler) checkIPAccessRedirect(c *gin.Context, appID uuid.UUID, ipAddress, userAgent, redirectURI string) bool {
+	if h.IPRuleEvaluator == nil {
+		return true // No evaluator configured, allow by default
+	}
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, ipAddress)
+	if !result.Allowed {
+		log.LogIPBlocked(appID, ipAddress, userAgent, map[string]interface{}{
+			"reason":  result.Reason,
+			"country": result.Country,
+		})
+		frontendURL := fmt.Sprintf("%s?error=ip_blocked", redirectURI)
+		c.Redirect(http.StatusFound, frontendURL)
+		return false
+	}
+	return true
+}
+
+// runSocialLoginAnomalyDetection runs anomaly detection for a successful social login.
+func (h *Handler) runSocialLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAddress, userAgent, provider string) {
+	if h.AnomalyDetector == nil {
+		// Fall back to standard logging
+		log.LogSocialLogin(appID, userID, ipAddress, userAgent, provider)
+		return
+	}
+
+	cfg := config.GetLoggingConfig()
+	ctx := log.UserContext{
+		UserID:    userID,
+		AppID:     appID,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		Timestamp: time.Now().UTC(),
+	}
+	anomalyCfg := log.AnomalyConfig{
+		Enabled:                cfg.AnomalyDetection.Enabled,
+		LogOnNewIP:             cfg.AnomalyDetection.LogOnNewIP,
+		LogOnNewUserAgent:      cfg.AnomalyDetection.LogOnNewUserAgent,
+		LogOnGeographicChange:  cfg.AnomalyDetection.LogOnGeographicChange,
+		LogOnUnusualTimeAccess: cfg.AnomalyDetection.LogOnUnusualTimeAccess,
+		SessionWindow:          cfg.AnomalyDetection.SessionWindow,
+		BruteForceEnabled:      cfg.AnomalyDetection.BruteForceEnabled,
+		BruteForceThreshold:    cfg.AnomalyDetection.BruteForceThreshold,
+		BruteForceWindow:       cfg.AnomalyDetection.BruteForceWindow,
+		NotifyOnBruteForce:     cfg.AnomalyDetection.NotifyOnBruteForce,
+		NotifyOnNewDevice:      cfg.AnomalyDetection.NotifyOnNewDevice,
+		NotifyOnGeoChange:      cfg.AnomalyDetection.NotifyOnGeoChange,
+		NotificationCooldown:   cfg.AnomalyDetection.NotificationCooldown,
+	}
+	anomalyResult := h.AnomalyDetector.DetectAnomaly(ctx, anomalyCfg)
+	log.GetLogService().LogActivityWithAnomalyResult(appID, userID, email, log.EventSocialLogin, ipAddress, userAgent, map[string]interface{}{
+		"provider": provider,
+	}, &anomalyResult)
 }
 
 func (h *Handler) getGoogleConfig(appID string) (*oauth2.Config, error) {
@@ -226,7 +313,39 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	if user.TwoFAEnabled {
+	// Only create session when 2FA is NOT required
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
+		// Trusted device check: if the client presents a valid trusted-device cookie
+		// matching this user + app, skip 2FA entirely and issue tokens immediately.
+		if h.ValidateTrustedDevice != nil {
+			if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
+				if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
+					tdUserID == user.ID && tdAppID == appID {
+					// Check IP-based access rules before completing login
+					if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+						return
+					}
+					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+					if sessionErr != nil {
+						errorMsg := url.QueryEscape(sessionErr.Message)
+						frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+						c.Redirect(http.StatusFound, frontendURL)
+						return
+					}
+					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "google")
+					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=google",
+						redirectURI,
+						url.QueryEscape(accessToken),
+						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
+					c.Redirect(http.StatusFound, frontendURL)
+					return
+				}
+			}
+		}
+
 		tempToken := uuid.New().String()
 		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {
@@ -237,13 +356,29 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 			return
 		}
 		// Redirect with 2FA requirement — NO session created yet
-		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=google", redirectURI, tempToken)
+		// Include the user's configured 2FA method so the frontend can show the correct input
+		twoFAMethod := user.TwoFAMethod
+		if twoFAMethod == "" {
+			twoFAMethod = "totp"
+		}
+		// Auto-send SMS code if the user's 2FA method is SMS
+		if twoFAMethod == "sms" {
+			h.trySendSMSCode(appID, user.ID.String())
+		}
+		// Auto-send backup email code if the user's 2FA method is backup_email
+		if twoFAMethod == "backup_email" {
+			h.trySendBackupEmailCode(appID, user.ID.String())
+		}
+		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=google&method=%s", redirectURI, tempToken, twoFAMethod)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
-	// Only create session when 2FA is NOT required
-	ipAddress, userAgent := util.GetClientInfo(c)
+	// Check IP-based access rules before completing login
+	if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+		return
+	}
+
 	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
@@ -252,8 +387,8 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	// Log social login activity
-	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "google")
+	// Log social login activity with anomaly detection
+	h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "google")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=google",
@@ -261,6 +396,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		url.QueryEscape(accessToken),
 		url.QueryEscape(refreshToken))
 
+	health.IncLoginSuccess(appID.String())
 	c.Redirect(http.StatusFound, frontendURL)
 }
 
@@ -403,7 +539,38 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	if user.TwoFAEnabled {
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
+		// Trusted device check: if the client presents a valid trusted-device cookie
+		// matching this user + app, skip 2FA entirely and issue tokens immediately.
+		if h.ValidateTrustedDevice != nil {
+			if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
+				if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
+					tdUserID == user.ID && tdAppID == appID {
+					// Check IP-based access rules before completing login
+					if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+						return
+					}
+					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+					if sessionErr != nil {
+						errorMsg := url.QueryEscape(sessionErr.Message)
+						frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+						c.Redirect(http.StatusFound, frontendURL)
+						return
+					}
+					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "facebook")
+					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=facebook",
+						redirectURI,
+						url.QueryEscape(accessToken),
+						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
+					c.Redirect(http.StatusFound, frontendURL)
+					return
+				}
+			}
+		}
+
 		tempToken := uuid.New().String()
 		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {
@@ -414,13 +581,29 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 			return
 		}
 		// Redirect with 2FA requirement — NO session created yet
-		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=facebook", redirectURI, tempToken)
+		// Include the user's configured 2FA method so the frontend can show the correct input
+		twoFAMethod := user.TwoFAMethod
+		if twoFAMethod == "" {
+			twoFAMethod = "totp"
+		}
+		// Auto-send SMS code if the user's 2FA method is SMS
+		if twoFAMethod == "sms" {
+			h.trySendSMSCode(appID, user.ID.String())
+		}
+		// Auto-send backup email code if the user's 2FA method is backup_email
+		if twoFAMethod == "backup_email" {
+			h.trySendBackupEmailCode(appID, user.ID.String())
+		}
+		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=facebook&method=%s", redirectURI, tempToken, twoFAMethod)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
-	// Only create session when 2FA is NOT required
-	ipAddress, userAgent := util.GetClientInfo(c)
+	// Check IP-based access rules before completing login
+	if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+		return
+	}
+
 	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
@@ -429,8 +612,8 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	// Log social login activity
-	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "facebook")
+	// Log social login activity with anomaly detection
+	h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "facebook")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=facebook",
@@ -438,6 +621,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		url.QueryEscape(accessToken),
 		url.QueryEscape(refreshToken))
 
+	health.IncLoginSuccess(appID.String())
 	c.Redirect(http.StatusFound, frontendURL)
 }
 
@@ -580,7 +764,37 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	if user.TwoFAEnabled {
+	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
+		// Trusted device check: if the client presents a valid trusted-device cookie
+		// matching this user + app, skip 2FA entirely and issue tokens immediately.
+		ipAddress, userAgent := util.GetClientInfo(c)
+		if h.ValidateTrustedDevice != nil {
+			if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
+				if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
+					tdUserID == user.ID && tdAppID == appID {
+					// Check IP-based access rules before completing login
+					if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+						return
+					}
+					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+					if sessionErr != nil {
+						errorMsg := url.QueryEscape(sessionErr.Message)
+						frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
+						c.Redirect(http.StatusFound, frontendURL)
+						return
+					}
+					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "github")
+					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=github",
+						redirectURI,
+						url.QueryEscape(accessToken),
+						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
+					c.Redirect(http.StatusFound, frontendURL)
+					return
+				}
+			}
+		}
+
 		tempToken := uuid.New().String()
 		err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute)
 		if err != nil {
@@ -591,13 +805,32 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 			return
 		}
 		// Redirect with 2FA requirement — NO session created yet
-		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=github", redirectURI, tempToken)
+		// Include the user's configured 2FA method so the frontend can show the correct input
+		twoFAMethod := user.TwoFAMethod
+		if twoFAMethod == "" {
+			twoFAMethod = "totp"
+		}
+		// Auto-send SMS code if the user's 2FA method is SMS
+		if twoFAMethod == "sms" {
+			h.trySendSMSCode(appID, user.ID.String())
+		}
+		// Auto-send backup email code if the user's 2FA method is backup_email
+		if twoFAMethod == "backup_email" {
+			h.trySendBackupEmailCode(appID, user.ID.String())
+		}
+		redirectURL := fmt.Sprintf("%s?temp_token=%s&requires_2fa=true&provider=github&method=%s", redirectURI, tempToken, twoFAMethod)
 		c.Redirect(http.StatusFound, redirectURL)
 		return
 	}
 
 	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
+
+	// Check IP-based access rules before completing login
+	if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
+		return
+	}
+
 	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
@@ -606,8 +839,8 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	// Log social login activity
-	log.LogSocialLogin(appID, userID, ipAddress, userAgent, "github")
+	// Log social login activity with anomaly detection
+	h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "github")
 
 	// Redirect to frontend with tokens in URL parameters
 	frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=github",
@@ -615,6 +848,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		url.QueryEscape(accessToken),
 		url.QueryEscape(refreshToken))
 
+	health.IncLoginSuccess(appID.String())
 	c.Redirect(http.StatusFound, frontendURL)
 }
 

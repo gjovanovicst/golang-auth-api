@@ -10,6 +10,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/user"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
@@ -23,6 +24,7 @@ type Service struct {
 	SessionService    *session.Service           // Session management for creating sessions on social login
 	LookupRoles       user.RoleLookupFunc        // Optional: if nil, tokens are generated without roles
 	AssignDefaultRole user.AssignDefaultRoleFunc // Optional: if nil, no default role on social signup
+	WebhookService    *webhook.Service           // Optional: if nil, webhook dispatch is skipped
 }
 
 func NewService(ur *user.Repository, sr *Repository) *Service {
@@ -72,11 +74,20 @@ func (s *Service) assignDefaultRole(appID, userID string) {
 
 // CreateSessionOrTokens creates a session via the session service if available,
 // otherwise falls back to legacy token generation.
+// Per-app token TTL overrides are resolved via ResolveTokenTTLs.
 func (s *Service) CreateSessionOrTokens(appID, userID, ip, userAgent string) (accessToken, refreshToken string, appErr *errors.AppError) {
 	roles := s.getUserRoles(appID, userID)
 
+	// Load per-app token TTL overrides
+	var app models.Application
+	var appPtr *models.Application
+	if s.SocialRepo.DB.Select("access_token_ttl_minutes, refresh_token_ttl_hours").First(&app, "id = ?", appID).Error == nil {
+		appPtr = &app
+	}
+	accessTTL, refreshTTL := user.ResolveTokenTTLs(appPtr)
+
 	if s.SessionService != nil {
-		at, rt, _, sErr := s.SessionService.CreateSession(appID, userID, ip, userAgent, roles)
+		at, rt, _, sErr := s.SessionService.CreateSession(appID, userID, ip, userAgent, roles, accessTTL, refreshTTL)
 		if sErr != nil {
 			return "", "", sErr
 		}
@@ -85,11 +96,11 @@ func (s *Service) CreateSessionOrTokens(appID, userID, ip, userAgent string) (ac
 
 	// Legacy fallback
 	var err error
-	accessToken, err = jwt.GenerateAccessToken(appID, userID, "", roles)
+	accessToken, err = jwt.GenerateAccessToken(appID, userID, "", roles, accessTTL)
 	if err != nil {
 		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, "", roles)
+	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, "", roles, refreshTTL)
 	if err != nil {
 		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
@@ -699,6 +710,16 @@ func (s *Service) UnlinkSocialAccount(appID, userID, socialAccountID string) *er
 		return errors.NewAppError(errors.ErrInternal, "Failed to unlink social account")
 	}
 
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		parsedAppID, _ := uuid.Parse(appID)
+		s.WebhookService.Dispatch(parsedAppID, "social.unlinked", map[string]interface{}{
+			"user_id":           userID,
+			"social_account_id": socialAccountID,
+			"provider":          socialAccount.Provider,
+		})
+	}
+
 	return nil
 }
 
@@ -759,6 +780,14 @@ func (s *Service) HandleGoogleLinkCallback(appID uuid.UUID, userID string, googl
 	}
 	if err := s.SocialRepo.CreateSocialAccount(newLinkAccount); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to link Google account")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "social.linked", map[string]interface{}{
+			"user_id":  userID,
+			"provider": "google",
+		})
 	}
 
 	return newLinkAccount, nil
@@ -824,6 +853,14 @@ func (s *Service) HandleFacebookLinkCallback(appID uuid.UUID, userID string, fac
 	}
 	if err := s.SocialRepo.CreateSocialAccount(newLinkAccount); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to link Facebook account")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "social.linked", map[string]interface{}{
+			"user_id":  userID,
+			"provider": "facebook",
+		})
 	}
 
 	return newLinkAccount, nil
@@ -927,5 +964,23 @@ func (s *Service) HandleGithubLinkCallback(appID uuid.UUID, userID string, githu
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to link GitHub account")
 	}
 
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "social.linked", map[string]interface{}{
+			"user_id":  userID,
+			"provider": "github",
+		})
+	}
+
 	return newLinkAccount, nil
+}
+
+// IsAppTwoFAEnabled reports whether 2FA is enabled at the application level.
+// Fail-open: if the DB query fails, returns true to preserve existing behaviour.
+func (s *Service) IsAppTwoFAEnabled(appID uuid.UUID) bool {
+	var app models.Application
+	if err := s.SocialRepo.DB.Select("two_fa_enabled").First(&app, "id = ?", appID).Error; err != nil {
+		return true // fail open
+	}
+	return app.TwoFAEnabled
 }

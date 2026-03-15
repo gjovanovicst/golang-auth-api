@@ -16,6 +16,9 @@ const (
 	// AdminSessionCookie is the name of the HTTP-only cookie for admin GUI sessions.
 	AdminSessionCookie = "admin_session"
 
+	// ThemeCookieName is the name of the cookie that stores the admin GUI theme preference.
+	ThemeCookieName = "gui_theme"
+
 	// GUIAdminIDKey is the Gin context key for the authenticated admin's ID.
 	GUIAdminIDKey = "admin_id"
 
@@ -42,6 +45,10 @@ const (
 
 	// AuthTypeApp indicates the request was authenticated with a per-application API key.
 	AuthTypeApp = "app"
+
+	// ApiKeyScopesKey is the Gin context key for the scopes granted by the validated API key.
+	// Value is []string; set by AppApiKeyMiddleware and AdminAuthMiddleware after successful validation.
+	ApiKeyScopesKey = "api_key_scopes" // #nosec G101 -- context key string, not a credential
 )
 
 // SessionValidator is the interface used by GUI middleware to validate sessions
@@ -97,6 +104,16 @@ func IsSecureCookie(c *gin.Context) bool {
 // The function is nil until the middleware package's init() registers it.
 var ClearRateLimitFallback func(keyPrefix, identifier string)
 
+// GetTheme reads the gui_theme cookie and returns "dark" or "light" (default).
+// Used by GUI handlers to populate TemplateData.Theme for server-side theme injection.
+func GetTheme(c *gin.Context) string {
+	theme, err := c.Cookie(ThemeCookieName)
+	if err != nil || theme != "dark" {
+		return "light"
+	}
+	return "dark"
+}
+
 // ApiKeyValidator is the interface used by admin/app API key middleware to validate keys
 // against hashed keys stored in the database. Implemented by admin.Repository.
 type ApiKeyValidator interface {
@@ -106,4 +123,7 @@ type ApiKeyValidator interface {
 
 	// UpdateApiKeyLastUsed sets the last_used_at timestamp to now (fire-and-forget).
 	UpdateApiKeyLastUsed(id uuid.UUID)
+
+	// IncrementDailyUsage increments the daily usage counter for the key (fire-and-forget).
+	IncrementDailyUsage(id uuid.UUID)
 }

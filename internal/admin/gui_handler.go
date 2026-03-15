@@ -2,35 +2,74 @@ package admin
 
 import (
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/bruteforce"
 	"github.com/gjovanovicst/auth_api/internal/email"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
+	healthpkg "github.com/gjovanovicst/auth_api/internal/health"
+	logService "github.com/gjovanovicst/auth_api/internal/log"
+	oidcpkg "github.com/gjovanovicst/auth_api/internal/oidc"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
+	"github.com/gjovanovicst/auth_api/internal/twofa"
+	userimport "github.com/gjovanovicst/auth_api/internal/user"
 	passkeypkg "github.com/gjovanovicst/auth_api/internal/webauthn"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
+	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/gjovanovicst/auth_api/web"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 )
 
+// Brute-force form defaults — match the hardcoded defaults in bruteforce.ResolveConfig().
+// These are used to pre-fill the GUI form fields so admins see the effective values.
+const (
+	bfDefaultLockoutEnabled   = true
+	bfDefaultLockoutThreshold = "5"
+	bfDefaultLockoutDurations = "15m,30m,1h,24h"
+	bfDefaultLockoutWindow    = "15m"
+	bfDefaultLockoutTierTTL   = "24h"
+
+	bfDefaultDelayEnabled    = true
+	bfDefaultDelayStartAfter = "2"
+	bfDefaultDelayMaxSeconds = "16"
+	bfDefaultDelayTierTTL    = "30m"
+
+	bfDefaultCaptchaEnabled   = true
+	bfDefaultCaptchaThreshold = "3"
+	bfDefaultCaptchaSiteKey   = "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"
+)
+
 // GUIHandler serves HTML pages for the Admin GUI.
 // Separate from Handler (which serves the JSON admin API).
 type GUIHandler struct {
-	AccountService   *AccountService
-	DashboardService *DashboardService
-	Repo             *Repository
-	SettingsService  *SettingsService
-	EmailService     *email.Service
-	RBACService      *rbac.Service
-	PasskeyService   *passkeypkg.Service
+	AccountService    *AccountService
+	DashboardService  *DashboardService
+	Repo              *Repository
+	SettingsService   *SettingsService
+	EmailService      *email.Service
+	RBACService       *rbac.Service
+	PasskeyService    *passkeypkg.Service
+	IPRuleRepo        *geoip.IPRuleRepository        // IP rule repository (nil = IP rules disabled)
+	IPRuleEvaluator   *geoip.IPRuleEvaluator         // IP rule evaluator for cache invalidation (nil = disabled)
+	GeoIPService      *geoip.Service                 // GeoIP service for IP lookups (nil = disabled)
+	BruteForceService *bruteforce.Service            // Brute-force protection service for account unlock (nil = disabled)
+	WebhookService    *webhook.Service               // Webhook management service (nil = webhooks disabled)
+	OIDCService       *oidcpkg.Service               // OIDC provider service (nil = OIDC disabled)
+	TrustedDeviceRepo *twofa.TrustedDeviceRepository // Trusted device repository (nil = feature disabled)
+	HealthHandler     *healthpkg.Handler             // System health + metrics (nil = monitoring disabled)
 }
 
 // NewGUIHandler creates a new GUIHandler
@@ -50,6 +89,7 @@ func NewGUIHandler(accountService *AccountService, dashboardService *DashboardSe
 // GET /gui/login
 func (h *GUIHandler) LoginPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:    web.GetTheme(c),
 		Redirect: c.Query("redirect"),
 	}
 	c.HTML(http.StatusOK, "login", data)
@@ -64,6 +104,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	if errMsg, exists := c.Get(web.RateLimitErrorKey); exists {
 		msg, _ := errMsg.(string)
 		data := web.TemplateData{
+			Theme:    web.GetTheme(c),
 			Error:    msg,
 			Username: c.PostForm("username"),
 			Redirect: c.PostForm("redirect"),
@@ -79,6 +120,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	// Validate input
 	if username == "" || password == "" {
 		data := web.TemplateData{
+			Theme:    web.GetTheme(c),
 			Error:    "Username or email and password are required.",
 			Username: username,
 			Redirect: redirect,
@@ -91,6 +133,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	account, err := h.AccountService.Authenticate(username, password)
 	if err != nil {
 		data := web.TemplateData{
+			Theme:    web.GetTheme(c),
 			Error:    "Invalid username/email or password.",
 			Username: username,
 			Redirect: redirect,
@@ -105,6 +148,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 		tempToken, err := h.AccountService.Create2FATempSession(account.ID.String())
 		if err != nil {
 			data := web.TemplateData{
+				Theme:    web.GetTheme(c),
 				Error:    "An internal error occurred. Please try again.",
 				Username: username,
 				Redirect: redirect,
@@ -117,6 +161,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 		if account.TwoFAMethod == "email" {
 			if err := h.AccountService.GenerateAndSendEmail2FACode(account.ID.String()); err != nil {
 				data := web.TemplateData{
+					Theme:    web.GetTheme(c),
 					Error:    "Failed to send verification code. Please try again.",
 					Username: username,
 					Redirect: redirect,
@@ -139,6 +184,7 @@ func (h *GUIHandler) LoginSubmit(c *gin.Context) {
 	sessionID, err := h.AccountService.CreateSession(account.ID.String())
 	if err != nil {
 		data := web.TemplateData{
+			Theme:    web.GetTheme(c),
 			Error:    "An internal error occurred. Please try again.",
 			Username: username,
 			Redirect: redirect,
@@ -184,6 +230,7 @@ func (h *GUIHandler) Logout(c *gin.Context) {
 // GET /gui/
 func (h *GUIHandler) Dashboard(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "dashboard",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -222,6 +269,7 @@ func (h *GUIHandler) DashboardActivity(c *gin.Context) {
 // GET /gui/tenants
 func (h *GUIHandler) TenantPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "tenants",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -417,6 +465,7 @@ func (h *GUIHandler) AppPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "applications",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -476,6 +525,7 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		ID                  string
 		Name                string
 		Description         string
+		FrontendURL         string
 		TenantID            string
 		TwoFAIssuerName     string
 		TwoFAEnabled        bool
@@ -483,12 +533,68 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		Passkey2FAEnabled   bool
 		PasskeyLoginEnabled bool
 		MagicLinkEnabled    bool
+		OIDCEnabled         bool
 		Tenants             []models.Tenant
 		IsEdit              bool
+		// Brute-force overrides (nil = use global default)
+		BfLockoutOverride  bool
+		BfLockoutEnabled   bool
+		BfLockoutThreshold string
+		BfLockoutDurations string
+		BfLockoutWindow    string
+		BfLockoutTierTTL   string
+		BfDelayOverride    bool
+		BfDelayEnabled     bool
+		BfDelayStartAfter  string
+		BfDelayMaxSeconds  string
+		BfDelayTierTTL     string
+		BfCaptchaOverride  bool
+		BfCaptchaEnabled   bool
+		BfCaptchaSiteKey   string
+		BfCaptchaThreshold string
+		BfCaptchaHasSecret bool
+		// Login Page Branding
+		LoginLogoURL        string
+		LoginPrimaryColor   string
+		LoginSecondaryColor string
+		LoginDisplayName    string
+		// Password Policy
+		PwMinLength     int
+		PwMaxLength     int
+		PwRequireUpper  bool
+		PwRequireLower  bool
+		PwRequireDigit  bool
+		PwRequireSymbol bool
+		PwHistoryCount  int
+		PwMaxAgeDays    int
+		// Token TTL overrides
+		AccessTokenTTLMinutes int
+		RefreshTokenTTLHours  int
+		// Email Action Link Paths
+		ResetPasswordPath string
+		MagicLinkPath     string
+		VerifyEmailPath   string
 	}
 	c.HTML(http.StatusOK, "app_form", formData{
 		TwoFAEnabled: true, // Default: 2FA enabled for new apps
 		Tenants:      tenants,
+		// Brute-force defaults (override toggles stay off, but fields show defaults)
+		BfLockoutEnabled:   bfDefaultLockoutEnabled,
+		BfLockoutThreshold: bfDefaultLockoutThreshold,
+		BfLockoutDurations: bfDefaultLockoutDurations,
+		BfLockoutWindow:    bfDefaultLockoutWindow,
+		BfLockoutTierTTL:   bfDefaultLockoutTierTTL,
+		BfDelayEnabled:     bfDefaultDelayEnabled,
+		BfDelayStartAfter:  bfDefaultDelayStartAfter,
+		BfDelayMaxSeconds:  bfDefaultDelayMaxSeconds,
+		BfDelayTierTTL:     bfDefaultDelayTierTTL,
+		BfCaptchaEnabled:   bfDefaultCaptchaEnabled,
+		BfCaptchaThreshold: bfDefaultCaptchaThreshold,
+		BfCaptchaSiteKey:   bfDefaultCaptchaSiteKey,
+		BfCaptchaHasSecret: true, // System default secret key is configured
+		// Password Policy defaults
+		PwMinLength: 8,
+		PwMaxLength: 128,
 	})
 }
 
@@ -497,6 +603,7 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 func (h *GUIHandler) AppCreate(c *gin.Context) {
 	name := strings.TrimSpace(c.PostForm("name"))
 	description := strings.TrimSpace(c.PostForm("description"))
+	frontendURL := strings.TrimSpace(c.PostForm("frontend_url"))
 	tenantID := c.PostForm("tenant_id")
 	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
 	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
@@ -504,6 +611,12 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
 	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
 	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
+	sms2FAEnabled := c.PostForm("sms_2fa_enabled") == "on"
+	trustedDeviceEnabled := c.PostForm("trusted_device_enabled") == "on"
+	trustedDeviceMaxDays := 30
+	if v, err := strconv.Atoi(c.PostForm("trusted_device_max_days")); err == nil && v > 0 {
+		trustedDeviceMaxDays = v
+	}
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -524,16 +637,103 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	}
 
 	app := &models.Application{
-		TenantID:            parsedTenantID,
-		Name:                name,
-		Description:         description,
-		TwoFAIssuerName:     twoFAIssuerName,
-		TwoFAEnabled:        twoFAEnabled,
-		TwoFARequired:       twoFARequired,
-		Passkey2FAEnabled:   passkey2FAEnabled,
-		PasskeyLoginEnabled: passkeyLoginEnabled,
-		MagicLinkEnabled:    magicLinkEnabled,
+		TenantID:             parsedTenantID,
+		Name:                 name,
+		Description:          description,
+		FrontendURL:          frontendURL,
+		TwoFAIssuerName:      twoFAIssuerName,
+		TwoFAEnabled:         twoFAEnabled,
+		TwoFARequired:        twoFARequired,
+		Passkey2FAEnabled:    passkey2FAEnabled,
+		PasskeyLoginEnabled:  passkeyLoginEnabled,
+		MagicLinkEnabled:     magicLinkEnabled,
+		SMS2FAEnabled:        sms2FAEnabled,
+		TrustedDeviceEnabled: trustedDeviceEnabled,
+		TrustedDeviceMaxDays: trustedDeviceMaxDays,
 	}
+
+	// Brute-force lockout overrides
+	if c.PostForm("bf_lockout_override") == "on" {
+		bfLockoutEnabled := c.PostForm("bf_lockout_enabled") == "on"
+		app.BfLockoutEnabled = &bfLockoutEnabled
+		if v, err := strconv.Atoi(c.PostForm("bf_lockout_threshold")); err == nil {
+			app.BfLockoutThreshold = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_durations")); v != "" {
+			app.BfLockoutDurations = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_window")); v != "" {
+			app.BfLockoutWindow = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_tier_ttl")); v != "" {
+			app.BfLockoutTierTTL = &v
+		}
+	}
+
+	// Brute-force progressive delay overrides
+	if c.PostForm("bf_delay_override") == "on" {
+		bfDelayEnabled := c.PostForm("bf_delay_enabled") == "on"
+		app.BfDelayEnabled = &bfDelayEnabled
+		if v, err := strconv.Atoi(c.PostForm("bf_delay_start_after")); err == nil {
+			app.BfDelayStartAfter = &v
+		}
+		if v, err := strconv.Atoi(c.PostForm("bf_delay_max_seconds")); err == nil {
+			app.BfDelayMaxSeconds = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_delay_tier_ttl")); v != "" {
+			app.BfDelayTierTTL = &v
+		}
+	}
+
+	// Brute-force CAPTCHA overrides
+	if c.PostForm("bf_captcha_override") == "on" {
+		bfCaptchaEnabled := c.PostForm("bf_captcha_enabled") == "on"
+		app.BfCaptchaEnabled = &bfCaptchaEnabled
+		if v := strings.TrimSpace(c.PostForm("bf_captcha_site_key")); v != "" {
+			app.BfCaptchaSiteKey = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_captcha_secret_key")); v != "" {
+			app.BfCaptchaSecretKey = &v
+		}
+		if v, err := strconv.Atoi(c.PostForm("bf_captcha_threshold")); err == nil {
+			app.BfCaptchaThreshold = &v
+		}
+	}
+
+	// Login Page Branding
+	app.LoginLogoURL = strings.TrimSpace(c.PostForm("login_logo_url"))
+	app.LoginPrimaryColor = strings.TrimSpace(c.PostForm("login_primary_color"))
+	app.LoginSecondaryColor = strings.TrimSpace(c.PostForm("login_secondary_color"))
+	app.LoginDisplayName = strings.TrimSpace(c.PostForm("login_display_name"))
+
+	// Password Policy
+	app.PwMinLength = 8
+	if v, err := strconv.Atoi(c.PostForm("pw_min_length")); err == nil && v > 0 {
+		app.PwMinLength = v
+	}
+	app.PwMaxLength = 128
+	if v, err := strconv.Atoi(c.PostForm("pw_max_length")); err == nil && v > 0 {
+		app.PwMaxLength = v
+	}
+	app.PwRequireUpper = c.PostForm("pw_require_upper") == "on"
+	app.PwRequireLower = c.PostForm("pw_require_lower") == "on"
+	app.PwRequireDigit = c.PostForm("pw_require_digit") == "on"
+	app.PwRequireSymbol = c.PostForm("pw_require_symbol") == "on"
+	if v, err := strconv.Atoi(c.PostForm("pw_history_count")); err == nil && v >= 0 {
+		app.PwHistoryCount = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_max_age_days")); err == nil && v >= 0 {
+		app.PwMaxAgeDays = v
+	}
+
+	// Token TTL overrides
+	if v, err := strconv.Atoi(c.PostForm("access_token_ttl_minutes")); err == nil && v >= 0 {
+		app.AccessTokenTTLMinutes = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("refresh_token_ttl_hours")); err == nil && v >= 0 {
+		app.RefreshTokenTTLHours = v
+	}
+
 	if err := h.Repo.CreateApp(app); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
@@ -567,33 +767,174 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID                  string
-		Name                string
-		Description         string
-		TenantID            string
-		TwoFAIssuerName     string
-		TwoFAEnabled        bool
-		TwoFARequired       bool
-		Passkey2FAEnabled   bool
-		PasskeyLoginEnabled bool
-		MagicLinkEnabled    bool
-		Tenants             []models.Tenant
-		IsEdit              bool
+		ID                   string
+		Name                 string
+		Description          string
+		FrontendURL          string
+		TenantID             string
+		TwoFAIssuerName      string
+		TwoFAEnabled         bool
+		TwoFARequired        bool
+		Passkey2FAEnabled    bool
+		PasskeyLoginEnabled  bool
+		MagicLinkEnabled     bool
+		OIDCEnabled          bool
+		SMS2FAEnabled        bool
+		TrustedDeviceEnabled bool
+		TrustedDeviceMaxDays int
+		Tenants              []models.Tenant
+		IsEdit               bool
+		// Brute-force overrides
+		BfLockoutOverride  bool
+		BfLockoutEnabled   bool
+		BfLockoutThreshold string
+		BfLockoutDurations string
+		BfLockoutWindow    string
+		BfLockoutTierTTL   string
+		BfDelayOverride    bool
+		BfDelayEnabled     bool
+		BfDelayStartAfter  string
+		BfDelayMaxSeconds  string
+		BfDelayTierTTL     string
+		BfCaptchaOverride  bool
+		BfCaptchaEnabled   bool
+		BfCaptchaSiteKey   string
+		BfCaptchaThreshold string
+		BfCaptchaHasSecret bool
+		// Login Page Branding
+		LoginLogoURL        string
+		LoginPrimaryColor   string
+		LoginSecondaryColor string
+		LoginDisplayName    string
+		// Password Policy
+		PwMinLength     int
+		PwMaxLength     int
+		PwRequireUpper  bool
+		PwRequireLower  bool
+		PwRequireDigit  bool
+		PwRequireSymbol bool
+		PwHistoryCount  int
+		PwMaxAgeDays    int
+		// Token TTL overrides
+		AccessTokenTTLMinutes int
+		RefreshTokenTTLHours  int
+		// Email Action Link Paths
+		ResetPasswordPath string
+		MagicLinkPath     string
+		VerifyEmailPath   string
 	}
-	c.HTML(http.StatusOK, "app_form", formData{
-		ID:                  app.ID.String(),
-		Name:                app.Name,
-		Description:         app.Description,
-		TenantID:            app.TenantID.String(),
-		TwoFAIssuerName:     app.TwoFAIssuerName,
-		TwoFAEnabled:        app.TwoFAEnabled,
-		TwoFARequired:       app.TwoFARequired,
-		Passkey2FAEnabled:   app.Passkey2FAEnabled,
-		PasskeyLoginEnabled: app.PasskeyLoginEnabled,
-		MagicLinkEnabled:    app.MagicLinkEnabled,
-		Tenants:             tenants,
-		IsEdit:              true,
-	})
+
+	fd := formData{
+		ID:                   app.ID.String(),
+		Name:                 app.Name,
+		Description:          app.Description,
+		FrontendURL:          app.FrontendURL,
+		TenantID:             app.TenantID.String(),
+		TwoFAIssuerName:      app.TwoFAIssuerName,
+		TwoFAEnabled:         app.TwoFAEnabled,
+		TwoFARequired:        app.TwoFARequired,
+		Passkey2FAEnabled:    app.Passkey2FAEnabled,
+		PasskeyLoginEnabled:  app.PasskeyLoginEnabled,
+		MagicLinkEnabled:     app.MagicLinkEnabled,
+		OIDCEnabled:          app.OIDCEnabled,
+		SMS2FAEnabled:        app.SMS2FAEnabled,
+		TrustedDeviceEnabled: app.TrustedDeviceEnabled,
+		TrustedDeviceMaxDays: app.TrustedDeviceMaxDays,
+		Tenants:              tenants,
+		IsEdit:               true,
+		// Login Page Branding
+		LoginLogoURL:        app.LoginLogoURL,
+		LoginPrimaryColor:   app.LoginPrimaryColor,
+		LoginSecondaryColor: app.LoginSecondaryColor,
+		LoginDisplayName:    app.LoginDisplayName,
+		// Password Policy
+		PwMinLength:     app.PwMinLength,
+		PwMaxLength:     app.PwMaxLength,
+		PwRequireUpper:  app.PwRequireUpper,
+		PwRequireLower:  app.PwRequireLower,
+		PwRequireDigit:  app.PwRequireDigit,
+		PwRequireSymbol: app.PwRequireSymbol,
+		PwHistoryCount:  app.PwHistoryCount,
+		PwMaxAgeDays:    app.PwMaxAgeDays,
+		// Token TTL overrides
+		AccessTokenTTLMinutes: app.AccessTokenTTLMinutes,
+		RefreshTokenTTLHours:  app.RefreshTokenTTLHours,
+		// Email Action Link Paths
+		ResetPasswordPath: app.ResetPasswordPath,
+		MagicLinkPath:     app.MagicLinkPath,
+		VerifyEmailPath:   app.VerifyEmailPath,
+	}
+
+	// Pre-fill brute-force defaults so fields are never blank
+	fd.BfLockoutEnabled = bfDefaultLockoutEnabled
+	fd.BfLockoutThreshold = bfDefaultLockoutThreshold
+	fd.BfLockoutDurations = bfDefaultLockoutDurations
+	fd.BfLockoutWindow = bfDefaultLockoutWindow
+	fd.BfLockoutTierTTL = bfDefaultLockoutTierTTL
+	fd.BfDelayEnabled = bfDefaultDelayEnabled
+	fd.BfDelayStartAfter = bfDefaultDelayStartAfter
+	fd.BfDelayMaxSeconds = bfDefaultDelayMaxSeconds
+	fd.BfDelayTierTTL = bfDefaultDelayTierTTL
+	fd.BfCaptchaEnabled = bfDefaultCaptchaEnabled
+	fd.BfCaptchaThreshold = bfDefaultCaptchaThreshold
+	fd.BfCaptchaSiteKey = bfDefaultCaptchaSiteKey
+	fd.BfCaptchaHasSecret = true // System default secret key is configured
+
+	// Override with saved per-app values where non-nil
+	if app.BfLockoutEnabled != nil || app.BfLockoutThreshold != nil || app.BfLockoutDurations != nil || app.BfLockoutWindow != nil || app.BfLockoutTierTTL != nil {
+		fd.BfLockoutOverride = true
+		if app.BfLockoutEnabled != nil {
+			fd.BfLockoutEnabled = *app.BfLockoutEnabled
+		}
+		if app.BfLockoutThreshold != nil {
+			fd.BfLockoutThreshold = strconv.Itoa(*app.BfLockoutThreshold)
+		}
+		if app.BfLockoutDurations != nil {
+			fd.BfLockoutDurations = *app.BfLockoutDurations
+		}
+		if app.BfLockoutWindow != nil {
+			fd.BfLockoutWindow = *app.BfLockoutWindow
+		}
+		if app.BfLockoutTierTTL != nil {
+			fd.BfLockoutTierTTL = *app.BfLockoutTierTTL
+		}
+	}
+
+	// Override with saved per-app delay values where non-nil
+	if app.BfDelayEnabled != nil || app.BfDelayStartAfter != nil || app.BfDelayMaxSeconds != nil || app.BfDelayTierTTL != nil {
+		fd.BfDelayOverride = true
+		if app.BfDelayEnabled != nil {
+			fd.BfDelayEnabled = *app.BfDelayEnabled
+		}
+		if app.BfDelayStartAfter != nil {
+			fd.BfDelayStartAfter = strconv.Itoa(*app.BfDelayStartAfter)
+		}
+		if app.BfDelayMaxSeconds != nil {
+			fd.BfDelayMaxSeconds = strconv.Itoa(*app.BfDelayMaxSeconds)
+		}
+		if app.BfDelayTierTTL != nil {
+			fd.BfDelayTierTTL = *app.BfDelayTierTTL
+		}
+	}
+
+	// Override with saved per-app CAPTCHA values where non-nil
+	if app.BfCaptchaEnabled != nil || app.BfCaptchaSiteKey != nil || app.BfCaptchaSecretKey != nil || app.BfCaptchaThreshold != nil {
+		fd.BfCaptchaOverride = true
+		if app.BfCaptchaEnabled != nil {
+			fd.BfCaptchaEnabled = *app.BfCaptchaEnabled
+		}
+		if app.BfCaptchaSiteKey != nil {
+			fd.BfCaptchaSiteKey = *app.BfCaptchaSiteKey
+		}
+		if app.BfCaptchaSecretKey != nil && *app.BfCaptchaSecretKey != "" {
+			fd.BfCaptchaHasSecret = true
+		}
+		if app.BfCaptchaThreshold != nil {
+			fd.BfCaptchaThreshold = strconv.Itoa(*app.BfCaptchaThreshold)
+		}
+	}
+
+	c.HTML(http.StatusOK, "app_form", fd)
 }
 
 // AppUpdate handles updating an application.
@@ -602,12 +943,20 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	id := c.Param("id")
 	name := strings.TrimSpace(c.PostForm("name"))
 	description := strings.TrimSpace(c.PostForm("description"))
+	frontendURL := strings.TrimSpace(c.PostForm("frontend_url"))
 	twoFAIssuerName := strings.TrimSpace(c.PostForm("two_fa_issuer_name"))
 	twoFAEnabled := c.PostForm("two_fa_enabled") == "on"
 	twoFARequired := c.PostForm("two_fa_required") == "on"
 	passkey2FAEnabled := c.PostForm("passkey_2fa_enabled") == "on"
 	passkeyLoginEnabled := c.PostForm("passkey_login_enabled") == "on"
 	magicLinkEnabled := c.PostForm("magic_link_enabled") == "on"
+	oidcEnabled := c.PostForm("oidc_enabled") == "on"
+	sms2FAEnabled := c.PostForm("sms_2fa_enabled") == "on"
+	trustedDeviceEnabled := c.PostForm("trusted_device_enabled") == "on"
+	trustedDeviceMaxDays := 30
+	if v, err := strconv.Atoi(c.PostForm("trusted_device_max_days")); err == nil && v > 0 {
+		trustedDeviceMaxDays = v
+	}
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -615,9 +964,108 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 		return
 	}
 
-	if err := h.Repo.UpdateApp(id, name, description, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled); err != nil {
+	// Build brute-force settings
+	var bf BruteForceAppSettings
+
+	// Lockout overrides: if override toggle is on, read values; otherwise nil (clear overrides)
+	if c.PostForm("bf_lockout_override") == "on" {
+		bfLockoutEnabled := c.PostForm("bf_lockout_enabled") == "on"
+		bf.LockoutEnabled = &bfLockoutEnabled
+		if v, err := strconv.Atoi(c.PostForm("bf_lockout_threshold")); err == nil {
+			bf.LockoutThreshold = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_durations")); v != "" {
+			bf.LockoutDurations = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_window")); v != "" {
+			bf.LockoutWindow = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_lockout_tier_ttl")); v != "" {
+			bf.LockoutTierTTL = &v
+		}
+	}
+
+	// Delay overrides
+	if c.PostForm("bf_delay_override") == "on" {
+		bfDelayEnabled := c.PostForm("bf_delay_enabled") == "on"
+		bf.DelayEnabled = &bfDelayEnabled
+		if v, err := strconv.Atoi(c.PostForm("bf_delay_start_after")); err == nil {
+			bf.DelayStartAfter = &v
+		}
+		if v, err := strconv.Atoi(c.PostForm("bf_delay_max_seconds")); err == nil {
+			bf.DelayMaxSeconds = &v
+		}
+		if v := strings.TrimSpace(c.PostForm("bf_delay_tier_ttl")); v != "" {
+			bf.DelayTierTTL = &v
+		}
+	}
+
+	// CAPTCHA overrides
+	if c.PostForm("bf_captcha_override") == "on" {
+		bfCaptchaEnabled := c.PostForm("bf_captcha_enabled") == "on"
+		bf.CaptchaEnabled = &bfCaptchaEnabled
+		if v := strings.TrimSpace(c.PostForm("bf_captcha_site_key")); v != "" {
+			bf.CaptchaSiteKey = &v
+		}
+		// Only update secret key if a new value was provided (non-empty)
+		if v := strings.TrimSpace(c.PostForm("bf_captcha_secret_key")); v != "" {
+			bf.CaptchaSecretKey = &v
+		}
+		// If override is on but secret_key field is empty, keep existing (don't send nil)
+		if v, err := strconv.Atoi(c.PostForm("bf_captcha_threshold")); err == nil {
+			bf.CaptchaThreshold = &v
+		}
+	}
+	// If override toggles are off, all bf fields remain nil -> clears overrides in DB
+
+	// Build customization settings
+	custom := AppCustomizationSettings{
+		// Login Page Branding
+		LoginLogoURL:        strings.TrimSpace(c.PostForm("login_logo_url")),
+		LoginPrimaryColor:   strings.TrimSpace(c.PostForm("login_primary_color")),
+		LoginSecondaryColor: strings.TrimSpace(c.PostForm("login_secondary_color")),
+		LoginDisplayName:    strings.TrimSpace(c.PostForm("login_display_name")),
+		// Password Policy
+		PwMinLength:     8,
+		PwMaxLength:     128,
+		PwRequireUpper:  c.PostForm("pw_require_upper") == "on",
+		PwRequireLower:  c.PostForm("pw_require_lower") == "on",
+		PwRequireDigit:  c.PostForm("pw_require_digit") == "on",
+		PwRequireSymbol: c.PostForm("pw_require_symbol") == "on",
+		// Email Action Link Paths
+		ResetPasswordPath: strings.TrimSpace(c.PostForm("reset_password_path")),
+		MagicLinkPath:     strings.TrimSpace(c.PostForm("magic_link_path")),
+		VerifyEmailPath:   strings.TrimSpace(c.PostForm("verify_email_path")),
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_min_length")); err == nil && v > 0 {
+		custom.PwMinLength = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_max_length")); err == nil && v > 0 {
+		custom.PwMaxLength = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_history_count")); err == nil && v >= 0 {
+		custom.PwHistoryCount = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("pw_max_age_days")); err == nil && v >= 0 {
+		custom.PwMaxAgeDays = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("access_token_ttl_minutes")); err == nil && v >= 0 {
+		custom.AccessTokenTTLMinutes = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("refresh_token_ttl_hours")); err == nil && v >= 0 {
+		custom.RefreshTokenTTLHours = v
+	}
+
+	if err := h.Repo.UpdateApp(id, name, description, frontendURL, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, bf, custom); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	// Update SMS and trusted device settings
+	if err := h.Repo.UpdateAppSMSTrustedDevice(id, sms2FAEnabled, trustedDeviceEnabled, trustedDeviceMaxDays); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update SMS/trusted device settings.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return
 	}
 
@@ -706,6 +1154,7 @@ func (h *GUIHandler) OAuthPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "oauth",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -1098,7 +1547,65 @@ func (h *GUIHandler) UserDetail(c *gin.Context) {
 		return
 	}
 
+	// Load trusted devices if the feature is enabled
+	if h.TrustedDeviceRepo != nil {
+		userUUID, parseErr := uuid.Parse(id)
+		if parseErr == nil {
+			devices, devErr := h.TrustedDeviceRepo.FindAllForUser(userUUID)
+			if devErr == nil {
+				detail.TrustedDevices = devices
+			}
+		}
+	}
+
 	c.HTML(http.StatusOK, "user_detail", detail)
+}
+
+// UserRevokeTrustedDevice revokes a single trusted device for a user (admin action).
+// DELETE /gui/users/:id/trusted-devices/:device_id
+func (h *GUIHandler) UserRevokeTrustedDevice(c *gin.Context) {
+	deviceIDStr := c.Param("device_id")
+	if h.TrustedDeviceRepo == nil {
+		c.String(http.StatusServiceUnavailable, "Trusted device feature is disabled.")
+		return
+	}
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid device ID.")
+		return
+	}
+	if err := h.TrustedDeviceRepo.DeleteByID(deviceID); err != nil {
+		c.String(http.StatusInternalServerError, "Failed to revoke trusted device.")
+		return
+	}
+	c.String(http.StatusOK, `<span class="badge bg-success bg-opacity-10 text-success">Revoked</span>`)
+}
+
+// UserRevokeAllTrustedDevices revokes all trusted devices for a user across all apps (admin action).
+// DELETE /gui/users/:id/trusted-devices
+func (h *GUIHandler) UserRevokeAllTrustedDevices(c *gin.Context) {
+	id := c.Param("id")
+	if h.TrustedDeviceRepo == nil {
+		c.String(http.StatusServiceUnavailable, "Trusted device feature is disabled.")
+		return
+	}
+	userUUID, err := uuid.Parse(id)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid user ID.")
+		return
+	}
+	// Fetch all devices across all apps and delete them one by one
+	devices, err := h.TrustedDeviceRepo.FindAllForUser(userUUID)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to load trusted devices.")
+		return
+	}
+	for _, d := range devices {
+		_ = h.TrustedDeviceRepo.DeleteByID(d.ID)
+	}
+	c.Header("HX-Trigger", "trustedDevicesRevoked")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success py-2 small">All trusted devices revoked successfully.</div>`)
 }
 
 // UserToggleActive toggles a user's IsActive flag and revokes tokens on deactivation (HTMX fragment)
@@ -1161,6 +1668,46 @@ func (h *GUIHandler) UserToggleActive(c *gin.Context) {
 				`<span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle-fill me-1"></i>`+toggleLabel+`</span>`+
 				`</div>`))
 	}
+}
+
+// UserUnlock unlocks a locked user account (HTMX fragment).
+// Clears DB lockout fields and resets all Redis brute-force counters.
+// PUT /gui/users/:id/unlock
+func (h *GUIHandler) UserUnlock(c *gin.Context) {
+	id := c.Param("id")
+
+	userEmail, appIDStr, err := h.Repo.UnlockUser(id)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to unlock user account")
+		return
+	}
+
+	// Reset Redis brute-force counters (lockout tier, delay tier, failure counter)
+	if h.BruteForceService != nil {
+		appID, parseErr := uuid.Parse(appIDStr)
+		if parseErr == nil {
+			userID, userParseErr := uuid.Parse(id)
+			if userParseErr == nil {
+				_ = h.BruteForceService.UnlockAccount(appID, userID, userEmail)
+			}
+		}
+	}
+
+	// Log the unlock event
+	appID, parseErr := uuid.Parse(appIDStr)
+	if parseErr == nil {
+		adminUser := getAdminUsername(c)
+		logService.LogAccountUnlocked(appID, uuid.Nil, "", "", map[string]interface{}{
+			"email":         userEmail,
+			"unlocked_by":   adminUser,
+			"unlock_method": "admin_gui",
+		})
+	}
+
+	// Return an inline success message — the HX-Trigger will refresh the detail view
+	c.Header("HX-Trigger", "userDetailRefresh")
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
+		`<span class="text-success"><i class="bi bi-unlock-fill me-1"></i>Account unlocked</span>`))
 }
 
 // ============================================================
@@ -1259,6 +1806,95 @@ func (h *GUIHandler) LogDetail(c *gin.Context) {
 	c.HTML(http.StatusOK, "activity_log_detail", detail)
 }
 
+// LogExport streams activity logs as a downloadable CSV or JSON file.
+// GET /gui/logs/export
+func (h *GUIHandler) LogExport(c *gin.Context) {
+	format := c.DefaultQuery("format", "csv")
+	if format != "csv" && format != "json" {
+		format = "csv"
+	}
+
+	eventType := c.Query("event_type")
+	severity := c.Query("severity")
+	appID := c.Query("app_id")
+	search := c.Query("search")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	items, truncated, err := h.Repo.ExportActivityLogs(eventType, severity, appID, search, startDate, endDate)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to export activity logs")
+		return
+	}
+
+	timestamp := time.Now().UTC().Format("20060102_150405")
+	truncatedVal := "false"
+	if truncated {
+		truncatedVal = "true"
+	}
+	c.Header("X-Export-Truncated", truncatedVal)
+
+	switch format {
+	case "json":
+		filename := fmt.Sprintf("activity_logs_%s.json", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+
+		type jsonExport struct {
+			Data       []ActivityLogExportItem `json:"data"`
+			Count      int                     `json:"count"`
+			Truncated  bool                    `json:"truncated"`
+			ExportedAt string                  `json:"exported_at"`
+		}
+		enc := json.NewEncoder(c.Writer)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(jsonExport{
+			Data:       items,
+			Count:      len(items),
+			Truncated:  truncated,
+			ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+
+	default: // csv
+		filename := fmt.Sprintf("activity_logs_%s.csv", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+		// Write UTF-8 BOM for Excel compatibility
+		_, _ = c.Writer.Write([]byte("\xef\xbb\xbf"))
+		writeAdminCSV(c.Writer, items)
+	}
+}
+
+// writeAdminCSV encodes a slice of ActivityLogExportItem as CSV into w.
+func writeAdminCSV(w io.Writer, items []ActivityLogExportItem) {
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{
+		"id", "app_id", "app_name",
+		"user_id", "user_email",
+		"event_type", "severity",
+		"timestamp", "ip_address", "user_agent",
+		"is_anomaly",
+	})
+	for _, item := range items {
+		_ = cw.Write([]string{
+			item.ID.String(),
+			item.AppID.String(),
+			item.AppName,
+			item.UserID.String(),
+			item.UserEmail,
+			item.EventType,
+			item.Severity,
+			item.Timestamp.UTC().Format(time.RFC3339),
+			item.IPAddress,
+			item.UserAgent,
+			fmt.Sprintf("%t", item.IsAnomaly),
+		})
+	}
+	cw.Flush()
+}
+
 // getCSRFToken reads the CSRF token from the Gin context (set by CSRFMiddleware)
 func getCSRFToken(c *gin.Context) string {
 	if val, exists := c.Get(web.CSRFTokenKey); exists {
@@ -1344,6 +1980,7 @@ func (h *GUIHandler) ApiKeyCreate(c *gin.Context) {
 	name := strings.TrimSpace(c.PostForm("name"))
 	keyType := strings.TrimSpace(c.PostForm("key_type"))
 	description := strings.TrimSpace(c.PostForm("description"))
+	scopes := strings.TrimSpace(c.PostForm("scopes"))
 	appIDStr := strings.TrimSpace(c.PostForm("app_id"))
 	expiresAtStr := strings.TrimSpace(c.PostForm("expires_at"))
 
@@ -1418,6 +2055,7 @@ func (h *GUIHandler) ApiKeyCreate(c *gin.Context) {
 		KeyType:     keyType,
 		Name:        name,
 		Description: description,
+		Scopes:      scopes,
 		KeyHash:     keyHash,
 		KeyPrefix:   keyPrefix,
 		KeySuffix:   keySuffix,
@@ -1438,6 +2076,7 @@ func (h *GUIHandler) ApiKeyCreate(c *gin.Context) {
 		"RawKey":    rawKey,
 		"Name":      name,
 		"KeyType":   keyType,
+		"Scopes":    scopes,
 		"AppName":   appName,
 		"ExpiresAt": expiresAtDisplay,
 	})
@@ -1566,7 +2205,101 @@ func (h *GUIHandler) ApiKeyFormCancel(c *gin.Context) {
 	c.String(http.StatusOK, "")
 }
 
-// ==================== Settings Management ====================
+// ApiKeyEditForm returns the edit form partial for an existing API key.
+// GET /gui/api-keys/:id/edit
+func (h *GUIHandler) ApiKeyEditForm(c *gin.Context) {
+	id := c.Param("id")
+	apiKey, err := h.Repo.GetApiKeyByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">API key not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "api_key_edit_form", gin.H{
+		"ID":          apiKey.ID,
+		"Name":        apiKey.Name,
+		"Description": apiKey.Description,
+		"Scopes":      apiKey.Scopes,
+		"KeyType":     apiKey.KeyType,
+		"KeyPrefix":   apiKey.KeyPrefix,
+		"KeySuffix":   apiKey.KeySuffix,
+	})
+}
+
+// ApiKeyUpdate handles updating name, description, and scopes for an existing API key.
+// PUT /gui/api-keys/:id
+func (h *GUIHandler) ApiKeyUpdate(c *gin.Context) {
+	id := c.Param("id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	description := strings.TrimSpace(c.PostForm("description"))
+	scopes := strings.TrimSpace(c.PostForm("scopes"))
+
+	if name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Name is required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if err := h.Repo.UpdateApiKeyScopes(id, name, description, scopes); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update API key.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "apiKeyListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">API key updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// ApiKeyUsagePage renders the full usage analytics page for a single API key.
+// GET /gui/api-keys/:id/usage
+func (h *GUIHandler) ApiKeyUsagePage(c *gin.Context) {
+	id := c.Param("id")
+
+	parsedID, err := uuid.Parse(id)
+	if err != nil {
+		c.HTML(http.StatusBadRequest, "error", gin.H{"Error": "Invalid API key ID"})
+		return
+	}
+
+	apiKey, err := h.Repo.GetApiKeyByID(id)
+	if err != nil {
+		c.HTML(http.StatusNotFound, "error", gin.H{"Error": "API key not found"})
+		return
+	}
+
+	const days = 30
+	points, err := h.Repo.GetApiKeyUsageSummary(parsedID, days)
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "error", gin.H{"Error": "Failed to load usage data"})
+		return
+	}
+
+	total, err := h.Repo.GetApiKeyTotalUsage(parsedID)
+	if err != nil {
+		total = 0
+	}
+
+	// Build label/count slices for Chart.js
+	labels := make([]string, len(points))
+	counts := make([]int64, len(points))
+	for i, p := range points {
+		labels[i] = p.PeriodDate.Format("Jan 02")
+		counts[i] = p.RequestCount
+	}
+
+	c.HTML(http.StatusOK, "api_key_usage", gin.H{
+		"ActivePage":    "api-keys",
+		"AdminUsername": getAdminUsername(c),
+		"CSRFToken":     getCSRFToken(c),
+		"ApiKey":        apiKey,
+		"Days":          days,
+		"Labels":        labels,
+		"Counts":        counts,
+		"TotalRequests": total,
+	})
+}
 
 // SettingsPage renders the system settings page with accordion categories.
 // GET /gui/settings
@@ -1574,6 +2307,7 @@ func (h *GUIHandler) SettingsPage(c *gin.Context) {
 	categories, err := h.SettingsService.ResolveAllByCategory()
 	if err != nil {
 		data := web.TemplateData{
+			Theme:         web.GetTheme(c),
 			ActivePage:    "settings",
 			AdminUsername: c.GetString(web.GUIAdminUsernameKey),
 			CSRFToken:     c.GetString(web.CSRFTokenKey),
@@ -1584,6 +2318,7 @@ func (h *GUIHandler) SettingsPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "settings",
 		AdminUsername: c.GetString(web.GUIAdminUsernameKey),
 		CSRFToken:     c.GetString(web.CSRFTokenKey),
@@ -1718,6 +2453,7 @@ func (h *GUIHandler) EmailServersPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "email-servers",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -2159,6 +2895,7 @@ func (h *GUIHandler) EmailTemplatesPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "email-templates",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -2599,9 +3336,10 @@ func (h *GUIHandler) EmailTemplateReset(c *gin.Context) {
 }
 
 // EmailTemplateFormCancel clears the form container.
+// Also clears the preview container via HTMX out-of-band swap.
 // GET /gui/email-templates/form-cancel
 func (h *GUIHandler) EmailTemplateFormCancel(c *gin.Context) {
-	c.String(http.StatusOK, "")
+	c.String(http.StatusOK, `<div id="email-template-preview-container" hx-swap-oob="true"></div>`)
 }
 
 // EmailTemplatePreview renders a preview of the template.
@@ -2642,8 +3380,13 @@ func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
 
 	c.String(http.StatusOK, fmt.Sprintf(`
 <div class="card border-0 shadow-sm">
-    <div class="card-header bg-light">
-        <small class="text-muted">Subject:</small> <strong>%s</strong>
+    <div class="card-header bg-body-tertiary d-flex align-items-center justify-content-between">
+        <span><small class="text-muted">Subject:</small> <strong>%s</strong></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                onclick="document.getElementById('email-template-preview-container').innerHTML=''"
+                aria-label="Close preview">
+            <i class="bi bi-x-lg me-1"></i>Close Preview
+        </button>
     </div>
     <div class="card-body p-0">
         <iframe srcdoc="%s" style="width:100%%;min-height:400px;border:none;" sandbox="allow-same-origin"></iframe>
@@ -2659,6 +3402,7 @@ func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
 // GET /gui/email-types
 func (h *GUIHandler) EmailTypesPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "email-types",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -2939,6 +3683,7 @@ func (h *GUIHandler) TwoFAVerifyPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:       web.GetTheme(c),
 		TempToken:   tempToken,
 		TwoFAMethod: method,
 		Redirect:    redirect,
@@ -2958,6 +3703,7 @@ func (h *GUIHandler) TwoFAVerifySubmit(c *gin.Context) {
 
 	if tempToken == "" || code == "" {
 		data := web.TemplateData{
+			Theme:       web.GetTheme(c),
 			Error:       "Verification code is required.",
 			TempToken:   tempToken,
 			TwoFAMethod: method,
@@ -2986,6 +3732,7 @@ func (h *GUIHandler) TwoFAVerifySubmit(c *gin.Context) {
 
 	if err != nil {
 		data := web.TemplateData{
+			Theme:       web.GetTheme(c),
 			Error:       "Invalid verification code. Please try again.",
 			TempToken:   tempToken,
 			TwoFAMethod: method,
@@ -3001,6 +3748,7 @@ func (h *GUIHandler) TwoFAVerifySubmit(c *gin.Context) {
 	sessionID, err := h.AccountService.CreateSession(adminID)
 	if err != nil {
 		data := web.TemplateData{
+			Theme:       web.GetTheme(c),
 			Error:       "An internal error occurred. Please try again.",
 			TempToken:   tempToken,
 			TwoFAMethod: method,
@@ -3080,6 +3828,7 @@ func (h *GUIHandler) MyAccountPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "my-account",
 		AdminUsername: c.GetString(web.GUIAdminUsernameKey),
 		AdminID:       adminID,
@@ -3171,6 +3920,7 @@ func (h *GUIHandler) MyAccount2FAGenerateTOTP(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: map[string]interface{}{
 			"Secret":     setup.Secret,
@@ -3209,6 +3959,7 @@ func (h *GUIHandler) MyAccount2FAVerifyTOTP(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: map[string]interface{}{
 			"RecoveryCodes": recoveryCodes,
@@ -3233,6 +3984,7 @@ func (h *GUIHandler) MyAccount2FAEnableEmail(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: map[string]interface{}{
 			"RecoveryCodes": recoveryCodes,
@@ -3286,6 +4038,7 @@ func (h *GUIHandler) MyAccount2FAStatus(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: MyAccountData{
 			Email:              account.Email,
@@ -3317,6 +4070,7 @@ func (h *GUIHandler) MyAccount2FARegenerateCodes(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: map[string]interface{}{
 			"RecoveryCodes": codes,
@@ -3359,6 +4113,7 @@ func (h *GUIHandler) MyAccountPasskeyStatus(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: MyAccountPasskeyData{
 			Passkeys: creds,
@@ -3491,6 +4246,7 @@ func (h *GUIHandler) RolesPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "roles",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -3796,6 +4552,7 @@ func (h *GUIHandler) RolePermissionsUpdate(c *gin.Context) {
 // GET /gui/permissions
 func (h *GUIHandler) PermissionsPage(c *gin.Context) {
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "permissions",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -3875,6 +4632,7 @@ func (h *GUIHandler) UserRolesPage(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
 		ActivePage:    "user-roles",
 		AdminUsername: getAdminUsername(c),
 		AdminID:       getAdminID(c),
@@ -4441,6 +5199,7 @@ func (h *GUIHandler) MyAccountMagicLinkStatus(c *gin.Context) {
 	}
 
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: MyAccountMagicLinkData{
 			MagicLinkEnabled: account.MagicLinkEnabled,
@@ -4479,6 +5238,7 @@ func (h *GUIHandler) MyAccountMagicLinkToggle(c *gin.Context) {
 
 	// Re-render the status partial with the updated state
 	data := web.TemplateData{
+		Theme:     web.GetTheme(c),
 		CSRFToken: c.GetString(web.CSRFTokenKey),
 		Data: MyAccountMagicLinkData{
 			MagicLinkEnabled: newState,
@@ -4540,6 +5300,7 @@ func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
 	token := c.Query("token")
 	if token == "" {
 		c.HTML(http.StatusBadRequest, "login", web.TemplateData{
+			Theme: web.GetTheme(c),
 			Error: "Invalid or missing magic link token.",
 		})
 		return
@@ -4549,6 +5310,7 @@ func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
 	adminID, err := redis.GetAdminMagicLinkToken(token)
 	if err != nil || adminID == "" {
 		c.HTML(http.StatusUnauthorized, "login", web.TemplateData{
+			Theme: web.GetTheme(c),
 			Error: "This magic link is invalid or has expired. Please request a new one.",
 		})
 		return
@@ -4561,6 +5323,7 @@ func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
 	account, accErr := h.AccountService.Repo.GetByID(adminID)
 	if accErr != nil || account == nil {
 		c.HTML(http.StatusUnauthorized, "login", web.TemplateData{
+			Theme: web.GetTheme(c),
 			Error: "Account not found. Please contact an administrator.",
 		})
 		return
@@ -4573,6 +5336,7 @@ func (h *GUIHandler) MagicLinkLoginVerify(c *gin.Context) {
 	sessionID, sessErr := h.AccountService.CreateSession(adminID)
 	if sessErr != nil {
 		c.HTML(http.StatusInternalServerError, "login", web.TemplateData{
+			Theme: web.GetTheme(c),
 			Error: "Failed to create session. Please try again.",
 		})
 		return
@@ -4639,6 +5403,8 @@ type sessionItem struct {
 	LastActive          string
 	CreatedAtFormatted  string
 	LastActiveFormatted string
+	Status              string // "active", "idle", or "stale"
+	IdleMinutes         int    // minutes since last_active
 }
 
 // SessionList returns the paginated session list partial (HTMX fragment).
@@ -4702,6 +5468,12 @@ func (h *GUIHandler) SessionList(c *gin.Context) {
 	}
 	userEmails, _ := h.Repo.GetUserEmailsByIDs(userIDs)
 
+	// Active threshold: treat sessions with last_active within this window as "active"
+	activeThresholdMinutes := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")
+	if activeThresholdMinutes <= 0 {
+		activeThresholdMinutes = 15
+	}
+
 	// Build flattened items and apply in-memory filters
 	var items []sessionItem
 	for _, s := range allSessions {
@@ -4739,8 +5511,20 @@ func (h *GUIHandler) SessionList(c *gin.Context) {
 		}
 		if t, err := time.Parse(time.RFC3339, s["last_active"]); err == nil {
 			item.LastActiveFormatted = formatTimeAgo(t)
+			// Compute session status based on idle time
+			idle := int(time.Since(t).Minutes())
+			item.IdleMinutes = idle
+			switch {
+			case idle <= activeThresholdMinutes:
+				item.Status = "active"
+			case idle < 1440:
+				item.Status = "idle"
+			default:
+				item.Status = "stale"
+			}
 		} else {
 			item.LastActiveFormatted = s["last_active"]
+			item.Status = "stale"
 		}
 
 		items = append(items, item)
@@ -4751,6 +5535,7 @@ func (h *GUIHandler) SessionList(c *gin.Context) {
 
 	// Paginate
 	total := len(items)
+
 	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
 	start := (page - 1) * pageSize
 	end := start + pageSize
@@ -4791,16 +5576,37 @@ func (h *GUIHandler) SessionDetail(c *gin.Context) {
 	userEmails, _ := h.Repo.GetUserEmailsByIDs([]string{userID})
 	appNames, _ := h.Repo.GetAppNamesByIDs([]string{appID})
 
+	// Compute session status
+	activeThresholdMinutes := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")
+	if activeThresholdMinutes <= 0 {
+		activeThresholdMinutes = 15
+	}
+	detailStatus := "stale"
+	detailIdleMinutes := 0
+	if t, err := time.Parse(time.RFC3339, data["last_active"]); err == nil {
+		detailIdleMinutes = int(time.Since(t).Minutes())
+		switch {
+		case detailIdleMinutes <= activeThresholdMinutes:
+			detailStatus = "active"
+		case detailIdleMinutes < 1440:
+			detailStatus = "idle"
+		default:
+			detailStatus = "stale"
+		}
+	}
+
 	c.HTML(http.StatusOK, "session_detail", gin.H{
-		"SessionID":  sessionID,
-		"UserID":     userID,
-		"UserEmail":  userEmails[userID],
-		"AppID":      appID,
-		"AppName":    appNames[appID],
-		"IP":         data["ip"],
-		"UserAgent":  data["user_agent"],
-		"CreatedAt":  data["created_at"],
-		"LastActive": data["last_active"],
+		"SessionID":   sessionID,
+		"UserID":      userID,
+		"UserEmail":   userEmails[userID],
+		"AppID":       appID,
+		"AppName":     appNames[appID],
+		"IP":          data["ip"],
+		"UserAgent":   data["user_agent"],
+		"CreatedAt":   data["created_at"],
+		"LastActive":  data["last_active"],
+		"Status":      detailStatus,
+		"IdleMinutes": detailIdleMinutes,
 	})
 }
 
@@ -4822,6 +5628,19 @@ func (h *GUIHandler) SessionRevoke(c *gin.Context) {
 	if err := redis.DeleteSession(appID, sessionID, userID); err != nil {
 		c.String(http.StatusInternalServerError, "Failed to revoke session")
 		return
+	}
+
+	// Immediately invalidate any live access tokens belonging to this user so the
+	// client is forced out without waiting for the JWT to naturally expire.
+	// We use a user-wide blacklist keyed to the access-token TTL; the middleware
+	// checks this flag on every authenticated request and returns 401 when set.
+	if userID != "" {
+		accessTokenTTL := time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")) * time.Minute
+		if err := redis.BlacklistAllUserTokens(appID, userID, accessTokenTTL); err != nil {
+			// Non-fatal: log the error but continue — the session hash is already gone so the
+			// next request will still get a 401 via the SessionExists check.
+			_ = err
+		}
 	}
 
 	// Check if this was called from user detail page
@@ -4849,6 +5668,12 @@ func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
 	if err := redis.DeleteAllUserSessions(appID, userID, ""); err != nil {
 		c.String(http.StatusInternalServerError, "Failed to revoke sessions")
 		return
+	}
+
+	// Blacklist all live access tokens for the user so they are forced out immediately.
+	accessTokenTTL := time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")) * time.Minute
+	if err := redis.BlacklistAllUserTokens(appID, userID, accessTokenTTL); err != nil {
+		_ = err // non-fatal
 	}
 
 	// Check if this was called from user detail page
@@ -4893,6 +5718,11 @@ func (h *GUIHandler) renderUserSessions(c *gin.Context, appID, userID string) {
 		return
 	}
 
+	activeThresholdMinutes := viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")
+	if activeThresholdMinutes <= 0 {
+		activeThresholdMinutes = 15
+	}
+
 	var items []sessionItem
 	for _, sid := range sessionIDs {
 		data, err := redis.GetSession(appID, sid)
@@ -4917,8 +5747,20 @@ func (h *GUIHandler) renderUserSessions(c *gin.Context, appID, userID string) {
 		}
 		if t, err := time.Parse(time.RFC3339, data["last_active"]); err == nil {
 			item.LastActiveFormatted = formatTimeAgo(t)
+			// Compute session status based on idle time
+			idle := int(time.Since(t).Minutes())
+			item.IdleMinutes = idle
+			switch {
+			case idle <= activeThresholdMinutes:
+				item.Status = "active"
+			case idle < 1440:
+				item.Status = "idle"
+			default:
+				item.Status = "stale"
+			}
 		} else {
 			item.LastActiveFormatted = data["last_active"]
+			item.Status = "stale"
 		}
 
 		items = append(items, item)
@@ -4973,4 +5815,945 @@ func formatTimeAgo(t time.Time) string {
 	default:
 		return t.Format("Jan 02, 2006 15:04")
 	}
+}
+
+// ============================================================================
+// IP Rules Management
+// ============================================================================
+
+// IPRulePage renders the IP Rules management page.
+// GET /gui/ip-rules
+func (h *GUIHandler) IPRulePage(c *gin.Context) {
+	apps, _ := h.Repo.ListAllAppsWithTenantName()
+
+	c.HTML(http.StatusOK, "ip_rules", web.TemplateData{
+		Theme:         web.GetTheme(c),
+		ActivePage:    "ip-rules",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+		Data:          apps,
+	})
+}
+
+// IPRuleList renders the IP rules list (HTMX partial).
+// GET /gui/ip-rules/list
+func (h *GUIHandler) IPRuleList(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-warning">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	appIDStr := c.Query("app_id")
+	if appIDStr == "" {
+		c.String(http.StatusOK, `<div class="text-center py-5 text-muted"><i class="bi bi-funnel fs-1"></i><p class="mt-2 mb-0">Select an application above to view its IP rules.</p></div>`)
+		return
+	}
+
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid application ID.</div>`)
+		return
+	}
+
+	rules, err := h.IPRuleRepo.ListAllByApp(appID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Failed to load IP rules.</div>`)
+		return
+	}
+
+	type ruleListData struct {
+		Rules []models.IPRule
+		AppID string
+		Total int
+	}
+
+	c.HTML(http.StatusOK, "ip_rule_list", ruleListData{
+		Rules: rules,
+		AppID: appIDStr,
+		Total: len(rules),
+	})
+}
+
+// IPRuleCreateForm renders the IP rule create form (HTMX partial).
+// GET /gui/ip-rules/new
+func (h *GUIHandler) IPRuleCreateForm(c *gin.Context) {
+	appID := c.Query("app_id")
+
+	type formData struct {
+		IsEdit      bool
+		AppID       string
+		ID          string
+		RuleType    string
+		MatchType   string
+		Value       string
+		Description string
+		IsActive    bool
+	}
+
+	c.HTML(http.StatusOK, "ip_rule_form", formData{
+		IsEdit:   false,
+		AppID:    appID,
+		IsActive: true,
+	})
+}
+
+// IPRuleCreate handles IP rule creation.
+// POST /gui/ip-rules
+func (h *GUIHandler) IPRuleCreate(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	appIDStr := c.PostForm("app_id")
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid application ID.</div>`)
+		return
+	}
+
+	isActive := c.PostForm("is_active") == "on"
+
+	rule := &models.IPRule{
+		AppID:       appID,
+		RuleType:    c.PostForm("rule_type"),
+		MatchType:   c.PostForm("match_type"),
+		Value:       strings.TrimSpace(c.PostForm("value")),
+		Description: strings.TrimSpace(c.PostForm("description")),
+		IsActive:    isActive,
+	}
+
+	if err := geoip.ValidateRule(rule); err != nil {
+		c.String(http.StatusOK, fmt.Sprintf(`<div class="alert alert-danger">%s</div>`, escapeHTML(err.Error())))
+		return
+	}
+
+	if err := h.IPRuleRepo.Create(rule); err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Failed to create IP rule.</div>`)
+		return
+	}
+
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(appID)
+	}
+
+	c.Header("HX-Trigger", "ipRuleListRefresh")
+	c.String(http.StatusOK, `<div class="alert alert-success alert-dismissible fade show"><i class="bi bi-check-circle me-2"></i>IP rule created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// IPRuleEditForm renders the IP rule edit form (HTMX partial).
+// GET /gui/ip-rules/:id/edit
+func (h *GUIHandler) IPRuleEditForm(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid rule ID.</div>`)
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rule not found.</div>`)
+		return
+	}
+
+	type formData struct {
+		IsEdit      bool
+		AppID       string
+		ID          string
+		RuleType    string
+		MatchType   string
+		Value       string
+		Description string
+		IsActive    bool
+	}
+
+	c.HTML(http.StatusOK, "ip_rule_form", formData{
+		IsEdit:      true,
+		AppID:       rule.AppID.String(),
+		ID:          rule.ID.String(),
+		RuleType:    rule.RuleType,
+		MatchType:   rule.MatchType,
+		Value:       rule.Value,
+		Description: rule.Description,
+		IsActive:    rule.IsActive,
+	})
+}
+
+// IPRuleUpdate handles IP rule update.
+// PUT /gui/ip-rules/:id
+func (h *GUIHandler) IPRuleUpdate(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid rule ID.</div>`)
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rule not found.</div>`)
+		return
+	}
+
+	rule.RuleType = c.PostForm("rule_type")
+	rule.MatchType = c.PostForm("match_type")
+	rule.Value = strings.TrimSpace(c.PostForm("value"))
+	rule.Description = strings.TrimSpace(c.PostForm("description"))
+	rule.IsActive = c.PostForm("is_active") == "on"
+
+	if err := geoip.ValidateRule(rule); err != nil {
+		c.String(http.StatusOK, fmt.Sprintf(`<div class="alert alert-danger">%s</div>`, escapeHTML(err.Error())))
+		return
+	}
+
+	if err := h.IPRuleRepo.Update(rule); err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Failed to update IP rule.</div>`)
+		return
+	}
+
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(rule.AppID)
+	}
+
+	c.Header("HX-Trigger", "ipRuleListRefresh")
+	c.String(http.StatusOK, `<div class="alert alert-success alert-dismissible fade show"><i class="bi bi-check-circle me-2"></i>IP rule updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// IPRuleDeleteConfirm renders the IP rule delete confirmation (HTMX partial).
+// GET /gui/ip-rules/:id/delete
+func (h *GUIHandler) IPRuleDeleteConfirm(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid rule ID.</div>`)
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rule not found.</div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "ip_rule_delete_confirm", rule)
+}
+
+// IPRuleDelete handles IP rule deletion.
+// DELETE /gui/ip-rules/:id
+func (h *GUIHandler) IPRuleDelete(c *gin.Context) {
+	if h.IPRuleRepo == nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	ruleID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid rule ID.</div>`)
+		return
+	}
+
+	rule, err := h.IPRuleRepo.GetByID(ruleID)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">IP rule not found.</div>`)
+		return
+	}
+
+	appID := rule.AppID
+
+	if err := h.IPRuleRepo.Delete(ruleID); err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Failed to delete IP rule.</div>`)
+		return
+	}
+
+	if h.IPRuleEvaluator != nil {
+		h.IPRuleEvaluator.InvalidateCache(appID)
+	}
+
+	c.Header("HX-Trigger", "ipRuleDeleted")
+
+	// Return the updated list
+	rules, _ := h.IPRuleRepo.ListAllByApp(appID)
+	type ruleListData struct {
+		Rules []models.IPRule
+		AppID string
+		Total int
+	}
+	c.HTML(http.StatusOK, "ip_rule_list", ruleListData{
+		Rules: rules,
+		AppID: appID.String(),
+		Total: len(rules),
+	})
+}
+
+// IPRuleFormCancel handles IP rule form cancellation (HTMX partial).
+// GET /gui/ip-rules/form-cancel
+func (h *GUIHandler) IPRuleFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// IPRuleCheckAccess checks IP access for testing purposes (HTMX partial).
+// POST /gui/ip-rules/check
+func (h *GUIHandler) IPRuleCheckAccess(c *gin.Context) {
+	if h.IPRuleEvaluator == nil {
+		c.String(http.StatusOK, `<div class="alert alert-warning">IP rules feature is not configured.</div>`)
+		return
+	}
+
+	appIDStr := c.PostForm("app_id")
+	ipAddress := strings.TrimSpace(c.PostForm("ip_address"))
+
+	if appIDStr == "" || ipAddress == "" {
+		c.String(http.StatusOK, `<div class="alert alert-warning">Please provide both an application and an IP address.</div>`)
+		return
+	}
+
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.String(http.StatusOK, `<div class="alert alert-danger">Invalid application ID.</div>`)
+		return
+	}
+
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, ipAddress)
+
+	// Build a nice result display
+	var icon, alertClass, statusText string
+	if result.Allowed {
+		icon = "bi-check-circle-fill"
+		alertClass = "alert-success"
+		statusText = "Allowed"
+	} else {
+		icon = "bi-x-circle-fill"
+		alertClass = "alert-danger"
+		statusText = "Blocked"
+	}
+
+	locationInfo := ""
+	if result.GeoInfo != nil {
+		locationInfo = result.GeoInfo.String()
+		if result.GeoInfo.Country != "" {
+			locationInfo += " (" + result.GeoInfo.Country + ")"
+		}
+	}
+
+	html := fmt.Sprintf(`<div class="alert %s alert-dismissible fade show">
+		<i class="bi %s me-2"></i>
+		<strong>%s</strong> &mdash; %s
+		<br><small class="text-muted">Reason: %s%s</small>
+		<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+	</div>`, alertClass, icon, ipAddress, statusText, escapeHTML(result.Reason),
+		func() string {
+			if locationInfo != "" {
+				return " | Location: " + escapeHTML(locationInfo)
+			}
+			return ""
+		}())
+
+	c.String(http.StatusOK, html)
+}
+
+// ============================================================================
+// Webhook GUI handlers
+// ============================================================================
+
+// WebhookPage renders the webhooks management page.
+// GET /gui/webhooks
+func (h *GUIHandler) WebhookPage(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.HTML(http.StatusServiceUnavailable, "error", gin.H{"Error": "Webhook service is not available"})
+		return
+	}
+	c.HTML(http.StatusOK, "webhooks", gin.H{
+		"ActivePage":    "webhooks",
+		"AdminUsername": getAdminUsername(c),
+		"CSRFToken":     getCSRFToken(c),
+	})
+}
+
+// WebhookList returns the paginated webhook endpoints list partial (HTMX fragment).
+// GET /gui/webhooks/list
+func (h *GUIHandler) WebhookList(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	appIDStr := c.Query("app_id")
+
+	var endpoints []models.WebhookEndpoint
+	var total int64
+	var err error
+
+	if appIDStr != "" {
+		appID, parseErr := uuid.Parse(appIDStr)
+		if parseErr != nil {
+			c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid app ID</div>`)
+			return
+		}
+		endpoints, total, err = h.WebhookService.ListEndpointsByApp(appID, page, 20)
+	} else {
+		endpoints, total, err = h.WebhookService.ListAllEndpoints(page, 20)
+	}
+
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "webhook_list", gin.H{
+			"Endpoints": nil,
+			"Error":     "Failed to load webhook endpoints",
+		})
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(20)))
+	apps, _ := h.Repo.ListAllAppsWithTenantName()
+
+	c.HTML(http.StatusOK, "webhook_list", gin.H{
+		"Endpoints":  endpoints,
+		"Page":       page,
+		"TotalPages": totalPages,
+		"Total":      total,
+		"AppID":      appIDStr,
+		"Apps":       apps,
+		"CSRFToken":  getCSRFToken(c),
+	})
+}
+
+// WebhookCreateForm returns the webhook creation form HTML fragment.
+// GET /gui/webhooks/new
+func (h *GUIHandler) WebhookCreateForm(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	apps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to load applications.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+	c.HTML(http.StatusOK, "webhook_form", gin.H{
+		"Apps":       apps,
+		"EventTypes": models.ValidEventTypes,
+		"CSRFToken":  getCSRFToken(c),
+	})
+}
+
+// WebhookCreate handles creating a new webhook endpoint.
+// POST /gui/webhooks
+func (h *GUIHandler) WebhookCreate(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+
+	appIDStr := strings.TrimSpace(c.PostForm("app_id"))
+	eventType := strings.TrimSpace(c.PostForm("event_type"))
+	url := strings.TrimSpace(c.PostForm("url"))
+
+	if appIDStr == "" || eventType == "" || url == "" {
+		c.HTML(http.StatusBadRequest, "webhook_form", gin.H{
+			"Error":      "App, event type, and URL are required",
+			"EventTypes": models.ValidEventTypes,
+			"CSRFToken":  getCSRFToken(c),
+		})
+		return
+	}
+
+	appID, err := uuid.Parse(appIDStr)
+	if err != nil {
+		c.HTML(http.StatusBadRequest, "webhook_form", gin.H{
+			"Error":      "Invalid application ID",
+			"EventTypes": models.ValidEventTypes,
+			"CSRFToken":  getCSRFToken(c),
+		})
+		return
+	}
+
+	_, secret, svcErr := h.WebhookService.RegisterEndpoint(appID, eventType, url)
+	if svcErr != nil {
+		apps, _ := h.Repo.ListAllAppsWithTenantName()
+		c.HTML(http.StatusBadRequest, "webhook_form", gin.H{
+			"Error":      svcErr.Error(),
+			"Apps":       apps,
+			"EventTypes": models.ValidEventTypes,
+			"CSRFToken":  getCSRFToken(c),
+		})
+		return
+	}
+
+	// Show the secret once — it will never be shown again
+	c.HTML(http.StatusOK, "webhook_created", gin.H{
+		"Secret":    secret,
+		"CSRFToken": getCSRFToken(c),
+	})
+}
+
+// WebhookFormCancel returns an empty fragment to collapse the form.
+// GET /gui/webhooks/form-cancel
+func (h *GUIHandler) WebhookFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// WebhookDeleteConfirm renders the delete confirmation fragment.
+// GET /gui/webhooks/:id/delete
+func (h *GUIHandler) WebhookDeleteConfirm(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid webhook ID</div>`)
+		return
+	}
+
+	ep, svcErr := h.WebhookService.GetEndpoint(id)
+	if svcErr != nil || ep == nil {
+		c.String(http.StatusNotFound, `<div class="alert alert-danger">Webhook endpoint not found</div>`)
+		return
+	}
+
+	c.HTML(http.StatusOK, "webhook_delete_confirm", gin.H{
+		"Endpoint":  ep,
+		"CSRFToken": getCSRFToken(c),
+	})
+}
+
+// WebhookDelete deletes a webhook endpoint.
+// DELETE /gui/webhooks/:id
+func (h *GUIHandler) WebhookDelete(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid webhook ID</div>`)
+		return
+	}
+	if err := h.WebhookService.DeleteEndpoint(id); err != nil {
+		c.String(http.StatusInternalServerError, `<div class="alert alert-danger">Failed to delete webhook endpoint</div>`)
+		return
+	}
+	c.String(http.StatusOK, "")
+}
+
+// WebhookToggle toggles the active state of a webhook endpoint.
+// PUT /gui/webhooks/:id/toggle
+func (h *GUIHandler) WebhookToggle(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid webhook ID</div>`)
+		return
+	}
+	active := c.PostForm("active") == "true"
+	if err := h.WebhookService.SetEndpointActive(id, active); err != nil {
+		c.String(http.StatusInternalServerError, `<div class="alert alert-danger">Failed to update webhook endpoint</div>`)
+		return
+	}
+	// Return updated badge
+	if active {
+		c.String(http.StatusOK, `<span class="badge bg-success">Active</span>`)
+	} else {
+		c.String(http.StatusOK, `<span class="badge bg-secondary">Inactive</span>`)
+	}
+}
+
+// WebhookDeliveries renders the delivery log page for a webhook endpoint.
+// GET /gui/webhooks/:id/deliveries
+func (h *GUIHandler) WebhookDeliveries(c *gin.Context) {
+	if h.WebhookService == nil {
+		c.String(http.StatusServiceUnavailable, `<div class="alert alert-danger">Webhook service unavailable</div>`)
+		return
+	}
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, `<div class="alert alert-danger">Invalid webhook ID</div>`)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+
+	deliveries, total, svcErr := h.WebhookService.ListDeliveriesByEndpoint(id, page, 20)
+	if svcErr != nil {
+		c.HTML(http.StatusInternalServerError, "webhook_deliveries", gin.H{
+			"Error": "Failed to load delivery history",
+		})
+		return
+	}
+
+	ep, _ := h.WebhookService.GetEndpoint(id)
+	totalPages := int(math.Ceil(float64(total) / float64(20)))
+
+	c.HTML(http.StatusOK, "webhook_deliveries", gin.H{
+		"Endpoint":   ep,
+		"Deliveries": deliveries,
+		"Page":       page,
+		"TotalPages": totalPages,
+		"Total":      total,
+		"CSRFToken":  getCSRFToken(c),
+	})
+}
+
+// ============================================================
+// My Account — Backup Email
+// ============================================================
+
+// MyAccountBackupEmailStatus returns the current backup email status as an HTML partial.
+// GET /gui/my-account/backup-email/status
+func (h *GUIHandler) MyAccountBackupEmailStatus(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	account, err := h.AccountService.Repo.GetByID(adminID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to load account.</div>`)
+		return
+	}
+	c.HTML(http.StatusOK, "admin_backup_email_status", gin.H{
+		"BackupEmail":         account.BackupEmail,
+		"BackupEmailVerified": account.BackupEmailVerified,
+		"CSRFToken":           c.GetString(web.CSRFTokenKey),
+	})
+}
+
+// MyAccountSetBackupEmail sets (or updates) the backup email for the admin account.
+// POST /gui/my-account/backup-email
+func (h *GUIHandler) MyAccountSetBackupEmail(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+	backupEmail := strings.TrimSpace(c.PostForm("backup_email"))
+
+	if backupEmail == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2 small">Backup email address is required.</div>`)
+		return
+	}
+
+	if err := h.AccountService.Repo.SetBackupEmail(adminID, backupEmail); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to update backup email.</div>`)
+		return
+	}
+
+	c.String(http.StatusOK,
+		fmt.Sprintf(`<div class="alert alert-success py-2 small">Backup email set to %s. Note: admin account backup email verification is not required.</div>`, backupEmail))
+}
+
+// MyAccountRemoveBackupEmail removes the backup email from the admin account.
+// DELETE /gui/my-account/backup-email
+func (h *GUIHandler) MyAccountRemoveBackupEmail(c *gin.Context) {
+	adminID := c.GetString(web.GUIAdminIDKey)
+
+	if err := h.AccountService.Repo.ClearBackupEmail(adminID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to remove backup email.</div>`)
+		return
+	}
+
+	// Refresh the backup email status section
+	c.Header("HX-Trigger", "backupEmailChanged")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success py-2 small">Backup email removed.</div>`)
+}
+
+// ============================================================
+// My Account — Trusted Devices (admin's own user-level devices)
+// ============================================================
+
+// MyAccountTrustedDevices lists the trusted devices belonging to the logged-in admin
+// across all apps (the admin may also be a regular user in some apps).
+// GET /gui/my-account/trusted-devices
+func (h *GUIHandler) MyAccountTrustedDevices(c *gin.Context) {
+	if h.TrustedDeviceRepo == nil {
+		c.HTML(http.StatusOK, "admin_trusted_devices", gin.H{
+			"Devices":   nil,
+			"CSRFToken": c.GetString(web.CSRFTokenKey),
+		})
+		return
+	}
+	adminID := c.GetString(web.GUIAdminIDKey)
+	adminUUID, err := uuid.Parse(adminID)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid admin ID.")
+		return
+	}
+	devices, err := h.TrustedDeviceRepo.FindAllForUser(adminUUID)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to load trusted devices.</div>`)
+		return
+	}
+	c.HTML(http.StatusOK, "admin_trusted_devices", gin.H{
+		"Devices":   devices,
+		"CSRFToken": c.GetString(web.CSRFTokenKey),
+	})
+}
+
+// MyAccountRevokeTrustedDevice revokes one of the admin's own trusted devices.
+// DELETE /gui/my-account/trusted-devices/:device_id
+func (h *GUIHandler) MyAccountRevokeTrustedDevice(c *gin.Context) {
+	if h.TrustedDeviceRepo == nil {
+		c.String(http.StatusServiceUnavailable, "Trusted device feature is disabled.")
+		return
+	}
+	deviceIDStr := c.Param("device_id")
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		c.String(http.StatusBadRequest, "Invalid device ID.")
+		return
+	}
+	if err := h.TrustedDeviceRepo.DeleteByID(deviceID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to revoke trusted device.</div>`)
+		return
+	}
+	// Trigger a list refresh
+	c.Header("HX-Trigger", "trustedDeviceRevoked")
+	c.String(http.StatusOK, `<span class="badge bg-success bg-opacity-10 text-success">Revoked</span>`)
+}
+
+// ============================================================
+// User Export / Import (Admin GUI)
+// ============================================================
+
+// UserExport streams all users as a downloadable CSV or JSON file.
+// GET /gui/users/export?format=csv|json&app_id=&search=
+func (h *GUIHandler) UserExport(c *gin.Context) {
+	format := c.DefaultQuery("format", "csv")
+	if format != "csv" && format != "json" {
+		format = "csv"
+	}
+	appID := c.Query("app_id")
+	search := c.Query("search")
+
+	items, truncated, err := h.Repo.ExportUsers(appID, search)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to export users")
+		return
+	}
+
+	timestamp := time.Now().UTC().Format("20060102_150405")
+	truncatedVal := "false"
+	if truncated {
+		truncatedVal = "true"
+	}
+	c.Header("X-Export-Truncated", truncatedVal)
+
+	switch format {
+	case "json":
+		filename := fmt.Sprintf("users_%s.json", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+
+		type jsonExport struct {
+			Data       []UserExportItem `json:"data"`
+			Count      int              `json:"count"`
+			Truncated  bool             `json:"truncated"`
+			ExportedAt string           `json:"exported_at"`
+		}
+		enc := json.NewEncoder(c.Writer)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(jsonExport{
+			Data:       items,
+			Count:      len(items),
+			Truncated:  truncated,
+			ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+
+	default: // csv
+		filename := fmt.Sprintf("users_%s.csv", timestamp)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write([]byte("\xef\xbb\xbf")) // UTF-8 BOM for Excel compatibility
+		writeUserCSVGUI(c.Writer, items)
+	}
+}
+
+// UserImportModal returns the import modal partial for the Users page.
+// GET /gui/users/import/modal
+func (h *GUIHandler) UserImportModal(c *gin.Context) {
+	appID := c.Query("app_id")
+	csrfToken, _ := c.Get(web.CSRFTokenKey)
+	c.HTML(http.StatusOK, "user_import_modal", gin.H{
+		"AppID":     appID,
+		"CSRFToken": csrfToken,
+	})
+}
+
+// UserImport processes an uploaded CSV or JSON file and bulk-creates users.
+// POST /gui/users/import  (multipart/form-data)
+func (h *GUIHandler) UserImport(c *gin.Context) {
+	renderErr := func(msg string) {
+		c.HTML(http.StatusOK, "user_import_result", gin.H{
+			"Result": dto.UserImportResult{
+				Errors: []dto.UserImportRowError{{Error: msg}},
+			},
+			"HasErrors": true,
+		})
+	}
+
+	appID := strings.TrimSpace(c.PostForm("app_id"))
+	if appID == "" {
+		renderErr("Application ID is required. Select an application before importing.")
+		return
+	}
+
+	// Enforce 10 MB upload limit
+	if err := c.Request.ParseMultipartForm(10 << 20); err != nil {
+		renderErr("File too large or invalid form submission (max 10 MB)")
+		return
+	}
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		renderErr("No file uploaded. Please select a CSV or JSON file.")
+		return
+	}
+	defer file.Close()
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	var rows []dto.UserImportRow
+	var parseErrors []dto.UserImportRowError
+
+	switch ext {
+	case ".json":
+		rows, parseErrors = userimport.ParseJSONImport(file)
+	default: // .csv or unrecognised extension
+		rows, parseErrors = userimport.ParseCSVImport(file)
+	}
+
+	result, err := h.Repo.ImportUsers(appID, rows)
+	if err != nil {
+		renderErr("Import failed: " + err.Error())
+		return
+	}
+
+	// Prepend parse/validation errors (they come first so row numbers are meaningful)
+	result.Errors = append(parseErrors, result.Errors...)
+	result.Total += len(parseErrors)
+
+	// Log a USER_CREATED activity event for each successfully imported user.
+	// We use LogRegister because imported users are newly created accounts.
+	appUUID, parseErr := uuid.Parse(appID)
+	if parseErr == nil && result.Imported > 0 {
+		ipAddress := c.ClientIP()
+		userAgent := c.GetHeader("User-Agent")
+		// Re-query the just-created user IDs so we can attach them to log entries.
+		// We do a best-effort lookup — logging failures are not fatal.
+		var createdUsers []struct {
+			ID    uuid.UUID
+			Email string
+		}
+		emails := make([]string, 0, len(rows))
+		for _, row := range rows {
+			emails = append(emails, strings.ToLower(strings.TrimSpace(row.Email)))
+		}
+		if len(emails) > 0 {
+			_ = h.Repo.DB.Model(&models.User{}).
+				Select("id, email").
+				Where("email IN ? AND app_id = ?", emails, appID).
+				Scan(&createdUsers).Error
+		}
+		for _, u := range createdUsers {
+			logService.LogRegister(appUUID, u.ID, ipAddress, userAgent, u.Email)
+		}
+	}
+
+	c.HTML(http.StatusOK, "user_import_result", gin.H{
+		"Result":    result,
+		"HasErrors": len(result.Errors) > 0,
+	})
+}
+
+// writeUserCSVGUI encodes a slice of UserExportItem as CSV rows into w.
+// The first row is the header. Used exclusively by the GUI UserExport handler.
+func writeUserCSVGUI(w io.Writer, items []UserExportItem) {
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{
+		"id", "app_id", "email", "name", "first_name", "last_name",
+		"locale", "email_verified", "is_active",
+		"two_fa_enabled", "two_fa_method", "social_providers",
+		"created_at", "updated_at",
+	})
+	for _, item := range items {
+		_ = cw.Write([]string{
+			item.ID.String(),
+			item.AppID.String(),
+			item.Email,
+			item.Name,
+			item.FirstName,
+			item.LastName,
+			item.Locale,
+			fmt.Sprintf("%t", item.EmailVerified),
+			fmt.Sprintf("%t", item.IsActive),
+			fmt.Sprintf("%t", item.TwoFAEnabled),
+			item.TwoFAMethod,
+			item.SocialProviders,
+			item.CreatedAt.UTC().Format(time.RFC3339),
+			item.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	cw.Flush()
+}
+
+// --- Monitoring (System Health) ---
+
+// MonitoringPage renders the system health monitoring page.
+// GET /gui/monitoring
+func (h *GUIHandler) MonitoringPage(c *gin.Context) {
+	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
+		ActivePage:    "monitoring",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+	}
+	c.HTML(http.StatusOK, "monitoring", data)
+}
+
+// MonitoringHealth returns the health check status partial for HTMX polling.
+// GET /gui/monitoring/health
+func (h *GUIHandler) MonitoringHealth(c *gin.Context) {
+	if h.HealthHandler == nil {
+		c.String(http.StatusOK,
+			`<div class="alert alert-secondary"><i class="bi bi-slash-circle me-2"></i>Health monitoring is not available.</div>`)
+		return
+	}
+	healthData := h.HealthHandler.GetHealthData()
+	c.HTML(http.StatusOK, "monitoring_health", healthData)
+}
+
+// MonitoringMetrics returns the Prometheus metrics summary partial for HTMX polling.
+// GET /gui/monitoring/metrics
+func (h *GUIHandler) MonitoringMetrics(c *gin.Context) {
+	if h.HealthHandler == nil {
+		c.String(http.StatusOK,
+			`<div class="alert alert-secondary"><i class="bi bi-slash-circle me-2"></i>Metrics monitoring is not available.</div>`)
+		return
+	}
+	summary := h.HealthHandler.GetMetricsSummary()
+	c.HTML(http.StatusOK, "monitoring_metrics", summary)
 }

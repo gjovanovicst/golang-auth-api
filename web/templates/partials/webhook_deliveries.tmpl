@@ -1,0 +1,113 @@
+{{define "webhook_deliveries"}}
+<div class="modal-body p-0">
+    {{if .Error}}
+    <div class="alert alert-danger m-3">{{.Error}}</div>
+    {{else}}
+    {{if .Endpoint}}
+    <div class="px-3 pt-3 pb-2 border-bottom bg-body-secondary">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="badge bg-primary bg-opacity-10 text-primary font-monospace">{{.Endpoint.EventType}}</span>
+            <code class="small text-muted">{{.Endpoint.URL}}</code>
+            <span class="ms-auto small text-muted">{{.Total}} total deliveries</span>
+        </div>
+    </div>
+    {{end}}
+    {{if .Deliveries}}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="">
+                <tr>
+                    <th class="ps-3">Time</th>
+                    <th>Attempt</th>
+                    <th>Status</th>
+                    <th>HTTP Code</th>
+                    <th>Latency</th>
+                    <th>Error</th>
+                    <th class="pe-3">Response Snippet</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Deliveries}}
+                <tr>
+                    <td class="ps-3">
+                        <small class="text-muted" title="{{.CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                    </td>
+                    <td>
+                        <span class="badge bg-secondary bg-opacity-10 text-secondary">#{{.Attempt}}</span>
+                    </td>
+                    <td>
+                        {{if .Success}}
+                        <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle me-1"></i>Success</span>
+                        {{else}}
+                        <span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle me-1"></i>Failed</span>
+                        {{end}}
+                    </td>
+                    <td>
+                        {{if .StatusCode}}
+                        <code class="small {{if .Success}}text-success{{else}}text-danger{{end}}">{{.StatusCode}}</code>
+                        {{else}}
+                        <span class="text-muted small">—</span>
+                        {{end}}
+                    </td>
+                    <td>
+                        {{if .LatencyMs}}
+                        <small class="text-muted">{{.LatencyMs}}ms</small>
+                        {{else}}
+                        <span class="text-muted small">—</span>
+                        {{end}}
+                    </td>
+                    <td>
+                        {{if .ErrorMessage}}
+                        <small class="text-danger" title="{{.ErrorMessage}}">{{truncate .ErrorMessage 60}}</small>
+                        {{else}}
+                        <span class="text-muted small">—</span>
+                        {{end}}
+                    </td>
+                    <td class="pe-3">
+                        {{if .ResponseBody}}
+                        <small class="text-muted font-monospace" title="{{.ResponseBody}}">{{truncate .ResponseBody 80}}</small>
+                        {{else}}
+                        <span class="text-muted small">—</span>
+                        {{end}}
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {{if gt .TotalPages 1}}
+    <div class="px-3 py-2 border-top d-flex align-items-center justify-content-between">
+        <small class="text-muted">Page {{.Page}} of {{.TotalPages}}</small>
+        <nav>
+            <ul class="pagination pagination-sm mb-0">
+                <li class="page-item {{if le .Page 1}}disabled{{end}}">
+                    <a class="page-link" href="#"
+                       hx-get="/gui/webhooks/{{if .Endpoint}}{{.Endpoint.ID}}{{end}}/deliveries?page={{sub .Page 1}}"
+                       hx-target="#webhook-deliveries-modal-body"
+                       hx-swap="innerHTML">Previous</a>
+                </li>
+                <li class="page-item {{if ge .Page .TotalPages}}disabled{{end}}">
+                    <a class="page-link" href="#"
+                       hx-get="/gui/webhooks/{{if .Endpoint}}{{.Endpoint.ID}}{{end}}/deliveries?page={{add .Page 1}}"
+                       hx-target="#webhook-deliveries-modal-body"
+                       hx-swap="innerHTML">Next</a>
+                </li>
+            </ul>
+        </nav>
+    </div>
+    {{end}}
+
+    {{else}}
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-list-check fs-1"></i>
+        <p class="mt-2 mb-0">No deliveries recorded yet for this endpoint.</p>
+    </div>
+    {{end}}
+    {{end}}
+</div>
+<div class="modal-footer border-0">
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+</div>
+{{end}}

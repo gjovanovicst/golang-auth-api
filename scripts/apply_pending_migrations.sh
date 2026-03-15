@@ -62,24 +62,3 @@ for file in $(ls migrations/*.sql | sort); do
 done
 
 echo "All migrations up to date."
-    fi
-
-    echo "Applying migration: $version"
-    
-    # 5. Run the migration
-    # We pipe the file content into docker exec psql
-    if docker exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -v ON_ERROR_STOP=1 < "$file"; then
-        # 6. Record success
-        # We manually insert because not all SQL files contain the INSERT statement
-        docker exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -c "
-            INSERT INTO schema_migrations (version, name, success, applied_at) 
-            VALUES ('$version', '$version', true, NOW())
-            ON CONFLICT (version) DO NOTHING;" > /dev/null
-        echo "✅ Applied $version"
-    else
-        echo "❌ Failed to apply $version"
-        exit 1
-    fi
-done
-
-echo "All migrations up to date."

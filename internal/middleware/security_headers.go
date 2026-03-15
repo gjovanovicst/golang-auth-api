@@ -54,6 +54,25 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 				"form-action 'self'",
 				"base-uri 'self'",
 			}, "; "))
+		} else if strings.HasPrefix(path, "/oidc") {
+			// OIDC login/consent/logout/error pages — assets loaded from /gui/static/*.
+			// script-src 'unsafe-inline' is required for the auto-theme inline script that
+			// reads prefers-color-scheme and sets data-bs-theme before CSS loads (prevents FOUC).
+			// img-src allows https: for external client logo URLs configured per OIDC client.
+			// form-action is intentionally omitted: after a successful login/consent the server
+			// issues a 302 redirect to the client's redirect_uri (an external origin). Chrome
+			// enforces form-action against redirect destinations, which would block the flow.
+			// Security is provided server-side by strict redirect_uri validation against the
+			// registered OIDC client, making a CSP form-action restriction redundant here.
+			h.Set("Content-Security-Policy", strings.Join([]string{
+				"default-src 'self'",
+				"script-src 'self' 'unsafe-inline'",
+				"style-src 'self' 'unsafe-inline'",
+				"font-src 'self'",
+				"img-src 'self' data: https:",
+				"frame-ancestors 'none'",
+				"base-uri 'self'",
+			}, "; "))
 		} else if strings.HasPrefix(path, "/swagger") {
 			// Swagger UI — needs inline scripts/styles and to fetch its own JSON spec
 			h.Set("Content-Security-Policy", strings.Join([]string{

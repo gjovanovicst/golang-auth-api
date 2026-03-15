@@ -326,7 +326,10 @@ func LoginRateLimitMiddleware() gin.HandlerFunc {
 // Pre-built configs for public API routes (used in Task 6)
 // ---------------------------------------------------------------------------
 
-// APILoginRateLimit — 5 requests/min per IP+email, lockout after 10
+// APILoginRateLimit — 15 requests/min per IP, lockout after 30.
+// This is a secondary safety net against volumetric attacks from a single IP.
+// Per-account lockout (BruteForceService, default threshold 5) fires first
+// for targeted credential-guessing attacks.
 func APILoginRateLimit() gin.HandlerFunc {
 	return RateLimitMiddleware(RateLimitConfig{
 		KeyPrefix: "api:login",
@@ -337,9 +340,9 @@ func APILoginRateLimit() gin.HandlerFunc {
 			// or callers can provide a custom KeyFunc.
 			return c.ClientIP()
 		},
-		MaxAttempts:      5,
+		MaxAttempts:      15,
 		Window:           60 * time.Second,
-		LockoutThreshold: 10,
+		LockoutThreshold: 30,
 		LockoutDuration:  15 * time.Minute,
 		UseContextKey:    false,
 	})
@@ -450,6 +453,63 @@ func GUIMagicLinkRateLimit() gin.HandlerFunc {
 func GUIPasskeyLoginRateLimit() gin.HandlerFunc {
 	return RateLimitMiddleware(RateLimitConfig{
 		KeyPrefix:        "gui:passkey-login",
+		MaxAttempts:      10,
+		Window:           60 * time.Second,
+		LockoutThreshold: 20,
+		LockoutDuration:  15 * time.Minute,
+	})
+}
+
+// OIDCAuthorizeRateLimit — 20 requests/min per IP on the authorize endpoint.
+// Protects against enumeration and brute-force on the login/consent form.
+func OIDCAuthorizeRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "oidc:authorize",
+		MaxAttempts:      20,
+		Window:           60 * time.Second,
+		LockoutThreshold: 40,
+		LockoutDuration:  15 * time.Minute,
+	})
+}
+
+// OIDCTokenRateLimit — 30 requests/min per IP on the token endpoint.
+// Allows normal client-side refresh traffic while limiting abuse.
+func OIDCTokenRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "oidc:token",
+		MaxAttempts:      30,
+		Window:           60 * time.Second,
+		LockoutThreshold: 60,
+		LockoutDuration:  5 * time.Minute,
+	})
+}
+
+// OIDCUserInfoRateLimit — 60 requests/min per IP on the userinfo endpoint.
+func OIDCUserInfoRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "oidc:userinfo",
+		MaxAttempts: 60,
+		Window:      60 * time.Second,
+	})
+}
+
+// OIDCIntrospectRateLimit — 30 requests/min per IP on the introspect endpoint.
+// Prevents token fishing via repeated introspection probes.
+func OIDCIntrospectRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "oidc:introspect",
+		MaxAttempts:      30,
+		Window:           60 * time.Second,
+		LockoutThreshold: 60,
+		LockoutDuration:  5 * time.Minute,
+	})
+}
+
+// OIDCRevokeRateLimit — 10 requests/min per IP on the revoke endpoint.
+// Protects against mass token revocation abuse.
+func OIDCRevokeRateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:        "oidc:revoke",
 		MaxAttempts:      10,
 		Window:           60 * time.Second,
 		LockoutThreshold: 20,

@@ -27,6 +27,10 @@ type AdminAccount struct {
 
 	// Magic Link authentication
 	MagicLinkEnabled bool `gorm:"default:false" json:"magic_link_enabled"`
+
+	// Backup email for 2FA recovery (separate from primary admin email)
+	BackupEmail         string `gorm:"type:varchar(255);default:''" json:"backup_email,omitempty"`
+	BackupEmailVerified bool   `gorm:"default:false" json:"backup_email_verified"`
 }
 
 // TableName overrides the default table name

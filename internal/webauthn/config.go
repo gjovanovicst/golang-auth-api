@@ -66,12 +66,19 @@ func GetWebAuthnForPasswordless(db *gorm.DB, app *models.Application) (*webauthn
 }
 
 // resolveRPID determines the Relying Party ID for WebAuthn.
-// Priority: WEBAUTHN_RP_ID env var → hostname from FRONTEND_URL.
+// Priority: WEBAUTHN_RP_ID env var → hostname from app FrontendURL → hostname from FRONTEND_URL.
 func resolveRPID(app *models.Application) string {
 	// Check environment variable first
 	rpID := viper.GetString("WEBAUTHN_RP_ID")
 	if rpID != "" {
 		return rpID
+	}
+
+	// Try per-app FrontendURL
+	if app != nil && app.FrontendURL != "" {
+		if parsed, err := url.Parse(app.FrontendURL); err == nil && parsed.Hostname() != "" {
+			return parsed.Hostname()
+		}
 	}
 
 	// Fall back to hostname from FRONTEND_URL
@@ -106,29 +113,46 @@ func resolveRPName(app *models.Application) string {
 }
 
 // resolveRPOrigins determines the allowed origins for WebAuthn ceremonies.
-// Priority: WEBAUTHN_RP_ORIGINS → FRONTEND_URL.
+// It starts with WEBAUTHN_RP_ORIGINS, then always appends the per-app FrontendURL
+// (if set and not already present) so that apps running on different origins than
+// the global default are accepted. Falls back to FRONTEND_URL if the list is empty.
 func resolveRPOrigins(app *models.Application) []string {
+	var result []string
+
 	originsStr := viper.GetString("WEBAUTHN_RP_ORIGINS")
 	if originsStr != "" {
-		origins := strings.Split(originsStr, ",")
-		var result []string
-		for _, o := range origins {
+		for _, o := range strings.Split(originsStr, ",") {
 			o = strings.TrimSpace(o)
 			if o != "" {
 				result = append(result, o)
 			}
 		}
-		if len(result) > 0 {
-			return result
+	}
+
+	// Always append the per-app FrontendURL when it differs from the global list.
+	// This ensures apps hosted on a different origin than WEBAUTHN_RP_ORIGINS
+	// (e.g. a second tenant app on a different port) can still complete passkey ceremonies.
+	if app != nil && app.FrontendURL != "" {
+		appOrigin := strings.TrimRight(app.FrontendURL, "/")
+		found := false
+		for _, o := range result {
+			if o == appOrigin {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result = append(result, appOrigin)
 		}
 	}
 
-	frontendURL := viper.GetString("FRONTEND_URL")
-	if frontendURL != "" {
-		return []string{strings.TrimRight(frontendURL, "/")}
+	if len(result) == 0 {
+		if frontendURL := viper.GetString("FRONTEND_URL"); frontendURL != "" {
+			result = append(result, strings.TrimRight(frontendURL, "/"))
+		}
 	}
 
-	return []string{}
+	return result
 }
 
 // GetWebAuthnForAdmin creates a WebAuthn instance for admin GUI passkey ceremonies.
@@ -159,7 +183,9 @@ func GetWebAuthnForAdmin() (*webauthn.WebAuthn, error) {
 		rpName = "Auth API Admin"
 	}
 
-	// Origins for admin GUI
+	// Origins for admin GUI: start with WEBAUTHN_RP_ORIGINS, then always append
+	// ADMIN_URL so admin passkey ceremonies (registered/verified at the admin GUI
+	// origin) are accepted even when WEBAUTHN_RP_ORIGINS is set for tenant apps.
 	var rpOrigins []string
 	originsStr := viper.GetString("WEBAUTHN_RP_ORIGINS")
 	if originsStr != "" {
@@ -170,13 +196,21 @@ func GetWebAuthnForAdmin() (*webauthn.WebAuthn, error) {
 			}
 		}
 	}
-	if len(rpOrigins) == 0 {
-		for _, key := range []string{"ADMIN_URL", "FRONTEND_URL"} {
-			u := viper.GetString(key)
-			if u != "" {
-				rpOrigins = append(rpOrigins, strings.TrimRight(u, "/"))
+	if adminURL := strings.TrimRight(viper.GetString("ADMIN_URL"), "/"); adminURL != "" {
+		found := false
+		for _, o := range rpOrigins {
+			if o == adminURL {
+				found = true
 				break
 			}
+		}
+		if !found {
+			rpOrigins = append(rpOrigins, adminURL)
+		}
+	}
+	if len(rpOrigins) == 0 {
+		if u := viper.GetString("FRONTEND_URL"); u != "" {
+			rpOrigins = append(rpOrigins, strings.TrimRight(u, "/"))
 		}
 	}
 
@@ -222,6 +256,9 @@ func GetWebAuthnForAdminLogin() (*webauthn.WebAuthn, error) {
 		rpName = "Auth API Admin"
 	}
 
+	// Origins for admin GUI: start with WEBAUTHN_RP_ORIGINS, then always append
+	// ADMIN_URL so admin passkey ceremonies (registered/verified at the admin GUI
+	// origin) are accepted even when WEBAUTHN_RP_ORIGINS is set for tenant apps.
 	var rpOrigins []string
 	originsStr := viper.GetString("WEBAUTHN_RP_ORIGINS")
 	if originsStr != "" {
@@ -232,13 +269,21 @@ func GetWebAuthnForAdminLogin() (*webauthn.WebAuthn, error) {
 			}
 		}
 	}
-	if len(rpOrigins) == 0 {
-		for _, key := range []string{"ADMIN_URL", "FRONTEND_URL"} {
-			u := viper.GetString(key)
-			if u != "" {
-				rpOrigins = append(rpOrigins, strings.TrimRight(u, "/"))
+	if adminURL := strings.TrimRight(viper.GetString("ADMIN_URL"), "/"); adminURL != "" {
+		found := false
+		for _, o := range rpOrigins {
+			if o == adminURL {
+				found = true
 				break
 			}
+		}
+		if !found {
+			rpOrigins = append(rpOrigins, adminURL)
+		}
+	}
+	if len(rpOrigins) == 0 {
+		if u := viper.GetString("FRONTEND_URL"); u != "" {
+			rpOrigins = append(rpOrigins, strings.TrimRight(u, "/"))
 		}
 	}
 

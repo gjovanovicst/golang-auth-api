@@ -1,5 +1,29 @@
 basePath: /
 definitions:
+  dto.AccountLockedResponse:
+    properties:
+      error:
+        type: string
+      locked_until:
+        description: ISO 8601 timestamp when the lockout expires
+        type: string
+      retry_after:
+        description: Seconds until the lockout expires
+        type: integer
+    type: object
+  dto.ActivityLogExportResponse:
+    properties:
+      count:
+        type: integer
+      data:
+        items:
+          $ref: '#/definitions/dto.ActivityLogResponse'
+        type: array
+      exported_at:
+        type: string
+      truncated:
+        type: boolean
+    type: object
   dto.ActivityLogListResponse:
     properties:
       data:
@@ -19,6 +43,12 @@ definitions:
         type: string
       ip_address:
         type: string
+      is_anomaly:
+        example: false
+        type: boolean
+      severity:
+        example: INFORMATIONAL
+        type: string
       timestamp:
         type: string
       user_agent:
@@ -26,19 +56,105 @@ definitions:
       user_id:
         type: string
     type: object
+  dto.AddBackupEmailRequest:
+    properties:
+      backup_email:
+        example: backup@example.com
+        type: string
+    required:
+    - backup_email
+    type: object
+  dto.AddPhoneRequest:
+    properties:
+      phone_number:
+        example: "+12125551234"
+        type: string
+    required:
+    - phone_number
+    type: object
+  dto.AppLoginConfigResponse:
+    properties:
+      app_id:
+        type: string
+      enabled_social_providers:
+        description: e.g. ["google","github"]
+        items:
+          type: string
+        type: array
+      has_oidc_clients:
+        type: boolean
+      login_display_name:
+        description: Display name shown on login page
+        type: string
+      login_logo_url:
+        description: Login Page Branding
+        type: string
+      login_primary_color:
+        description: Primary brand color (e.g. "#4f46e5")
+        type: string
+      login_secondary_color:
+        description: Secondary brand color
+        type: string
+      magic_link_enabled:
+        type: boolean
+      oidc_enabled:
+        type: boolean
+      passkey_login_enabled:
+        type: boolean
+      pw_max_length:
+        description: Maximum password length (default 128)
+        type: integer
+      pw_min_length:
+        description: Password Policy — exposed so the frontend can show real-time
+          requirements before submission
+        type: integer
+      pw_require_digit:
+        description: Require at least one digit
+        type: boolean
+      pw_require_lower:
+        description: Require at least one lowercase letter
+        type: boolean
+      pw_require_symbol:
+        description: Require at least one special character
+        type: boolean
+      pw_require_upper:
+        description: Require at least one uppercase letter
+        type: boolean
+      sms_2fa_enabled:
+        description: whether SMS is available as a 2FA method
+        type: boolean
+      trusted_device_enabled:
+        description: whether "remember this device" is available
+        type: boolean
+      two_fa_enabled:
+        description: whether 2FA is allowed for this app
+        type: boolean
+      two_fa_required:
+        description: whether every user must set up 2FA before accessing the app
+        type: boolean
+    type: object
   dto.AppResponse:
     properties:
       created_at:
         type: string
       description:
         type: string
+      frontend_url:
+        type: string
       id:
         type: string
+      magic_link_path:
+        type: string
       name:
+        type: string
+      reset_password_path:
+        description: Email Action Link Paths (empty = system defaults apply)
         type: string
       tenant_id:
         type: string
       updated_at:
+        type: string
+      verify_email_path:
         type: string
     type: object
   dto.AssignRoleRequest:
@@ -51,15 +167,62 @@ definitions:
     - role_id
     - user_id
     type: object
+  dto.BackupEmailStatusResponse:
+    properties:
+      backup_email:
+        type: string
+      pending_email:
+        description: set when a verification is in progress
+        type: string
+      verified:
+        type: boolean
+    type: object
+  dto.CaptchaRequiredResponse:
+    properties:
+      captcha_required:
+        type: boolean
+      error:
+        type: string
+      retry_after:
+        description: 'Advisory: seconds the client should wait before retrying'
+        type: integer
+      site_key:
+        description: reCAPTCHA site key for the client to render the widget
+        type: string
+    type: object
+  dto.ComponentStatus:
+    properties:
+      error:
+        description: Error message when status is "down"
+        type: string
+      host:
+        description: Remote address (SMTP only)
+        type: string
+      latency_ms:
+        description: Round-trip time in milliseconds (0 when unconfigured)
+        type: integer
+      status:
+        description: '"up", "down", or "unconfigured"'
+        type: string
+    type: object
   dto.CreateAppRequest:
     properties:
       description:
         type: string
+      frontend_url:
+        type: string
       magic_link_enabled:
         type: boolean
+      magic_link_path:
+        type: string
       name:
         type: string
+      reset_password_path:
+        description: Email Action Link Paths (optional; empty = use system defaults)
+        type: string
       tenant_id:
+        type: string
+      verify_email_path:
         type: string
     required:
     - name
@@ -86,6 +249,36 @@ definitions:
     required:
     - code
     - name
+    type: object
+  dto.CreateOIDCClientRequest:
+    properties:
+      allowed_grant_types:
+        description: comma-separated
+        type: string
+      allowed_scopes:
+        description: comma-separated
+        type: string
+      description:
+        type: string
+      is_confidential:
+        type: boolean
+      logo_url:
+        type: string
+      name:
+        maxLength: 100
+        type: string
+      pkce_required:
+        type: boolean
+      redirect_uris:
+        description: JSON array string, e.g. '["https://app.example.com/cb"]'
+        type: string
+      require_consent:
+        type: boolean
+    required:
+    - allowed_grant_types
+    - allowed_scopes
+    - name
+    - redirect_uris
     type: object
   dto.CreatePermissionRequest:
     properties:
@@ -117,6 +310,27 @@ definitions:
         type: string
     required:
     - name
+    type: object
+  dto.CreateWebhookRequest:
+    properties:
+      event_type:
+        example: user.registered
+        type: string
+      url:
+        example: https://your-app.com/webhooks/auth
+        type: string
+    required:
+    - event_type
+    - url
+    type: object
+  dto.CreateWebhookResponse:
+    properties:
+      endpoint:
+        $ref: '#/definitions/dto.WebhookEndpointResponse'
+      secret:
+        description: '#nosec G101 -- plaintext secret, shown once'
+        example: whsec_abc123...
+        type: string
     type: object
   dto.DeleteAccountRequest:
     properties:
@@ -347,8 +561,140 @@ definitions:
     required:
     - email
     type: object
+  dto.HealthResponse:
+    properties:
+      checks:
+        additionalProperties:
+          $ref: '#/definitions/dto.ComponentStatus'
+        type: object
+      status:
+        description: '"healthy", "degraded", or "unhealthy"'
+        type: string
+      timestamp:
+        type: string
+    type: object
+  dto.IPAccessCheckRequest:
+    properties:
+      ip_address:
+        example: 203.0.113.50
+        type: string
+    required:
+    - ip_address
+    type: object
+  dto.IPAccessCheckResponse:
+    properties:
+      allowed:
+        example: true
+        type: boolean
+      city:
+        example: San Francisco
+        type: string
+      country:
+        example: US
+        type: string
+      country_name:
+        example: United States
+        type: string
+      reason:
+        example: not_in_blocklist
+        type: string
+    type: object
+  dto.IPRuleCreateRequest:
+    properties:
+      description:
+        example: Block suspicious IP
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      match_type:
+        enum:
+        - ip
+        - cidr
+        - country
+        example: ip
+        type: string
+      rule_type:
+        enum:
+        - allow
+        - block
+        example: block
+        type: string
+      value:
+        example: 192.168.1.1
+        type: string
+    required:
+    - match_type
+    - rule_type
+    - value
+    type: object
+  dto.IPRuleListResponse:
+    properties:
+      rules:
+        items:
+          $ref: '#/definitions/dto.IPRuleResponse'
+        type: array
+      total:
+        type: integer
+    type: object
+  dto.IPRuleResponse:
+    properties:
+      app_id:
+        example: 00000000-0000-0000-0000-000000000001
+        type: string
+      created_at:
+        type: string
+      description:
+        example: Block suspicious IP
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      match_type:
+        example: ip
+        type: string
+      rule_type:
+        example: block
+        type: string
+      updated_at:
+        type: string
+      value:
+        example: 192.168.1.1
+        type: string
+    type: object
+  dto.IPRuleUpdateRequest:
+    properties:
+      description:
+        example: Block entire subnet
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      match_type:
+        enum:
+        - ip
+        - cidr
+        - country
+        example: cidr
+        type: string
+      rule_type:
+        enum:
+        - allow
+        - block
+        example: block
+        type: string
+      value:
+        example: 10.0.0.0/8
+        type: string
+    type: object
   dto.LoginRequest:
     properties:
+      captcha_token:
+        description: Google reCAPTCHA response token (required when CAPTCHA is triggered)
+        type: string
       email:
         type: string
       password:
@@ -364,6 +710,10 @@ definitions:
       access_token:
         description: '#nosec G101,G117 -- This is a DTO field, not a hardcoded credential'
         type: string
+      password_expired:
+        description: true when the password has expired; no tokens are issued in this
+          case
+        type: boolean
       refresh_token:
         description: '#nosec G101,G117 -- This is a DTO field, not a hardcoded credential'
         type: string
@@ -389,6 +739,10 @@ definitions:
     type: object
   dto.MagicLinkVerifyRequest:
     properties:
+      app_id:
+        description: 'optional: overrides the X-App-ID header for multi-app token
+          disambiguation'
+        type: string
       token:
         description: '#nosec G101 -- This is a DTO field, not a hardcoded credential'
         type: string
@@ -417,6 +771,166 @@ definitions:
       redirect_url:
         type: string
       updated_at:
+        type: string
+    type: object
+  dto.OIDCClientResponse:
+    properties:
+      allowed_grant_types:
+        type: string
+      allowed_scopes:
+        type: string
+      app_id:
+        type: string
+      client_id:
+        type: string
+      client_secret:
+        description: '#nosec G101 -- only present on create/rotate'
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      is_confidential:
+        type: boolean
+      logo_url:
+        type: string
+      name:
+        type: string
+      pkce_required:
+        type: boolean
+      redirect_uris:
+        type: string
+      require_consent:
+        type: boolean
+      updated_at:
+        type: string
+    type: object
+  dto.OIDCDiscoveryDocument:
+    properties:
+      authorization_endpoint:
+        type: string
+      claims_supported:
+        items:
+          type: string
+        type: array
+      code_challenge_methods_supported:
+        items:
+          type: string
+        type: array
+      end_session_endpoint:
+        type: string
+      grant_types_supported:
+        items:
+          type: string
+        type: array
+      id_token_signing_alg_values_supported:
+        items:
+          type: string
+        type: array
+      introspection_endpoint:
+        type: string
+      issuer:
+        type: string
+      jwks_uri:
+        type: string
+      response_types_supported:
+        items:
+          type: string
+        type: array
+      revocation_endpoint:
+        type: string
+      scopes_supported:
+        items:
+          type: string
+        type: array
+      subject_types_supported:
+        items:
+          type: string
+        type: array
+      token_endpoint:
+        type: string
+      token_endpoint_auth_methods_supported:
+        items:
+          type: string
+        type: array
+      userinfo_endpoint:
+        type: string
+    type: object
+  dto.OIDCIntrospectResponse:
+    properties:
+      active:
+        type: boolean
+      aud:
+        items:
+          type: string
+        type: array
+      client_id:
+        type: string
+      exp:
+        type: integer
+      iat:
+        type: integer
+      iss:
+        type: string
+      scope:
+        type: string
+      sub:
+        type: string
+      token_type:
+        type: string
+    type: object
+  dto.OIDCTokenErrorResponse:
+    properties:
+      error:
+        type: string
+      error_description:
+        type: string
+    type: object
+  dto.OIDCTokenResponse:
+    properties:
+      access_token:
+        description: '#nosec G101 -- DTO field'
+        type: string
+      expires_in:
+        description: seconds
+        type: integer
+      id_token:
+        description: '#nosec G101 -- DTO field'
+        type: string
+      refresh_token:
+        description: '#nosec G101 -- DTO field'
+        type: string
+      scope:
+        type: string
+      token_type:
+        description: always "Bearer"
+        type: string
+    type: object
+  dto.OIDCUserInfoResponse:
+    properties:
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      family_name:
+        type: string
+      given_name:
+        type: string
+      locale:
+        type: string
+      name:
+        type: string
+      picture:
+        type: string
+      roles:
+        items:
+          type: string
+        type: array
+      sub:
         type: string
     type: object
   dto.PaginationResponse:
@@ -535,6 +1049,13 @@ definitions:
         type: string
       resource:
         type: string
+    type: object
+  dto.PhoneStatusResponse:
+    properties:
+      phone_number:
+        type: string
+      verified:
+        type: boolean
     type: object
   dto.RefreshTokenRequest:
     properties:
@@ -697,6 +1218,36 @@ definitions:
       updated_at:
         type: string
     type: object
+  dto.ToggleWebhookRequest:
+    properties:
+      is_active:
+        example: true
+        type: boolean
+    type: object
+  dto.TrustedDeviceResponse:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      ip_address:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      user_agent:
+        type: string
+    type: object
+  dto.TrustedDevicesListResponse:
+    properties:
+      devices:
+        items:
+          $ref: '#/definitions/dto.TrustedDeviceResponse'
+        type: array
+    type: object
   dto.TwoFADisableRequest:
     properties:
       code:
@@ -717,8 +1268,14 @@ definitions:
     properties:
       code:
         type: string
+      device_name:
+        description: Human-readable label for the trusted device
+        type: string
       recovery_code:
         type: string
+      remember_device:
+        description: When true, create a trusted device record
+        type: boolean
       temp_token:
         type: string
     required:
@@ -733,6 +1290,8 @@ definitions:
       email_2fa_enabled:
         type: boolean
       passkey_enabled:
+        type: boolean
+      sms_enabled:
         type: boolean
       totp_enabled:
         type: boolean
@@ -754,6 +1313,8 @@ definitions:
         description: '"totp" or "email" - indicates which 2FA method the user has
           configured'
         type: string
+      requires_2fa:
+        type: boolean
       temp_token:
         type: string
     type: object
@@ -799,6 +1360,30 @@ definitions:
         items:
           $ref: '#/definitions/dto.EmailTypeVariableResponse'
         type: array
+    type: object
+  dto.UpdateOIDCClientRequest:
+    properties:
+      allowed_grant_types:
+        type: string
+      allowed_scopes:
+        type: string
+      description:
+        type: string
+      is_active:
+        type: boolean
+      is_confidential:
+        type: boolean
+      logo_url:
+        type: string
+      name:
+        maxLength: 100
+        type: string
+      pkce_required:
+        type: boolean
+      redirect_uris:
+        type: string
+      require_consent:
+        type: boolean
     type: object
   dto.UpdatePasswordRequest:
     properties:
@@ -868,6 +1453,73 @@ definitions:
     - provider
     - redirect_url
     type: object
+  dto.UserExportItem:
+    properties:
+      app_id:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      first_name:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      last_name:
+        type: string
+      locale:
+        type: string
+      name:
+        type: string
+      social_providers:
+        description: comma-separated, e.g. "google,github"
+        type: string
+      two_fa_enabled:
+        type: boolean
+      two_fa_method:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  dto.UserExportResponse:
+    properties:
+      count:
+        type: integer
+      data:
+        items:
+          $ref: '#/definitions/dto.UserExportItem'
+        type: array
+      exported_at:
+        type: string
+      truncated:
+        type: boolean
+    type: object
+  dto.UserImportResult:
+    properties:
+      errors:
+        items:
+          $ref: '#/definitions/dto.UserImportRowError'
+        type: array
+      imported:
+        type: integer
+      skipped:
+        type: integer
+      total:
+        type: integer
+    type: object
+  dto.UserImportRowError:
+    properties:
+      email:
+        type: string
+      error:
+        type: string
+      row:
+        type: integer
+    type: object
   dto.UserResponse:
     properties:
       created_at:
@@ -915,6 +1567,130 @@ definitions:
       user_id:
         type: string
     type: object
+  dto.VerifyPhoneRequest:
+    properties:
+      code:
+        example: "123456"
+        type: string
+    required:
+    - code
+    type: object
+  dto.WebhookDeliveryListResponse:
+    properties:
+      deliveries:
+        items:
+          $ref: '#/definitions/dto.WebhookDeliveryResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 100
+        type: integer
+    type: object
+  dto.WebhookDeliveryResponse:
+    properties:
+      app_id:
+        example: 00000000-0000-0000-0000-000000000001
+        type: string
+      attempt:
+        example: 1
+        type: integer
+      created_at:
+        example: "2024-01-01T00:00:00Z"
+        type: string
+      endpoint_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      error_message:
+        type: string
+      event_type:
+        example: user.registered
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      latency_ms:
+        example: 120
+        type: integer
+      next_retry_at:
+        example: "2024-01-01T00:05:00Z"
+        type: string
+      response_body:
+        example: ok
+        type: string
+      status_code:
+        example: 200
+        type: integer
+      success:
+        example: true
+        type: boolean
+    type: object
+  dto.WebhookEndpointListResponse:
+    properties:
+      endpoints:
+        items:
+          $ref: '#/definitions/dto.WebhookEndpointResponse'
+        type: array
+      page:
+        example: 1
+        type: integer
+      page_size:
+        example: 20
+        type: integer
+      total:
+        example: 5
+        type: integer
+    type: object
+  dto.WebhookEndpointResponse:
+    properties:
+      app_id:
+        example: 00000000-0000-0000-0000-000000000001
+        type: string
+      created_at:
+        example: "2024-01-01T00:00:00Z"
+        type: string
+      event_type:
+        example: user.registered
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      updated_at:
+        example: "2024-01-01T00:00:00Z"
+        type: string
+      url:
+        example: https://your-app.com/webhooks/auth
+        type: string
+    type: object
+  oidc.JWK:
+    properties:
+      alg:
+        type: string
+      e:
+        type: string
+      kid:
+        type: string
+      kty:
+        type: string
+      "n":
+        type: string
+      use:
+        type: string
+    type: object
+  oidc.JWKS:
+    properties:
+      keys:
+        items:
+          $ref: '#/definitions/oidc.JWK'
+        type: array
+    type: object
   twofa.TwoFASetupResponse:
     properties:
       qr_code_data:
@@ -943,6 +1719,209 @@ info:
   title: Authentication and Authorization API
   version: 1.1.0
 paths:
+  /2fa/backup-email:
+    delete:
+      description: Remove the backup email address from the user account
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Remove backup email
+      tags:
+      - 2FA
+    post:
+      consumes:
+      - application/json
+      description: Register a secondary email address for 2FA recovery (sends verification
+        email)
+      parameters:
+      - description: Backup email
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.AddBackupEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Add backup email
+      tags:
+      - 2FA
+  /2fa/backup-email/disable:
+    post:
+      description: Disable backup-email-based 2FA for the authenticated user. No verification
+        code required — authentication alone is sufficient.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Disable backup email 2FA
+      tags:
+      - 2FA
+  /2fa/backup-email/enable:
+    post:
+      description: Enable backup-email-based 2FA for the authenticated user. The backup
+        email must already be verified.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TwoFAEnableResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Enable backup email 2FA
+      tags:
+      - 2FA
+  /2fa/backup-email/resend:
+    post:
+      consumes:
+      - application/json
+      description: Resend a new 2FA verification code to the user's backup email during
+        login
+      parameters:
+      - description: Temporary login token
+        in: body
+        name: resend
+        required: true
+        schema:
+          properties:
+            temp_token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Resend backup email 2FA code
+      tags:
+      - 2FA
+  /2fa/backup-email/status:
+    get:
+      description: Return the current backup email address and whether it is verified
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.BackupEmailStatusResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get backup email status
+      tags:
+      - 2FA
+  /2fa/backup-email/verify:
+    get:
+      description: Confirm a backup email using the token from the verification email
+      parameters:
+      - description: Verification token
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Verify backup email
+      tags:
+      - 2FA
   /2fa/disable:
     post:
       consumes:
@@ -1253,6 +2232,152 @@ paths:
       summary: Generate new recovery codes
       tags:
       - 2FA
+  /2fa/sms/enable:
+    post:
+      description: Enable SMS-based 2FA for the user (phone number must be verified
+        first)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TwoFAEnableResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Enable SMS-based 2FA
+      tags:
+      - 2FA
+  /2fa/sms/resend:
+    post:
+      consumes:
+      - application/json
+      description: Resend a new SMS 2FA verification code to the user's phone during
+        login
+      parameters:
+      - description: Temporary login token
+        in: body
+        name: resend
+        required: true
+        schema:
+          properties:
+            temp_token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Resend SMS 2FA code
+      tags:
+      - 2FA
+  /2fa/trusted-devices:
+    delete:
+      description: Revoke all trusted devices for the authenticated user in the current
+        app
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Revoke all trusted devices
+      tags:
+      - 2FA
+    get:
+      description: List all trusted devices for the authenticated user in the current
+        app
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TrustedDevicesListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: List trusted devices
+      tags:
+      - 2FA
+  /2fa/trusted-devices/{id}:
+    delete:
+      description: Revoke a specific trusted device by ID
+      parameters:
+      - description: Trusted device UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Revoke a trusted device
+      tags:
+      - 2FA
   /2fa/verify-setup:
     post:
       consumes:
@@ -1406,6 +2531,56 @@ paths:
       summary: Get available event types
       tags:
       - Activity Logs
+  /activity-logs/export:
+    get:
+      description: Export the authenticated user's activity logs as CSV or JSON (max
+        10,000 rows). Use the X-Export-Truncated response header to detect if the
+        result was capped.
+      parameters:
+      - description: 'Export format: csv or json (default: json)'
+        enum:
+        - csv
+        - json
+        in: query
+        name: format
+        type: string
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Start date filter (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date filter (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      - text/csv
+      responses:
+        "200":
+          description: CSV export
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Export user activity logs
+      tags:
+      - Activity Logs
   /admin/activity-logs:
     get:
       description: Retrieve all users' activity logs with pagination and filtering
@@ -1462,6 +2637,55 @@ paths:
       summary: Get all activity logs (Admin)
       tags:
       - Activity Logs
+  /admin/activity-logs/export:
+    get:
+      description: Export all users' activity logs as CSV or JSON (max 10,000 rows).
+        Use the X-Export-Truncated response header to detect if the result was capped.
+      parameters:
+      - description: 'Export format: csv or json (default: json)'
+        enum:
+        - csv
+        - json
+        in: query
+        name: format
+        type: string
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Start date filter (YYYY-MM-DD)
+        in: query
+        name: start_date
+        type: string
+      - description: End date filter (YYYY-MM-DD)
+        in: query
+        name: end_date
+        type: string
+      produces:
+      - application/json
+      - text/csv
+      responses:
+        "200":
+          description: CSV export
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Export all activity logs (Admin)
+      tags:
+      - Activity Logs
   /admin/apps:
     post:
       consumes:
@@ -1494,6 +2718,126 @@ paths:
       summary: Create a new application
       tags:
       - Admin
+  /admin/apps/{app_id}/webhook-deliveries:
+    get:
+      description: Get paginated delivery history for all webhook endpoints of an
+        application
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookDeliveryListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List all delivery logs for an app (admin)
+      tags:
+      - Webhooks
+  /admin/apps/{app_id}/webhooks:
+    get:
+      description: Returns all webhook endpoints registered for the given application
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookEndpointListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List webhook endpoints for an app (admin)
+      tags:
+      - Webhooks
+    post:
+      consumes:
+      - application/json
+      description: Register a new webhook endpoint for an application. Returns the
+        secret only once.
+      parameters:
+      - description: Application ID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Webhook endpoint details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.CreateWebhookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create webhook endpoint (admin)
+      tags:
+      - Webhooks
   /admin/apps/{id}:
     get:
       consumes:
@@ -1694,6 +3038,230 @@ paths:
       summary: Send test email (app-scoped)
       tags:
       - Admin - Email
+  /admin/apps/{id}/ip-rules:
+    get:
+      description: Retrieve all IP access rules (allow/block) for a specific application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: false
+        description: Include inactive rules
+        in: query
+        name: include_inactive
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.IPRuleListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List IP rules for an application
+      tags:
+      - Admin - IP Rules
+    post:
+      consumes:
+      - application/json
+      description: Add a new IP access rule (allow or block) for a specific application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP rule data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.IPRuleCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.IPRuleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create an IP rule
+      tags:
+      - Admin - IP Rules
+  /admin/apps/{id}/ip-rules/{rule_id}:
+    delete:
+      description: Remove an IP access rule by its ID
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP Rule ID
+        in: path
+        name: rule_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete an IP rule
+      tags:
+      - Admin - IP Rules
+    get:
+      description: Retrieve a specific IP access rule by its ID
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP Rule ID
+        in: path
+        name: rule_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.IPRuleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get an IP rule
+      tags:
+      - Admin - IP Rules
+    put:
+      consumes:
+      - application/json
+      description: Update an existing IP access rule by its ID
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP Rule ID
+        in: path
+        name: rule_id
+        required: true
+        type: string
+      - description: Updated IP rule data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.IPRuleUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.IPRuleResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Update an IP rule
+      tags:
+      - Admin - IP Rules
+  /admin/apps/{id}/ip-rules/check:
+    post:
+      consumes:
+      - application/json
+      description: Evaluate whether a specific IP address is allowed to access an
+        application based on its IP rules
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: IP address to check
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.IPAccessCheckRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.IPAccessCheckResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Check IP access
+      tags:
+      - Admin - IP Rules
   /admin/apps/{id}/oauth-config:
     post:
       consumes:
@@ -2297,6 +3865,151 @@ paths:
       summary: List well-known email template variables
       tags:
       - Admin - Email
+  /admin/oidc/apps/{id}/clients:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.OIDCClientResponse'
+            type: array
+      security:
+      - AdminApiKey: []
+      summary: List OIDC clients for an app
+      tags:
+      - Admin OIDC
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateOIDCClientRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.OIDCClientResponse'
+      security:
+      - AdminApiKey: []
+      summary: Create an OIDC client
+      tags:
+      - Admin OIDC
+  /admin/oidc/apps/{id}/clients/{cid}:
+    delete:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client UUID
+        in: path
+        name: cid
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - AdminApiKey: []
+      summary: Delete an OIDC client
+      tags:
+      - Admin OIDC
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client UUID
+        in: path
+        name: cid
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCClientResponse'
+      security:
+      - AdminApiKey: []
+      summary: Get a single OIDC client
+      tags:
+      - Admin OIDC
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client UUID
+        in: path
+        name: cid
+        required: true
+        type: string
+      - description: Update data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.UpdateOIDCClientRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCClientResponse'
+      security:
+      - AdminApiKey: []
+      summary: Update an OIDC client
+      tags:
+      - Admin OIDC
+  /admin/oidc/apps/{id}/clients/{cid}/rotate-secret:
+    post:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client UUID
+        in: path
+        name: cid
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCClientResponse'
+      security:
+      - AdminApiKey: []
+      summary: Rotate client secret
+      tags:
+      - Admin OIDC
   /admin/rbac/permissions:
     get:
       description: Retrieve all available permissions in the system
@@ -2765,6 +4478,543 @@ paths:
       summary: Create a new tenant
       tags:
       - Admin
+  /admin/users/{id}/trusted-devices:
+    delete:
+      description: Removes all trusted devices for a user, forcing full 2FA on all
+        devices
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Revoke all trusted devices for a user
+      tags:
+      - Admin
+    get:
+      description: Returns all trusted devices registered by a specific user across
+        all apps
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.TrustedDevicesListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List trusted devices for a user
+      tags:
+      - Admin
+  /admin/users/{id}/trusted-devices/{device_id}:
+    delete:
+      description: Removes a specific trusted device, forcing the user to re-authenticate
+        with 2FA on that device
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Trusted Device UUID
+        in: path
+        name: device_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Revoke a trusted device
+      tags:
+      - Admin
+  /admin/users/export:
+    get:
+      description: |-
+        Export all users as CSV or JSON (max 10,000 rows). Optionally filter by app_id or search term.
+        Use the X-Export-Truncated response header to detect if the result was capped at 10,000 rows.
+      parameters:
+      - description: 'Export format: csv or json (default: csv)'
+        enum:
+        - csv
+        - json
+        in: query
+        name: format
+        type: string
+      - description: Filter by application UUID
+        in: query
+        name: app_id
+        type: string
+      - description: Filter by email or name (case-insensitive)
+        in: query
+        name: search
+        type: string
+      produces:
+      - application/json
+      - text/csv
+      responses:
+        "200":
+          description: CSV export
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Export users as CSV or JSON (Admin)
+      tags:
+      - Users
+  /admin/users/import:
+    post:
+      consumes:
+      - multipart/form-data
+      description: |-
+        Upload a CSV or JSON file to bulk-create users under a specific application.
+        The app_id query parameter is required. Duplicate emails are skipped and reported.
+        Imported users have no password — they must use the password reset flow to set one.
+        CSV expected columns: email (required), name, first_name, last_name, locale (all optional).
+        JSON: top-level array or {"users":[...]} object, same fields.
+      parameters:
+      - description: Target application UUID
+        in: query
+        name: app_id
+        required: true
+        type: string
+      - description: CSV or JSON file to import
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UserImportResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Bulk import users from CSV or JSON (Admin)
+      tags:
+      - Users
+  /admin/webhooks:
+    get:
+      description: Returns all registered webhook endpoints across all applications
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookEndpointListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List all webhook endpoints (admin)
+      tags:
+      - Webhooks
+  /admin/webhooks/{id}:
+    delete:
+      description: Soft-delete a webhook endpoint
+      parameters:
+      - description: Webhook Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Delete webhook endpoint (admin)
+      tags:
+      - Webhooks
+  /admin/webhooks/{id}/deliveries:
+    get:
+      description: Get paginated delivery history for a specific webhook endpoint
+      parameters:
+      - description: Webhook Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookDeliveryListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: List delivery logs for endpoint (admin)
+      tags:
+      - Webhooks
+  /admin/webhooks/{id}/toggle:
+    put:
+      consumes:
+      - application/json
+      description: Enable or disable a webhook endpoint
+      parameters:
+      - description: Webhook Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Active state
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ToggleWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Toggle webhook endpoint active state (admin)
+      tags:
+      - Webhooks
+  /app-config/{app_id}:
+    get:
+      description: Returns enabled social providers and OIDC availability for the
+        login/register UI
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AppLoginConfigResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get public login configuration for an app
+      tags:
+      - Public
+  /app/{id}/webhooks:
+    get:
+      description: Returns all webhook endpoints for this application
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookEndpointListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: List webhook endpoints (app API)
+      tags:
+      - Webhooks
+    post:
+      consumes:
+      - application/json
+      description: Register a new webhook endpoint for this application. Returns the
+        secret only once.
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Webhook endpoint details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.CreateWebhookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: Create webhook endpoint (app API)
+      tags:
+      - Webhooks
+  /app/{id}/webhooks/{endpoint_id}:
+    delete:
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Webhook Endpoint ID
+        in: path
+        name: endpoint_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: Delete webhook endpoint (app API)
+      tags:
+      - Webhooks
+  /app/{id}/webhooks/{endpoint_id}/deliveries:
+    get:
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Webhook Endpoint ID
+        in: path
+        name: endpoint_id
+        required: true
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.WebhookDeliveryListResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: List webhook delivery logs (app API)
+      tags:
+      - Webhooks
+  /app/{id}/webhooks/{endpoint_id}/toggle:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Application ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Webhook Endpoint ID
+        in: path
+        name: endpoint_id
+        required: true
+        type: string
+      - description: Active state
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ToggleWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AppApiKey: []
+      summary: Toggle webhook endpoint (app API)
+      tags:
+      - Webhooks
   /auth/facebook/callback:
     get:
       description: Handles Facebook OAuth2 callback and returns JWT tokens
@@ -3172,6 +5422,24 @@ paths:
       summary: Request password reset
       tags:
       - Auth
+  /health:
+    get:
+      description: Checks the connectivity and latency of PostgreSQL, Redis, and SMTP.
+        Returns 200 when all configured components are up, 503 when any are down.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.HealthResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/dto.HealthResponse'
+      summary: System health check
+      tags:
+      - Health
   /login:
     post:
       consumes:
@@ -3200,13 +5468,17 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
         "401":
-          description: Unauthorized
+          description: May include retry_after (seconds) advisory field
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
-        "429":
-          description: Too Many Requests
+        "403":
+          description: CAPTCHA verification required
           schema:
-            $ref: '#/definitions/dto.ErrorResponse'
+            $ref: '#/definitions/dto.CaptchaRequiredResponse'
+        "423":
+          description: Account is locked
+          schema:
+            $ref: '#/definitions/dto.AccountLockedResponse'
         "500":
           description: Internal Server Error
           schema:
@@ -3328,6 +5600,252 @@ paths:
       summary: Verify a magic link token and log in
       tags:
       - Auth
+  /metrics:
+    get:
+      description: Exposes application and runtime metrics in Prometheus exposition
+        format. Requires Admin API Key authentication.
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: Prometheus text format metrics
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - AdminApiKey: []
+      summary: Prometheus metrics
+      tags:
+      - Health
+  /oidc/{app_id}/.well-known/jwks.json:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/oidc.JWKS'
+      summary: JWKS endpoint
+      tags:
+      - OIDC
+  /oidc/{app_id}/.well-known/openid-configuration:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCDiscoveryDocument'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: OIDC discovery document
+      tags:
+      - OIDC
+  /oidc/{app_id}/authorize:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Must be 'code'
+        in: query
+        name: response_type
+        required: true
+        type: string
+      - description: OIDC client ID
+        in: query
+        name: client_id
+        required: true
+        type: string
+      - description: Registered redirect URI
+        in: query
+        name: redirect_uri
+        required: true
+        type: string
+      - description: Requested scopes (must include 'openid')
+        in: query
+        name: scope
+        required: true
+        type: string
+      - description: Opaque state value
+        in: query
+        name: state
+        type: string
+      - description: Nonce
+        in: query
+        name: nonce
+        type: string
+      - description: PKCE code challenge
+        in: query
+        name: code_challenge
+        type: string
+      - description: PKCE method (S256)
+        in: query
+        name: code_challenge_method
+        type: string
+      responses: {}
+      summary: OIDC authorization endpoint
+      tags:
+      - OIDC
+    post:
+      responses: {}
+      summary: OIDC authorize form submit
+      tags:
+      - OIDC
+  /oidc/{app_id}/end_session:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Previously-issued ID token
+        in: query
+        name: id_token_hint
+        type: string
+      - description: URI to redirect to after logout
+        in: query
+        name: post_logout_redirect_uri
+        type: string
+      - description: Opaque value returned with redirect
+        in: query
+        name: state
+        type: string
+      responses:
+        "200":
+          description: OK
+        "302":
+          description: Found
+      summary: OIDC RP-Initiated Logout
+      tags:
+      - OIDC
+  /oidc/{app_id}/introspect:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCIntrospectResponse'
+      summary: OIDC token introspection (RFC 7662)
+      tags:
+      - OIDC
+  /oidc/{app_id}/revoke:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      - description: Token to revoke
+        in: formData
+        name: token
+        required: true
+        type: string
+      - description: access_token or refresh_token
+        in: formData
+        name: token_type_hint
+        type: string
+      - description: Client ID (confidential clients)
+        in: formData
+        name: client_id
+        type: string
+      - description: Client secret (confidential clients)
+        in: formData
+        name: client_secret
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.OIDCTokenErrorResponse'
+      summary: OIDC token revocation (RFC 7009)
+      tags:
+      - OIDC
+  /oidc/{app_id}/token:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCTokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.OIDCTokenErrorResponse'
+      summary: OIDC token endpoint
+      tags:
+      - OIDC
+  /oidc/{app_id}/userinfo:
+    get:
+      parameters:
+      - description: Application UUID
+        in: path
+        name: app_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.OIDCUserInfoResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: OIDC userinfo endpoint
+      tags:
+      - OIDC
   /passkey/login/begin:
     post:
       description: Start a passwordless login ceremony using discoverable credentials
@@ -3533,6 +6051,115 @@ paths:
       summary: Rename a passkey
       tags:
       - Passkeys
+  /phone:
+    delete:
+      description: Remove the phone number from the user account
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Remove phone number
+      tags:
+      - 2FA
+    post:
+      consumes:
+      - application/json
+      description: Register a phone number for SMS 2FA (sends verification SMS)
+      parameters:
+      - description: Phone number
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.AddPhoneRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Add phone number
+      tags:
+      - 2FA
+  /phone/status:
+    get:
+      description: Return the current phone number and whether it is verified
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.PhoneStatusResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get phone number status
+      tags:
+      - 2FA
+  /phone/verify:
+    post:
+      consumes:
+      - application/json
+      description: Confirm a phone number using the code from the verification SMS
+      parameters:
+      - description: Verification code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.VerifyPhoneRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Verify phone number
+      tags:
+      - 2FA
   /profile:
     delete:
       consumes:

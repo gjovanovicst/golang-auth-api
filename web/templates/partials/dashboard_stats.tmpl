@@ -81,5 +81,35 @@
             </div>
         </div>
     </div>
+    <div class="col-sm-6 col-xl">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="rounded-3 p-3 me-3" style="background-color: rgba(13, 202, 240, 0.1);">
+                        <i class="bi bi-phone fs-4" style="color: #0dcaf0;"></i>
+                    </div>
+                    <div>
+                        <h6 class="text-muted mb-0 small">Verified Phones</h6>
+                        <h4 class="mb-0 fw-bold">{{.VerifiedPhoneCount}}</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-xl">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex align-items-center">
+                    <div class="rounded-3 p-3 me-3" style="background-color: rgba(25, 135, 84, 0.1);">
+                        <i class="bi bi-device-hdd fs-4" style="color: #198754;"></i>
+                    </div>
+                    <div>
+                        <h6 class="text-muted mb-0 small">Trusted Devices</h6>
+                        <h4 class="mb-0 fw-bold">{{.TrustedDeviceCount}}</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 {{end}}

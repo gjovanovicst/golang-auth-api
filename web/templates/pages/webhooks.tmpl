@@ -1,0 +1,126 @@
+{{define "webhooks"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Webhooks{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-broadcast me-2"></i>Webhooks
+    </h4>
+    <div class="d-flex align-items-center gap-3">
+        <!-- App filter dropdown (populated via HTMX list) -->
+        <div class="d-flex align-items-center gap-2">
+            <label for="appFilter" class="form-label mb-0 small text-muted text-nowrap">Filter by App:</label>
+            <select class="form-select form-select-sm" id="appFilter" name="app_id" style="min-width: 200px;">
+                <option value="">All Applications</option>
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm"
+                hx-get="/gui/webhooks/new"
+                hx-target="#webhook-form-container"
+                hx-swap="innerHTML">
+            <i class="bi bi-plus-lg me-1"></i>Register Webhook
+        </button>
+    </div>
+</div>
+
+<!-- Form container (populated by HTMX when creating) -->
+<div id="webhook-form-container" class="mb-3"></div>
+
+<!-- Webhook created notification container (shows the secret once) -->
+<div id="webhook-created-container" class="mb-3"></div>
+
+<!-- Webhook table (loaded via HTMX) -->
+<div id="webhook-table"
+     hx-get="/gui/webhooks/list?page=1"
+     hx-trigger="load, webhookListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading webhooks...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteWebhookModal" tabindex="-1" aria-labelledby="deleteWebhookModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteWebhookModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Webhook Endpoint
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-webhook-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Deliveries modal -->
+<div class="modal fade" id="webhookDeliveriesModal" tabindex="-1" aria-labelledby="webhookDeliveriesModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="webhookDeliveriesModalLabel">
+                    <i class="bi bi-list-check me-2"></i>Delivery History
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="webhook-deliveries-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close delete modal after successful deletion and refresh list
+    document.body.addEventListener('webhookDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteWebhookModal'));
+        if (modal) modal.hide();
+        htmx.trigger(document.body, 'webhookListRefresh');
+    });
+
+    // Populate app filter once the list loads (reads data-apps attribute from the card inside webhook-table)
+    document.body.addEventListener('htmx:afterSettle', function(evt) {
+        if (evt.detail.target && evt.detail.target.id === 'webhook-table') {
+            var table = document.getElementById('webhook-table');
+            var card = table ? table.querySelector('[data-apps]') : null;
+            var appsJson = card ? card.getAttribute('data-apps') : null;
+            if (appsJson) {
+                try {
+                    var apps = JSON.parse(appsJson);
+                    var sel = document.getElementById('appFilter');
+                    // Keep existing options (All Applications)
+                    while (sel.options.length > 1) sel.remove(1);
+                    apps.forEach(function(app) {
+                        var opt = document.createElement('option');
+                        opt.value = app.id;
+                        opt.text = app.name + ' (' + app.tenant_name + ')';
+                        sel.appendChild(opt);
+                    });
+                } catch(e) {}
+            }
+        }
+    });
+
+    // Filter by app
+    document.getElementById('appFilter').addEventListener('change', function() {
+        var appID = this.value;
+        var url = '/gui/webhooks/list?page=1';
+        if (appID) url += '&app_id=' + appID;
+        htmx.ajax('GET', url, {target: '#webhook-table', swap: 'innerHTML'});
+    });
+</script>
+{{end}}

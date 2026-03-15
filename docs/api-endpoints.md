@@ -8,6 +8,15 @@ For detailed request/response schemas, see [API.md](API.md).
 
 ---
 
+## Health & Metrics
+
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| `/health` | GET | Liveness check — database, Redis, and SMTP reachability | No |
+| `/metrics` | GET | Prometheus metrics (request counters, system info) | Admin API Key |
+
+---
+
 ## Admin API
 
 | Endpoint | Method | Description | Auth |
@@ -20,6 +29,50 @@ For detailed request/response schemas, see [API.md](API.md).
 | `/admin/oauth-providers/:app_id` | GET | List OAuth providers for app | Admin |
 | `/admin/oauth-providers/:id` | PUT | Update OAuth provider config | Admin |
 | `/admin/oauth-providers/:id` | DELETE | Delete OAuth provider config | Admin |
+| `/admin/users/export` | GET | Export all users as CSV | Admin |
+| `/admin/users/import` | POST | Bulk-import users from CSV | Admin |
+| `/admin/users/:id/trusted-devices` | GET | List trusted devices for a user | Admin |
+| `/admin/users/:id/trusted-devices` | DELETE | Revoke all trusted devices for a user | Admin |
+| `/admin/activity-logs/export` | GET | Export activity logs as CSV | Admin |
+
+### IP Rules (per application)
+
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| `/admin/apps/:id/ip-rules` | GET | List IP rules for an application | Admin |
+| `/admin/apps/:id/ip-rules` | POST | Create an IP rule (CIDR or country) | Admin |
+| `/admin/apps/:id/ip-rules/:rule_id` | GET | Get a specific IP rule | Admin |
+| `/admin/apps/:id/ip-rules/:rule_id` | PUT | Update an IP rule | Admin |
+| `/admin/apps/:id/ip-rules/:rule_id` | DELETE | Delete an IP rule | Admin |
+| `/admin/apps/:id/ip-rules/check` | POST | Test whether an IP is allowed | Admin |
+
+### Webhooks
+
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| `/admin/webhooks` | GET | List all webhook endpoints (all apps) | Admin |
+| `/admin/webhooks/apps/:app_id` | GET | List webhook endpoints for an app | Admin |
+| `/admin/webhooks/apps/:app_id` | POST | Create a webhook endpoint | Admin |
+| `/admin/webhooks/:id/toggle` | PUT | Enable or disable a webhook endpoint | Admin |
+| `/admin/webhooks/:id` | DELETE | Delete a webhook endpoint | Admin |
+| `/admin/webhooks/:id/deliveries` | GET | List delivery history for a webhook | Admin |
+| `/admin/webhooks/apps/:app_id/deliveries` | GET | List all deliveries for an app | Admin |
+| `/app/:id/webhooks` | GET | List webhook endpoints (App API Key) | App API Key |
+| `/app/:id/webhooks` | POST | Create a webhook endpoint (App API Key) | App API Key |
+| `/app/:id/webhooks/:wid/toggle` | PUT | Toggle a webhook endpoint (App API Key) | App API Key |
+| `/app/:id/webhooks/:wid` | DELETE | Delete a webhook endpoint (App API Key) | App API Key |
+| `/app/:id/webhooks/:wid/deliveries` | GET | List delivery history (App API Key) | App API Key |
+
+### OIDC Client Management
+
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| `/admin/oidc/apps/:id/clients` | GET | List OIDC relying-party clients | Admin |
+| `/admin/oidc/apps/:id/clients` | POST | Register a new OIDC client | Admin |
+| `/admin/oidc/apps/:id/clients/:cid` | GET | Get OIDC client details | Admin |
+| `/admin/oidc/apps/:id/clients/:cid` | PUT | Update OIDC client | Admin |
+| `/admin/oidc/apps/:id/clients/:cid` | DELETE | Delete OIDC client | Admin |
+| `/admin/oidc/apps/:id/clients/:cid/rotate-secret` | POST | Rotate client secret | Admin |
 
 ---
 
@@ -42,12 +95,41 @@ For detailed request/response schemas, see [API.md](API.md).
 
 | Endpoint | Method | Description | Auth |
 |----------|--------|-------------|------|
-| `/2fa/generate` | POST | Generate 2FA secret and QR code | Yes |
-| `/2fa/verify-setup` | POST | Verify initial 2FA setup | Yes |
-| `/2fa/enable` | POST | Enable 2FA and get recovery codes | Yes |
-| `/2fa/disable` | POST | Disable 2FA | Yes |
+| `/2fa/generate` | POST | Generate TOTP secret and QR code | Yes |
+| `/2fa/verify-setup` | POST | Verify initial TOTP setup | Yes |
+| `/2fa/enable` | POST | Enable TOTP 2FA and get recovery codes | Yes |
+| `/2fa/disable` | POST | Disable TOTP 2FA | Yes |
 | `/2fa/login-verify` | POST | Verify 2FA code during login | No |
 | `/2fa/recovery-codes` | POST | Generate new recovery codes | Yes |
+| `/2fa/methods` | GET | Get available 2FA methods for the app | No |
+| `/2fa/email/enable` | POST | Enable email-based 2FA | Yes |
+| `/2fa/email/resend` | POST | Resend email 2FA code during login | No |
+| `/2fa/trusted-devices` | GET | List trusted devices | Yes |
+| `/2fa/trusted-devices/:id` | DELETE | Revoke a trusted device | Yes |
+| `/2fa/trusted-devices` | DELETE | Revoke all trusted devices | Yes |
+
+### SMS / Phone 2FA
+
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| `/phone` | POST | Add/update phone number | Yes |
+| `/phone/verify` | POST | Verify phone number with OTP | Yes |
+| `/phone` | DELETE | Remove phone number | Yes |
+| `/phone/status` | GET | Get phone number status | Yes |
+| `/2fa/sms/enable` | POST | Enable SMS-based 2FA | Yes |
+| `/2fa/sms/resend` | POST | Resend SMS 2FA code during login | No |
+
+### Backup Email 2FA
+
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| `/2fa/backup-email` | POST | Add or update backup email address | Yes |
+| `/2fa/backup-email` | DELETE | Remove backup email address | Yes |
+| `/2fa/backup-email/status` | GET | Get backup email status | Yes |
+| `/2fa/backup-email/enable` | POST | Enable backup email as 2FA method | Yes |
+| `/2fa/backup-email/disable` | POST | Disable backup email 2FA | Yes |
+| `/2fa/backup-email/resend` | POST | Resend backup email 2FA code during login | No |
+| `/2fa/backup-email/verify` | GET | Verify backup email address via link | No |
 
 ---
 
@@ -163,7 +245,38 @@ For detailed request/response schemas, see [API.md](API.md).
 | `/activity-logs` | GET | Get user's activity logs (paginated) | Yes |
 | `/activity-logs/:id` | GET | Get specific activity log | Yes |
 | `/activity-logs/event-types` | GET | Get available event types | Yes |
-| `/admin/activity-logs` | GET | Get all users' logs (admin) | Yes |
+| `/activity-logs/export` | GET | Export user's activity logs as CSV | Yes |
+| `/admin/activity-logs` | GET | Get all users' logs (admin) | Admin |
+| `/admin/activity-logs/export` | GET | Export all activity logs as CSV | Admin |
+
+---
+
+## App Configuration
+
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| `/app-config/:app_id` | GET | Get public login configuration for an app (branding, 2FA flags, enabled providers) | No |
+
+---
+
+## OIDC Provider
+
+> **Requires `OIDC_ENABLED=true`** on the application. Routes are mounted under `/oidc/:app_id/`.
+
+| Endpoint | Method | Description | Auth |
+|----------|--------|-------------|------|
+| `/.well-known/openid-configuration` | GET | Global OIDC discovery document redirect | No |
+| `/oidc/:app_id/.well-known/openid-configuration` | GET | OIDC discovery document | No |
+| `/oidc/:app_id/.well-known/jwks.json` | GET | JSON Web Key Set (RS256 public key) | No |
+| `/oidc/:app_id/authorize` | GET | Authorization endpoint (login UI) | No |
+| `/oidc/:app_id/authorize` | POST | Submit authorization form | No |
+| `/oidc/:app_id/token` | POST | Token endpoint (code exchange, refresh, client_credentials) | No |
+| `/oidc/:app_id/userinfo` | GET | UserInfo endpoint | Bearer token |
+| `/oidc/:app_id/userinfo` | POST | UserInfo endpoint | Bearer token |
+| `/oidc/:app_id/introspect` | POST | Token introspection | Client credentials |
+| `/oidc/:app_id/revoke` | POST | Token revocation | Client credentials |
+| `/oidc/:app_id/end_session` | GET | End session (logout) | No |
+| `/oidc/:app_id/end_session` | POST | End session (logout) | No |
 
 ---
 
@@ -230,4 +343,26 @@ For detailed request/response schemas, see [API.md](API.md).
 3. User authorizes on provider's site
 4. GET /auth/{provider}/link/callback --> Provider redirects back
 5. Social account is linked to existing user
+```
+
+### SMS 2FA
+
+```
+1. POST /phone                 --> Register phone number
+2. POST /phone/verify          --> Verify phone with OTP
+3. POST /2fa/sms/enable        --> Enable SMS 2FA
+4. POST /login                 --> Returns temporary token (if 2FA enabled)
+5. POST /2fa/login-verify      --> Submit SMS OTP code --> Get full JWT tokens
+   (or POST /2fa/sms/resend   --> Resend SMS code if not received)
+```
+
+### OIDC Authorization Code Flow
+
+```
+1. GET /oidc/:app_id/authorize --> Redirect to hosted login UI
+2. User authenticates (credentials, social, passkey, magic link)
+3. POST /oidc/:app_id/authorize --> Submit credentials, receive redirect with ?code=
+4. POST /oidc/:app_id/token     --> Exchange code for access_token + id_token + refresh_token
+5. GET  /oidc/:app_id/userinfo  --> Fetch user claims with access token
+6. POST /oidc/:app_id/end_session --> Logout and revoke session
 ```

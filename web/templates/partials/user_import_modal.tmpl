@@ -1,0 +1,96 @@
+{{define "user_import_modal"}}
+<div class="modal-header border-0">
+    <h5 class="modal-title">
+        <i class="bi bi-upload me-2"></i>Import Users
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+</div>
+<form hx-post="/gui/users/import"
+      hx-encoding="multipart/form-data"
+      hx-target="#import-result-container"
+      hx-swap="innerHTML"
+      hx-on::after-request="if(event.detail.successful && document.querySelector('#import-result-container .alert-success')) htmx.trigger(document.body, 'userImportComplete')">
+    <div class="modal-body">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="app_id"     value="{{.AppID}}">
+
+        <p class="text-muted small mb-3">
+            Upload a <strong>CSV</strong> or <strong>JSON</strong> file to bulk-create users.
+            Imported users will have no password and must use the <strong>password reset</strong> flow to set one.
+        </p>
+
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">CSV format</label>
+            <div class="bg-body-secondary rounded p-2 font-monospace small text-muted">
+                email,name,first_name,last_name,locale<br>
+                alice@example.com,Alice Smith,Alice,Smith,en<br>
+                bob@example.com,Bob Jones,Bob,Jones,
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label small fw-semibold">JSON format</label>
+            <div class="bg-body-secondary rounded p-2 font-monospace small text-muted">
+                [{"email":"alice@example.com","name":"Alice Smith"}, ...]
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label small fw-semibold" for="importFile">
+                Select file <span class="text-danger">*</span>
+            </label>
+            <input type="file" class="form-control form-control-sm" id="importFile"
+                   name="file" accept=".csv,.json" required>
+            <div class="form-text">Accepted formats: .csv, .json — Maximum size: 10 MB</div>
+        </div>
+
+        {{if not .AppID}}
+        <div class="alert alert-warning py-2 small">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            No application selected. Please close this dialog, select an application from the filter, and try again.
+        </div>
+        {{end}}
+
+        <!-- Import result area (populated after upload) -->
+        <div id="import-result-container"></div>
+    </div>
+    <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-sm" {{if not .AppID}}disabled{{end}}>
+            <i class="bi bi-upload me-1"></i>Upload &amp; Import
+        </button>
+    </div>
+</form>
+{{end}}
+
+{{define "user_import_result"}}
+<div class="alert {{if .HasErrors}}alert-warning{{else}}alert-success{{end}} py-2 mb-0 small">
+    {{if .HasErrors}}
+        <i class="bi bi-exclamation-triangle me-1"></i>
+    {{else}}
+        <i class="bi bi-check-circle me-1"></i>
+    {{end}}
+    <strong>Import complete:</strong>
+    {{.Result.Imported}} imported,
+    {{.Result.Skipped}} skipped
+    {{if gt .Result.Total 0}}
+    <span class="text-muted">({{.Result.Total}} rows processed)</span>
+    {{end}}
+</div>
+{{if .Result.Errors}}
+<div class="mt-2">
+    <p class="small text-muted mb-1 fw-semibold">Row details:</p>
+    <div style="max-height: 200px; overflow-y: auto;">
+        <ul class="small mb-0 list-unstyled">
+            {{range .Result.Errors}}
+            <li class="py-1 border-bottom">
+                <span class="badge bg-secondary bg-opacity-10 text-secondary me-1">Row {{.Row}}</span>
+                {{if .Email}}<code class="me-1">{{.Email}}</code>{{end}}
+                <span class="text-muted">{{.Error}}</span>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+</div>
+{{end}}
+{{end}}

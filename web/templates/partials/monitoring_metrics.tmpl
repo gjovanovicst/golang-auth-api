@@ -1,0 +1,108 @@
+{{define "monitoring_metrics"}}
+<div class="row g-3">
+
+    <!-- Auth Metrics -->
+    <div class="col-lg-8">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-body-tertiary border-bottom">
+                <h6 class="mb-0 fw-bold">
+                    <i class="bi bi-shield-check me-2"></i>Authentication Metrics
+                    <small class="text-muted fw-normal ms-2">(since process start)</small>
+                </h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <tbody>
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">
+                                <i class="bi bi-check-circle text-success me-2"></i>Login Successes
+                            </td>
+                            <td class="pe-3 py-2 text-end fw-bold">{{printf "%.0f" .LoginSuccessTotal}}</td>
+                        </tr>
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">
+                                <i class="bi bi-x-circle text-danger me-2"></i>Login Failures (total)
+                            </td>
+                            <td class="pe-3 py-2 text-end fw-bold">{{printf "%.0f" .LoginFailureTotal}}</td>
+                        </tr>
+                        {{range $reason, $count := .LoginFailureByReason}}
+                        <tr class="">
+                            <td class="ps-4 py-1 text-muted small">
+                                <i class="bi bi-arrow-return-right me-2"></i>{{$reason}}
+                            </td>
+                            <td class="pe-3 py-1 text-end text-muted small">{{printf "%.0f" $count}}</td>
+                        </tr>
+                        {{end}}
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">
+                                <i class="bi bi-person-plus text-primary me-2"></i>Registrations
+                            </td>
+                            <td class="pe-3 py-2 text-end fw-bold">{{printf "%.0f" .RegistrationTotal}}</td>
+                        </tr>
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">
+                                <i class="bi bi-box-arrow-right text-secondary me-2"></i>Logouts
+                            </td>
+                            <td class="pe-3 py-2 text-end fw-bold">{{printf "%.0f" .LogoutTotal}}</td>
+                        </tr>
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">
+                                <i class="bi bi-broadcast text-info me-2"></i>Active Sessions
+                            </td>
+                            <td class="pe-3 py-2 text-end fw-bold">{{printf "%.0f" .ActiveSessions}}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Infrastructure / Runtime -->
+    <div class="col-lg-4">
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-body-tertiary border-bottom">
+                <h6 class="mb-0 fw-bold">
+                    <i class="bi bi-database me-2"></i>DB Connection Pool
+                </h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">Open</td>
+                            <td class="pe-3 py-2 text-end fw-bold">{{printf "%.0f" .DBOpenConns}}</td>
+                        </tr>
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">In Use</td>
+                            <td class="pe-3 py-2 text-end fw-bold text-warning">{{printf "%.0f" .DBInUseConns}}</td>
+                        </tr>
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">Idle</td>
+                            <td class="pe-3 py-2 text-end fw-bold text-success">{{printf "%.0f" .DBIdleConns}}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-body-tertiary border-bottom">
+                <h6 class="mb-0 fw-bold">
+                    <i class="bi bi-cpu me-2"></i>Go Runtime
+                </h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                        <tr>
+                            <td class="ps-3 py-2 text-muted small">Goroutines</td>
+                            <td class="pe-3 py-2 text-end fw-bold">{{printf "%.0f" .Goroutines}}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+{{end}}

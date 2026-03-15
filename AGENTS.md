@@ -12,6 +12,42 @@ This guide provides comprehensive instructions for AI coding agents working on t
 
 ---
 
+## Session Startup — Load Skills Before Exploring
+
+This project has **OpenCode skills** that give you instant context about the codebase. **Always load relevant skills before exploring files manually.** This saves significant time and avoids redundant discovery.
+
+### First action in every session
+
+Load the **`project-map`** skill immediately. It contains the full module inventory, dependency graph, file paths, and architecture overview:
+
+```
+skill("project-map")
+```
+
+### Before working in a specific domain
+
+Load the relevant skill **before** reading source files:
+
+| Task area | Skill to load | What it covers |
+|---|---|---|
+| Routes, endpoints, middleware | `route-map` | All 200+ HTTP routes, auth layers, rate limits, handler mappings |
+| Database models, migrations | `data-model` | All 17 GORM models, fields, relationships, indexes, ER diagram |
+| Auth, JWT, login, 2FA, sessions | `auth-flows` | 4 auth systems, token lifecycle, RBAC, session management |
+| Email, templates, SMTP | `email-system` | Template resolution chain, 3 rendering engines, variable pipeline |
+| Admin GUI, HTMX templates | `admin-gui` | HTMX GUI structure, template rendering, CRUD patterns, CSRF |
+
+### Example workflow
+
+```
+1. skill("project-map")        — Understand overall structure
+2. skill("auth-flows")         — Deep dive into auth before modifying login
+3. Read specific files as needed — Now you know exactly which files to open
+```
+
+**Do NOT spend time grepping or globbing to discover the codebase structure when a skill already provides that information.**
+
+---
+
 ## Build, Lint, Test Commands
 
 ### Development

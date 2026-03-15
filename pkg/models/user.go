@@ -9,22 +9,37 @@ import (
 
 // User represents the core user entity in our system
 type User struct {
-	ID                 uuid.UUID       `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	AppID              uuid.UUID       `gorm:"type:uuid;not null;default:'00000000-0000-0000-0000-000000000001';index;uniqueIndex:idx_email_app_id" json:"app_id"`
-	Email              string          `gorm:"uniqueIndex:idx_email_app_id;not null" json:"email"`
-	PasswordHash       string          `gorm:"" json:"-"` // Stored hashed, not exposed via JSON - not required for social logins
-	EmailVerified      bool            `gorm:"default:false" json:"email_verified"`
-	IsActive           bool            `gorm:"default:true" json:"is_active"`
-	Name               string          `gorm:"" json:"name"`            // Full name from social login or user input
-	FirstName          string          `gorm:"" json:"first_name"`      // First name from social login
-	LastName           string          `gorm:"" json:"last_name"`       // Last name from social login
-	ProfilePicture     string          `gorm:"" json:"profile_picture"` // Profile picture URL from social login
-	Locale             string          `gorm:"" json:"locale"`          // User's locale/language preference
-	TwoFAEnabled       bool            `gorm:"default:false" json:"two_fa_enabled"`
-	TwoFAMethod        string          `gorm:"type:varchar(20);default:''" json:"two_fa_method"` // User's chosen 2FA method: "totp" or "email"
-	TwoFASecret        string          `gorm:"" json:"-"`                                        // Stored encrypted, not exposed via JSON
-	TwoFARecoveryCodes datatypes.JSON  `gorm:"type:jsonb" json:"-"`                              // Stored encrypted, not exposed via JSON
-	CreatedAt          time.Time       `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt          time.Time       `gorm:"autoUpdateTime" json:"updated_at"`
-	SocialAccounts     []SocialAccount `gorm:"foreignKey:UserID" json:"social_accounts"` // One-to-many relationship
+	ID                 uuid.UUID      `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	AppID              uuid.UUID      `gorm:"type:uuid;not null;default:'00000000-0000-0000-0000-000000000001';index;uniqueIndex:idx_email_app_id" json:"app_id"`
+	Email              string         `gorm:"uniqueIndex:idx_email_app_id;not null" json:"email"`
+	PasswordHash       string         `gorm:"" json:"-"` // Stored hashed, not exposed via JSON - not required for social logins
+	EmailVerified      bool           `gorm:"default:false" json:"email_verified"`
+	IsActive           bool           `gorm:"default:true" json:"is_active"`
+	Name               string         `gorm:"" json:"name"`            // Full name from social login or user input
+	FirstName          string         `gorm:"" json:"first_name"`      // First name from social login
+	LastName           string         `gorm:"" json:"last_name"`       // Last name from social login
+	ProfilePicture     string         `gorm:"" json:"profile_picture"` // Profile picture URL from social login
+	Locale             string         `gorm:"" json:"locale"`          // User's locale/language preference
+	TwoFAEnabled       bool           `gorm:"default:false" json:"two_fa_enabled"`
+	TwoFAMethod        string         `gorm:"type:varchar(20);default:''" json:"two_fa_method"` // User's chosen 2FA method: "totp" or "email"
+	TwoFASecret        string         `gorm:"" json:"-"`                                        // Stored encrypted, not exposed via JSON
+	TwoFARecoveryCodes datatypes.JSON `gorm:"type:jsonb" json:"-"`                              // Stored encrypted, not exposed via JSON
+	// Backup email for 2FA recovery (separate from login email)
+	BackupEmail         string `gorm:"type:varchar(255);default:''" json:"backup_email,omitempty"`
+	BackupEmailVerified bool   `gorm:"default:false" json:"backup_email_verified"`
+	// Previous 2FA method/secret saved when switching to backup_email 2FA so it can be restored on disable
+	TwoFAPreviousMethod string `gorm:"type:varchar(20);default:''" json:"-"`
+	TwoFAPreviousSecret string `gorm:"type:text;default:''" json:"-"`
+	// Phone number for SMS-based recovery
+	PhoneNumber   string     `gorm:"type:varchar(30);default:''" json:"phone_number,omitempty"`
+	PhoneVerified bool       `gorm:"default:false" json:"phone_verified"`
+	LockedAt      *time.Time `gorm:"" json:"locked_at,omitempty"`                               // When the account was locked (nil = not locked)
+	LockReason    string     `gorm:"type:varchar(255);default:''" json:"lock_reason,omitempty"` // Reason for lockout (e.g., "Too many failed login attempts")
+	LockExpiresAt *time.Time `gorm:"" json:"lock_expires_at,omitempty"`                         // When the lockout expires (nil = permanent until admin unlock)
+	// Password history and expiry tracking
+	PasswordHistory   datatypes.JSON  `gorm:"type:jsonb;default:'[]'" json:"-"`      // Array of previous bcrypt hashes (for history enforcement)
+	PasswordChangedAt *time.Time      `gorm:"" json:"password_changed_at,omitempty"` // When the password was last changed (nil = never changed)
+	CreatedAt         time.Time       `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time       `gorm:"autoUpdateTime" json:"updated_at"`
+	SocialAccounts    []SocialAccount `gorm:"foreignKey:UserID" json:"social_accounts"` // One-to-many relationship
 }

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    ".cursor/rules/project-structure.mdc",
+    ".cursor/rules/code-patterns.mdc",
+    ".cursor/rules/api-development.mdc",
+    ".cursor/rules/security-patterns.mdc",
+    ".cursor/rules/development-workflow.mdc",
+    ".cursor/rules/commit-messages.mdc"
+  ]
+}

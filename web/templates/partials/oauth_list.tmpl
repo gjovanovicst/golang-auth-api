@@ -4,7 +4,7 @@
         {{if .Configs}}
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
-                <thead class="table-light">
+                <thead class="">
                     <tr>
                         <th class="ps-3">Provider</th>
                         <th>Application</th>
@@ -24,7 +24,7 @@
                             {{else if eq .Provider "facebook"}}
                             <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-facebook me-1"></i>Facebook</span>
                             {{else if eq .Provider "github"}}
-                            <span class="badge bg-dark bg-opacity-10 text-dark"><i class="bi bi-github me-1"></i>GitHub</span>
+                            <span class="badge bg-secondary bg-opacity-10 text-body"><i class="bi bi-github me-1"></i>GitHub</span>
                             {{else}}
                             <span class="badge bg-secondary bg-opacity-10 text-secondary">{{.Provider}}</span>
                             {{end}}
@@ -82,7 +82,7 @@
 
         <!-- Pagination -->
         {{if gt .TotalPages 1}}
-        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+        <div class="card-footer bg-body-tertiary border-top d-flex align-items-center justify-content-between">
             <small class="text-muted">
                 Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
             </small>

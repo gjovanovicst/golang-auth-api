@@ -1,6 +1,6 @@
 {{define "user_sessions"}}
 <div class="card border-0 shadow-sm mb-3">
-    <div class="card-header bg-white d-flex align-items-center justify-content-between">
+    <div class="card-header bg-body-tertiary d-flex align-items-center justify-content-between">
         <h6 class="mb-0 fw-bold">
             <i class="bi bi-broadcast me-2"></i>Active Sessions
             {{if .Sessions}}
@@ -21,18 +21,19 @@
         {{if .Sessions}}
         <div class="table-responsive">
             <table class="table table-sm table-hover align-middle mb-0">
-                <thead class="table-light">
+                <thead class="">
                     <tr>
                         <th class="ps-3">IP Address</th>
                         <th>User Agent</th>
                         <th>Created</th>
                         <th>Last Active</th>
+                        <th>Status</th>
                         <th class="pe-3 text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {{range .Sessions}}
-                    <tr>
+                    <tr{{if eq .Status "stale"}} class="table-secondary text-muted"{{end}}>
                         <td class="ps-3">
                             <small class="font-monospace">{{if .IP}}{{.IP}}{{else}}-{{end}}</small>
                         </td>
@@ -47,6 +48,15 @@
                         </td>
                         <td class="text-nowrap">
                             <small class="text-muted">{{.LastActiveFormatted}}</small>
+                        </td>
+                        <td>
+                            {{if eq .Status "active"}}
+                            <span class="badge bg-success">Active</span>
+                            {{else if eq .Status "idle"}}
+                            <span class="badge bg-warning text-dark">Idle</span>
+                            {{else}}
+                            <span class="badge bg-secondary">Stale</span>
+                            {{end}}
                         </td>
                         <td class="pe-3 text-end">
                             <button class="btn btn-outline-danger btn-sm"

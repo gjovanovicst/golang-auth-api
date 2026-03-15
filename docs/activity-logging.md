@@ -10,11 +10,11 @@ For the complete implementation details, see [Activity Logging Guide](features/A
 
 | Severity | Events | Retention | Always Logged |
 |----------|--------|-----------|---------------|
-| **Critical** | LOGIN, LOGOUT, PASSWORD_CHANGE, 2FA_ENABLE/DISABLE | 1 year | Yes |
-| **Important** | REGISTER, EMAIL_VERIFY, SOCIAL_LOGIN, PROFILE_UPDATE | 6 months | Yes |
-| **Informational** | TOKEN_REFRESH, PROFILE_ACCESS, PASSKEY_REGISTER, PASSKEY_DELETE, PASSKEY_LOGIN, MAGIC_LINK_REQUESTED, MAGIC_LINK_LOGIN, MAGIC_LINK_FAILED, EMAIL_VERIFY_RESEND, SOCIAL_ACCOUNT_LINKED, SOCIAL_ACCOUNT_UNLINKED | 3 months | Only on anomalies |
+| **Critical** | LOGIN, LOGOUT, PASSWORD_CHANGE, 2FA_ENABLE/DISABLE, ACCOUNT_LOCKED, ACCOUNT_UNLOCKED, OIDC_LOGIN | 1 year | Yes |
+| **Important** | REGISTER, EMAIL_VERIFY, SOCIAL_LOGIN, PROFILE_UPDATE, SMS_2FA_ENABLE/DISABLE, BACKUP_EMAIL_2FA_ENABLE/DISABLE, TRUSTED_DEVICE_ADDED, TRUSTED_DEVICE_REVOKED | 6 months | Yes |
+| **Informational** | TOKEN_REFRESH, PROFILE_ACCESS, PASSKEY_REGISTER, PASSKEY_DELETE, PASSKEY_LOGIN, MAGIC_LINK_REQUESTED, MAGIC_LINK_LOGIN, MAGIC_LINK_FAILED, EMAIL_VERIFY_RESEND, SOCIAL_ACCOUNT_LINKED, SOCIAL_ACCOUNT_UNLINKED, BRUTE_FORCE_ATTEMPT | 3 months | Only on anomalies |
 
-> **Note:** The new event types added for passkeys, magic link, social account linking, and email verification resend default to **Informational** severity. They are always enabled but follow the same anomaly detection rules as other informational events.
+> **Note:** New event types (SMS 2FA, backup email 2FA, trusted devices, OIDC login, account lock/unlock, brute-force attempts) follow the same severity rules. Critical and Important events are always logged; Informational events follow anomaly detection rules.
 
 ---
 
@@ -66,3 +66,14 @@ LOG_CLEANUP_INTERVAL=24h
 - [Activity Logging Guide](features/ACTIVITY_LOGGING_GUIDE.md) - Complete guide
 - [Quick Setup](features/QUICK_SETUP_LOGGING.md) - Quick setup instructions
 - [Smart Logging Reference](features/SMART_LOGGING_QUICK_REFERENCE.md) - Quick reference card
+
+---
+
+## Export
+
+Activity logs can be exported as CSV:
+
+- `GET /activity-logs/export` — Export the authenticated user's own logs (JWT auth)
+- `GET /admin/activity-logs/export` — Export all users' logs (Admin API Key)
+
+Both endpoints support the same query filters as the paginated list endpoints (date range, event type, severity, etc.).

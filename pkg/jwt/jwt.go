@@ -56,10 +56,24 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// GenerateAccessToken generates a new access token
-func GenerateAccessToken(appID, userID, sessionID string, roles []string) (string, error) {
+// DefaultAccessTokenTTL returns the configured global access token TTL.
+func DefaultAccessTokenTTL() time.Duration {
+	return time.Minute * time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES"))
+}
+
+// DefaultRefreshTokenTTL returns the configured global refresh token TTL.
+func DefaultRefreshTokenTTL() time.Duration {
+	return time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS"))
+}
+
+// GenerateAccessToken generates a new access token with an explicit TTL.
+// Pass 0 (or DefaultAccessTokenTTL()) to use the global configured value.
+func GenerateAccessToken(appID, userID, sessionID string, roles []string, ttl time.Duration) (string, error) {
 	loadSecret()
-	expirationTime := time.Now().Add(time.Minute * time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")))
+	if ttl <= 0 {
+		ttl = DefaultAccessTokenTTL()
+	}
+	expirationTime := time.Now().Add(ttl)
 	claims := &Claims{
 		UserID:    userID,
 		AppID:     appID,
@@ -75,10 +89,14 @@ func GenerateAccessToken(appID, userID, sessionID string, roles []string) (strin
 	return token.SignedString(jwtSecret)
 }
 
-// GenerateRefreshToken generates a new refresh token
-func GenerateRefreshToken(appID, userID, sessionID string, roles []string) (string, error) {
+// GenerateRefreshToken generates a new refresh token with an explicit TTL.
+// Pass 0 (or DefaultRefreshTokenTTL()) to use the global configured value.
+func GenerateRefreshToken(appID, userID, sessionID string, roles []string, ttl time.Duration) (string, error) {
 	loadSecret()
-	expirationTime := time.Now().Add(time.Hour * time.Duration(viper.GetInt("REFRESH_TOKEN_EXPIRATION_HOURS")))
+	if ttl <= 0 {
+		ttl = DefaultRefreshTokenTTL()
+	}
+	expirationTime := time.Now().Add(ttl)
 	claims := &Claims{
 		UserID:    userID,
 		AppID:     appID,

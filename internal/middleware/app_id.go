@@ -18,10 +18,12 @@ func AppIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
-		// Skip validation for Swagger documentation, Admin API routes, and GUI routes
+		// Skip validation for Swagger documentation, Admin API routes, GUI routes,
+		// and OIDC routes (OIDC routes carry app_id in URL path, not X-App-ID header)
 		if (len(path) >= 8 && path[:8] == "/swagger") ||
 			(len(path) >= 6 && path[:6] == "/admin") ||
-			(len(path) >= 4 && path[:4] == "/gui") {
+			(len(path) >= 4 && path[:4] == "/gui") ||
+			(len(path) >= 5 && path[:5] == "/oidc") {
 			c.Next()
 			return
 		}

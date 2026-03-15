@@ -4,7 +4,7 @@
         {{if .Users}}
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
-                <thead class="table-light">
+                <thead class="">
                     <tr>
                         <th class="ps-3">Email</th>
                         <th>Name</th>
@@ -48,6 +48,9 @@
                         </td>
                         <td class="text-center">
                             <span class="d-inline-flex gap-1 align-items-center">
+                                {{if .LockedAt}}
+                                <span class="badge bg-danger bg-opacity-10 text-danger" title="Account locked{{if .LockExpiresAt}} until {{formatDateTimeFull (deref .LockExpiresAt)}}{{end}}"><i class="bi bi-lock-fill"></i></span>
+                                {{end}}
                                 {{if .EmailVerified}}
                                 <span class="badge bg-info bg-opacity-10 text-info" title="Email verified"><i class="bi bi-envelope-check"></i></span>
                                 {{else}}
@@ -84,7 +87,7 @@
 
         <!-- Pagination -->
         {{if gt .TotalPages 1}}
-        <div class="card-footer bg-white border-top d-flex align-items-center justify-content-between">
+        <div class="card-footer bg-body-tertiary border-top d-flex align-items-center justify-content-between">
             <small class="text-muted">
                 Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
             </small>

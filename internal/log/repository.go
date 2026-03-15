@@ -98,3 +98,51 @@ func (r *Repository) GetActivityLogByID(id uuid.UUID) (*models.ActivityLog, erro
 	}
 	return &log, nil
 }
+
+// ExportUserActivityLogs retrieves activity logs for a specific user without pagination, capped at limit rows.
+func (r *Repository) ExportUserActivityLogs(userID uuid.UUID, limit int, eventType string, startDate, endDate *time.Time) ([]models.ActivityLog, error) {
+	var logs []models.ActivityLog
+
+	query := r.DB.Where("user_id = ?", userID)
+
+	if eventType != "" {
+		query = query.Where("event_type = ?", eventType)
+	}
+	if startDate != nil {
+		query = query.Where("timestamp >= ?", startDate)
+	}
+	if endDate != nil {
+		endOfDay := endDate.Add(24 * time.Hour)
+		query = query.Where("timestamp < ?", endOfDay)
+	}
+
+	if err := query.Order("timestamp DESC").Limit(limit).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+
+	return logs, nil
+}
+
+// ExportAllActivityLogs retrieves activity logs for all users without pagination, capped at limit rows.
+func (r *Repository) ExportAllActivityLogs(limit int, eventType string, startDate, endDate *time.Time) ([]models.ActivityLog, error) {
+	var logs []models.ActivityLog
+
+	query := r.DB.Model(&models.ActivityLog{})
+
+	if eventType != "" {
+		query = query.Where("event_type = ?", eventType)
+	}
+	if startDate != nil {
+		query = query.Where("timestamp >= ?", startDate)
+	}
+	if endDate != nil {
+		endOfDay := endDate.Add(24 * time.Hour)
+		query = query.Where("timestamp < ?", endOfDay)
+	}
+
+	if err := query.Order("timestamp DESC").Limit(limit).Find(&logs).Error; err != nil {
+		return nil, err
+	}
+
+	return logs, nil
+}

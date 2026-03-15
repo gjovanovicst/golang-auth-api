@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
@@ -78,11 +78,13 @@ func (s *Service) SendEmailWithContext(appID uuid.UUID, emailTypeCode string, to
 // SendVerificationEmail sends an email verification email.
 // The userID parameter enables auto-population of user profile variables in the template.
 func (s *Service) SendVerificationEmail(appID uuid.UUID, toEmail, token string, userID *uuid.UUID) error {
-	frontendURL := viper.GetString("FRONTEND_URL")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:8080"
+	// Load per-app verify_email_path so the link is configurable per application.
+	var app models.Application
+	if s.resolver.db != nil {
+		s.resolver.db.Select("frontend_url, verify_email_path").First(&app, "id = ?", appID)
 	}
-	verificationLink := fmt.Sprintf("%s/verify-email?token=%s", frontendURL, token)
+	verifyPath := util.ResolveLinkPath(app.VerifyEmailPath, util.DefaultVerifyEmailPath)
+	verificationLink := fmt.Sprintf("%s%s?token=%s", util.ResolveFrontendURL(app.FrontendURL), verifyPath, token)
 
 	return s.SendEmailWithContext(appID, TypeEmailVerification, toEmail, userID, map[string]string{
 		VarVerificationLink:  verificationLink,
@@ -134,6 +136,45 @@ func (s *Service) SendMagicLinkEmail(appID uuid.UUID, toEmail, magicLink string,
 	return s.SendEmailWithContext(appID, TypeMagicLink, toEmail, userID, map[string]string{
 		VarMagicLink:         magicLink,
 		VarExpirationMinutes: "10",
+	})
+}
+
+// SendNewDeviceLoginEmail sends a notification when a login is detected from a new device or location.
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendNewDeviceLoginEmail(appID uuid.UUID, toEmail string, userID *uuid.UUID, loginIP, loginLocation, loginDevice, loginTime string) error {
+	return s.SendEmailWithContext(appID, TypeNewDeviceLogin, toEmail, userID, map[string]string{
+		VarLoginIP:       loginIP,
+		VarLoginLocation: loginLocation,
+		VarLoginDevice:   loginDevice,
+		VarLoginTime:     loginTime,
+	})
+}
+
+// SendSuspiciousActivityEmail sends a security alert when suspicious activity is detected on an account.
+// The userID parameter enables auto-population of user profile variables in the template.
+func (s *Service) SendSuspiciousActivityEmail(appID uuid.UUID, toEmail string, userID *uuid.UUID, loginIP, loginLocation, loginDevice, loginTime, alertType, alertDetails string) error {
+	return s.SendEmailWithContext(appID, TypeSuspiciousActivity, toEmail, userID, map[string]string{
+		VarLoginIP:       loginIP,
+		VarLoginLocation: loginLocation,
+		VarLoginDevice:   loginDevice,
+		VarLoginTime:     loginTime,
+		VarAlertType:     alertType,
+		VarAlertDetails:  alertDetails,
+	})
+}
+
+// SendBackupEmailVerification sends a verification email to a user's pending backup email address.
+// The token is stored in Redis and expires after the given duration. The userID enables
+// auto-population of user profile variables in the template.
+func (s *Service) SendBackupEmailVerification(appID uuid.UUID, toBackupEmail, token string, userID *uuid.UUID) error {
+	frontendURL := s.resolver.resolveAppFrontendURL(appID)
+	verificationLink := fmt.Sprintf("%s/verify-backup-email?token=%s", frontendURL, token)
+
+	return s.SendEmailWithContext(appID, TypeBackupEmailVerification, toBackupEmail, userID, map[string]string{
+		VarVerificationLink:  verificationLink,
+		VarVerificationToken: token,
+		VarBackupEmail:       toBackupEmail,
+		VarExpirationMinutes: "30",
 	})
 }
 

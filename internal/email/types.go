@@ -11,6 +11,9 @@ const (
 	TypeAccountDeactivated = "account_deactivated"
 	TypePasswordChanged    = "password_changed"
 	TypeMagicLink          = "magic_link"
+	TypeNewDeviceLogin     = "new_device_login"
+	TypeSuspiciousActivity = "suspicious_activity"
+	TypeApiKeyExpiringSoon = "api_key_expiring_soon" // #nosec G101 -- email type code string, not a credential
 )
 
 // Template variable names used across email types
@@ -30,6 +33,18 @@ const (
 	VarExpirationMinutes = "expiration_minutes"
 	VarChangeTime        = "change_time"
 	VarMagicLink         = "magic_link"
+	VarLoginIP           = "login_ip"
+	VarLoginLocation     = "login_location"
+	VarLoginDevice       = "login_device"
+	VarLoginTime         = "login_time"
+	VarAlertType         = "alert_type"
+	VarAlertDetails      = "alert_details"
+	VarApiKeyName        = "api_key_name"
+	VarApiKeyPrefix      = "api_key_prefix"     // #nosec G101 -- template variable name string, not a credential
+	VarApiKeyType        = "api_key_type"       // #nosec G101 -- template variable name string, not a credential
+	VarApiKeyExpiresAt   = "api_key_expires_at" // #nosec G101 -- template variable name string, not a credential
+	VarDaysUntilExpiry   = "days_until_expiry"
+	VarBackupEmail       = "backup_email"
 )
 
 // WellKnownVariables is the registry of all variables the system can auto-resolve.
@@ -58,6 +73,22 @@ var WellKnownVariables = []models.EmailTypeVariable{
 	{Name: VarExpirationMinutes, Description: "Expiration time in minutes", Source: models.VarSourceExplicit},
 	{Name: VarChangeTime, Description: "Timestamp when the change occurred", Source: models.VarSourceExplicit},
 	{Name: VarMagicLink, Description: "Magic link login URL", Source: models.VarSourceExplicit},
+	{Name: VarLoginIP, Description: "IP address of the login attempt", Source: models.VarSourceExplicit},
+	{Name: VarLoginLocation, Description: "Geographic location of the login (e.g. city, country)", Source: models.VarSourceExplicit},
+	{Name: VarLoginDevice, Description: "Device/browser user-agent of the login", Source: models.VarSourceExplicit},
+	{Name: VarLoginTime, Description: "Timestamp of the login event", Source: models.VarSourceExplicit},
+	{Name: VarAlertType, Description: "Type of security alert (e.g. new_device, brute_force)", Source: models.VarSourceExplicit},
+	{Name: VarAlertDetails, Description: "Detailed description of the security alert", Source: models.VarSourceExplicit},
+
+	// API key expiry notification variables
+	{Name: VarApiKeyName, Description: "Name of the expiring API key", Source: models.VarSourceExplicit},
+	{Name: VarApiKeyPrefix, Description: "Display prefix of the expiring API key (e.g. ak_a1b2c3...)", Source: models.VarSourceExplicit},
+	{Name: VarApiKeyType, Description: "Type of the expiring API key (admin or app)", Source: models.VarSourceExplicit},
+	{Name: VarApiKeyExpiresAt, Description: "Formatted expiry date/time of the API key", Source: models.VarSourceExplicit},
+	{Name: VarDaysUntilExpiry, Description: "Number of days until the API key expires", Source: models.VarSourceExplicit},
+
+	// Backup email verification
+	{Name: VarBackupEmail, Description: "Backup email address being verified", Source: models.VarSourceExplicit},
 }
 
 // SMTPConfig holds the resolved SMTP configuration for sending emails.
@@ -83,7 +114,12 @@ type EmailData struct {
 
 // TwoFAMethod constants
 const (
-	TwoFAMethodTOTP    = "totp"
-	TwoFAMethodEmail   = "email"
-	TwoFAMethodPasskey = "passkey"
+	TwoFAMethodTOTP        = "totp"
+	TwoFAMethodEmail       = "email"
+	TwoFAMethodPasskey     = "passkey"
+	TwoFAMethodSMS         = "sms"
+	TwoFAMethodBackupEmail = "backup_email"
 )
+
+// TypeBackupEmailVerification is the email type code for backup email verification.
+const TypeBackupEmailVerification = "backup_email_verification"

@@ -154,3 +154,48 @@ LOG_CLEANUP_INTERVAL=24h
 ```
 
 For the complete logging configuration guide, see [Activity Logging](activity-logging.md).
+
+---
+
+## OIDC Provider
+
+Each application can be enabled as a standards-compliant OpenID Connect issuer. Set `OIDC_ENABLED=true` on the application record (via Admin API or GUI) to activate the OIDC endpoints for that app.
+
+```bash
+# Base URL used in OIDC issuer and discovery document
+PUBLIC_URL=https://auth.example.com
+
+# Token TTL overrides (optional — defaults to global JWT settings)
+OIDC_ID_TOKEN_EXPIRATION_MINUTES=60
+OIDC_AUTH_CODE_EXPIRATION_MINUTES=5
+```
+
+RSA key pairs for RS256 ID token signing are generated automatically per-application and stored in the database. No manual key management is required.
+
+---
+
+## GeoIP / IP Access Rules
+
+IP-based access rules (CIDR blocks, country allow/block lists) require a MaxMind GeoLite2 database file.
+
+```bash
+# Path to the MaxMind GeoLite2-City or GeoLite2-Country .mmdb file
+GEOIP_DB_PATH=/data/GeoLite2-City.mmdb
+```
+
+If `GEOIP_DB_PATH` is not set or the file does not exist, GeoIP lookups are skipped and country-based rules are ignored. CIDR rules continue to work without GeoIP.
+
+---
+
+## SMS / Twilio
+
+SMS-based 2FA requires a Twilio account.
+
+```bash
+SMS_PROVIDER=twilio               # Set to 'twilio' to enable SMS sending
+SMS_TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+SMS_TWILIO_AUTH_TOKEN=your_auth_token
+SMS_TWILIO_FROM_NUMBER=+15551234567   # Your Twilio phone number
+```
+
+If `SMS_PROVIDER` is empty or not set, SMS sending is disabled and the SMS 2FA option is unavailable.

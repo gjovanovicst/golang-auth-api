@@ -72,9 +72,13 @@ func AppApiKeyMiddleware(keyValidator web.ApiKeyValidator) gin.HandlerFunc {
 			return
 		}
 
-		// Update last_used_at asynchronously
+		// Update last_used_at and increment daily usage asynchronously
 		go keyValidator.UpdateApiKeyLastUsed(foundKey.ID)
+		go keyValidator.IncrementDailyUsage(foundKey.ID)
 
+		// Parse scopes and set on context
+		scopes := parseScopes(foundKey.Scopes)
+		c.Set(web.ApiKeyScopesKey, scopes)
 		c.Set(web.AuthTypeKey, web.AuthTypeApp)
 		c.Next()
 	}

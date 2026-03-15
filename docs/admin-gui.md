@@ -42,18 +42,22 @@ If the admin account has two-factor authentication enabled, a 2FA verification s
 | **Tenants** | Create, edit, delete tenant organizations |
 | **Applications** | Manage apps per tenant with flat list and tenant filter |
 | **OAuth Configs** | Configure OAuth providers per-app with inline toggle |
-| **Users** | Search users, view details, toggle active/inactive, view sessions, manage social accounts |
+| **Users** | Search users, view details, toggle active/inactive, unlock accounts, view sessions, manage social accounts and trusted devices, export/import CSV |
 | **Roles** | Create, edit, delete roles per application with permission assignment |
 | **Permissions** | Create and manage granular permissions (resource:action format) |
 | **User Roles** | Assign and revoke roles for users across applications |
 | **Sessions** | View all active sessions across users, revoke individual or bulk sessions |
-| **Activity Logs** | View and filter activity logs with inline detail |
-| **API Keys** | Manage admin and per-app API keys |
+| **Activity Logs** | View and filter activity logs with inline detail and CSV export |
+| **API Keys** | Manage admin and per-app API keys with scope and expiry configuration, view per-key daily usage |
 | **Email Servers** | Configure SMTP email servers per application |
 | **Email Templates** | Manage email templates with preview and reset to default |
 | **Email Types** | Configure email type settings |
+| **Webhooks** | Register and manage webhook endpoints per application, view delivery history |
+| **OIDC Clients** | Register and manage relying-party OIDC clients, rotate client secrets |
+| **IP Rules** | Define per-application CIDR/country allow-lists and block-lists, test IP access |
+| **Monitoring** | Live health check (database, Redis, SMTP) and Prometheus metrics summary |
 | **Settings** | View and override system settings |
-| **My Account** | Admin profile, 2FA setup, passkey management, magic link toggle |
+| **My Account** | Admin profile, 2FA setup, passkey management, backup email, magic link toggle, trusted devices |
 
 ---
 
@@ -65,8 +69,10 @@ The My Account page allows admin users to manage their own account:
 - **Change Password** -- Update the admin account password
 - **Two-Factor Authentication** -- Enable/disable TOTP or email-based 2FA, regenerate recovery codes
 - **Passkey Management** -- Register, rename, and delete FIDO2 passkeys for passwordless login
+- **Backup Email** -- Add or remove a backup email address for 2FA recovery
 - **Magic Link** -- Enable/disable magic link authentication for the admin account
 - **Social Accounts** -- View and unlink social accounts (when applicable)
+- **Trusted Devices** -- View and revoke trusted devices that bypass 2FA
 
 ---
 

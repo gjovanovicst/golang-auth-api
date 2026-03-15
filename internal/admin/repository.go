@@ -1,8 +1,12 @@
 package admin
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
+	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -254,23 +258,123 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 	return items, total, nil
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool) error {
+// BruteForceAppSettings holds per-application brute-force override values.
+// Nil pointers mean "clear override, use global default".
+type BruteForceAppSettings struct {
+	LockoutEnabled   *bool
+	LockoutThreshold *int
+	LockoutDurations *string
+	LockoutWindow    *string
+	LockoutTierTTL   *string
+	DelayEnabled     *bool
+	DelayStartAfter  *int
+	DelayMaxSeconds  *int
+	DelayTierTTL     *string
+	CaptchaEnabled   *bool
+	CaptchaSiteKey   *string
+	CaptchaSecretKey *string // empty string in form = keep existing; nil = clear override
+	CaptchaThreshold *int
+}
+
+// AppCustomizationSettings holds per-application branding, password policy, token TTL, and email link path fields.
+type AppCustomizationSettings struct {
+	// Login Page Branding
+	LoginLogoURL        string
+	LoginPrimaryColor   string
+	LoginSecondaryColor string
+	LoginDisplayName    string
+	// Password Policy
+	PwMinLength     int
+	PwMaxLength     int
+	PwRequireUpper  bool
+	PwRequireLower  bool
+	PwRequireDigit  bool
+	PwRequireSymbol bool
+	PwHistoryCount  int
+	PwMaxAgeDays    int
+	// Token TTL overrides (0 = use global defaults)
+	AccessTokenTTLMinutes int
+	RefreshTokenTTLHours  int
+	// Email Action Link Paths (empty = use system defaults)
+	ResetPasswordPath string
+	MagicLinkPath     string
+	VerifyEmailPath   string
+}
+
+func (r *Repository) UpdateApp(id string, name string, description string, frontendURL string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, bf BruteForceAppSettings, custom AppCustomizationSettings) error {
+	updates := map[string]interface{}{
+		"name":                  name,
+		"description":           description,
+		"frontend_url":          frontendURL,
+		"two_fa_issuer_name":    twoFAIssuerName,
+		"two_fa_enabled":        twoFAEnabled,
+		"two_fa_required":       twoFARequired,
+		"passkey2_fa_enabled":   passkey2FAEnabled,
+		"passkey_login_enabled": passkeyLoginEnabled,
+		"magic_link_enabled":    magicLinkEnabled,
+		"oidc_enabled":          oidcEnabled,
+		// Brute-force lockout overrides
+		"bf_lockout_enabled":   bf.LockoutEnabled,
+		"bf_lockout_threshold": bf.LockoutThreshold,
+		"bf_lockout_durations": bf.LockoutDurations,
+		"bf_lockout_window":    bf.LockoutWindow,
+		"bf_lockout_tier_ttl":  bf.LockoutTierTTL,
+		// Brute-force progressive delay overrides
+		"bf_delay_enabled":     bf.DelayEnabled,
+		"bf_delay_start_after": bf.DelayStartAfter,
+		"bf_delay_max_seconds": bf.DelayMaxSeconds,
+		"bf_delay_tier_ttl":    bf.DelayTierTTL,
+		// Brute-force CAPTCHA overrides
+		"bf_captcha_enabled":   bf.CaptchaEnabled,
+		"bf_captcha_site_key":  bf.CaptchaSiteKey,
+		"bf_captcha_threshold": bf.CaptchaThreshold,
+		// Login Page Branding
+		"login_logo_url":        custom.LoginLogoURL,
+		"login_primary_color":   custom.LoginPrimaryColor,
+		"login_secondary_color": custom.LoginSecondaryColor,
+		"login_display_name":    custom.LoginDisplayName,
+		// Password Policy
+		"pw_min_length":     custom.PwMinLength,
+		"pw_max_length":     custom.PwMaxLength,
+		"pw_require_upper":  custom.PwRequireUpper,
+		"pw_require_lower":  custom.PwRequireLower,
+		"pw_require_digit":  custom.PwRequireDigit,
+		"pw_require_symbol": custom.PwRequireSymbol,
+		"pw_history_count":  custom.PwHistoryCount,
+		"pw_max_age_days":   custom.PwMaxAgeDays,
+		// Token TTL overrides
+		"access_token_ttl_minutes": custom.AccessTokenTTLMinutes,
+		"refresh_token_ttl_hours":  custom.RefreshTokenTTLHours,
+		// Email Action Link Paths
+		"reset_password_path": custom.ResetPasswordPath,
+		"magic_link_path":     custom.MagicLinkPath,
+		"verify_email_path":   custom.VerifyEmailPath,
+	}
+
+	// Only update CAPTCHA secret key if explicitly provided (non-nil and non-empty).
+	// nil = clear override; non-nil empty string is not sent from the handler (it means "keep existing").
+	if bf.CaptchaSecretKey != nil {
+		updates["bf_captcha_secret_key"] = bf.CaptchaSecretKey
+	}
+
 	return r.DB.Model(&models.Application{}).
 		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"name":                  name,
-			"description":           description,
-			"two_fa_issuer_name":    twoFAIssuerName,
-			"two_fa_enabled":        twoFAEnabled,
-			"two_fa_required":       twoFARequired,
-			"passkey2_fa_enabled":   passkey2FAEnabled,
-			"passkey_login_enabled": passkeyLoginEnabled,
-			"magic_link_enabled":    magicLinkEnabled,
-		}).Error
+		Updates(updates).Error
 }
 
 func (r *Repository) DeleteApp(id string) error {
 	return r.DB.Where("id = ?", id).Delete(&models.Application{}).Error
+}
+
+// UpdateAppSMSTrustedDevice updates the SMS and trusted device settings for an application.
+func (r *Repository) UpdateAppSMSTrustedDevice(id string, sms2FAEnabled bool, trustedDeviceEnabled bool, trustedDeviceMaxDays int) error {
+	return r.DB.Model(&models.Application{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"sms2_fa_enabled":         sms2FAEnabled,
+			"trusted_device_enabled":  trustedDeviceEnabled,
+			"trusted_device_max_days": trustedDeviceMaxDays,
+		}).Error
 }
 
 // ListAllTenants returns all tenants (ID and Name only), ordered by name.
@@ -413,6 +517,51 @@ func (r *Repository) ToggleOAuthConfigEnabled(id string) (*models.OAuthProviderC
 	return &config, nil
 }
 
+// GetEnabledOAuthProviders returns the provider names (e.g. "google", "github") that
+// are configured and enabled for the given app. Used by the public /app-config endpoint.
+func (r *Repository) GetEnabledOAuthProviders(appID string) ([]string, error) {
+	var providers []string
+	err := r.DB.Model(&models.OAuthProviderConfig{}).
+		Where("app_id = ? AND is_enabled = true", appID).
+		Pluck("provider", &providers).Error
+	if err != nil {
+		return nil, err
+	}
+	return providers, nil
+}
+
+// HasActiveOIDCClients returns true if at least one active OIDC client exists for
+// the given app. Used by the public /app-config endpoint.
+func (r *Repository) HasActiveOIDCClients(appID string) (bool, error) {
+	var count int64
+	err := r.DB.Model(&models.OIDCClient{}).
+		Where("app_id = ? AND is_active = true", appID).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// GetFirstActiveOIDCClientLoginTheme returns the login_theme of the first active
+// OIDC client for the given app, or an empty string if none exists.
+// Used by the public /app-config endpoint so the frontend knows whether to send
+// a ?ui_theme= parameter when initiating the OIDC authorization flow.
+func (r *Repository) GetFirstActiveOIDCClientLoginTheme(appID string) (string, error) {
+	var client models.OIDCClient
+	err := r.DB.Select("login_theme").
+		Where("app_id = ? AND is_active = true", appID).
+		Order("created_at ASC").
+		First(&client).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return client.LoginTheme, nil
+}
+
 // AppWithTenant holds an application ID, name, and its tenant name for dropdown selects.
 type AppWithTenant struct {
 	ID         uuid.UUID
@@ -441,18 +590,20 @@ func (r *Repository) ListAllAppsWithTenantName() ([]AppWithTenant, error) {
 
 // UserListItem represents a user row in the admin GUI list view
 type UserListItem struct {
-	ID                 uuid.UUID `json:"id"`
-	Email              string    `json:"email"`
-	Name               string    `json:"name"`
-	AppID              uuid.UUID `json:"app_id"`
-	AppName            string    `json:"app_name"`
-	TenantName         string    `json:"tenant_name"`
-	IsActive           bool      `json:"is_active"`
-	EmailVerified      bool      `json:"email_verified"`
-	TwoFAEnabled       bool      `json:"two_fa_enabled"`
-	HasPassword        bool      `json:"has_password"`
-	SocialAccountCount int       `json:"social_account_count"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                 uuid.UUID  `json:"id"`
+	Email              string     `json:"email"`
+	Name               string     `json:"name"`
+	AppID              uuid.UUID  `json:"app_id"`
+	AppName            string     `json:"app_name"`
+	TenantName         string     `json:"tenant_name"`
+	IsActive           bool       `json:"is_active"`
+	EmailVerified      bool       `json:"email_verified"`
+	TwoFAEnabled       bool       `json:"two_fa_enabled"`
+	HasPassword        bool       `json:"has_password"`
+	SocialAccountCount int        `json:"social_account_count"`
+	LockedAt           *time.Time `json:"locked_at"`
+	LockExpiresAt      *time.Time `json:"lock_expires_at"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 // UserDetail represents a full user view with social accounts for the admin GUI detail panel
@@ -471,10 +622,18 @@ type UserDetail struct {
 	EmailVerified       bool                        `json:"email_verified"`
 	TwoFAEnabled        bool                        `json:"two_fa_enabled"`
 	HasPassword         bool                        `json:"has_password"`
+	BackupEmail         string                      `json:"backup_email"`
+	BackupEmailVerified bool                        `json:"backup_email_verified"`
+	PhoneNumber         string                      `json:"phone_number"`
+	PhoneVerified       bool                        `json:"phone_verified"`
+	LockedAt            *time.Time                  `json:"locked_at"`
+	LockReason          string                      `json:"lock_reason"`
+	LockExpiresAt       *time.Time                  `json:"lock_expires_at"`
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
 	SocialAccounts      []models.SocialAccount      `json:"social_accounts" gorm:"-"`
 	WebAuthnCredentials []models.WebAuthnCredential `json:"webauthn_credentials" gorm:"-"`
+	TrustedDevices      []models.TrustedDevice      `json:"trusted_devices" gorm:"-"`
 }
 
 // UserStatusCounts holds active/inactive user counts for dashboard display
@@ -518,6 +677,7 @@ func (r *Repository) ListUsersWithDetails(page, pageSize int, appID, search stri
 			users.is_active, users.email_verified, users.two_fa_enabled,
 			(users.password_hash != '') as has_password,
 			COALESCE(sa_count.count, 0) as social_account_count,
+			users.locked_at, users.lock_expires_at,
 			users.created_at`))
 
 	offset := (page - 1) * pageSize
@@ -539,6 +699,11 @@ func (r *Repository) GetUserDetailByID(id string) (*UserDetail, error) {
 			COALESCE(tenants.name, '') as tenant_name,
 			users.is_active, users.email_verified, users.two_fa_enabled,
 			(users.password_hash != '') as has_password,
+			COALESCE(users.backup_email, '') as backup_email,
+			users.backup_email_verified,
+			COALESCE(users.phone_number, '') as phone_number,
+			users.phone_verified,
+			users.locked_at, users.lock_reason, users.lock_expires_at,
 			users.created_at, users.updated_at`).
 		Joins("LEFT JOIN applications ON applications.id = users.app_id").
 		Joins("LEFT JOIN tenants ON tenants.id = applications.tenant_id").
@@ -585,6 +750,24 @@ func (r *Repository) ToggleUserActive(id string) (isActive bool, appID string, e
 	return newActive, user.AppID.String(), nil
 }
 
+// UnlockUser clears the lockout fields for a user and returns the user's email and app_id.
+func (r *Repository) UnlockUser(id string) (email string, appID string, err error) {
+	var user models.User
+	if err := r.DB.Select("id, email, app_id").First(&user, "id = ?", id).Error; err != nil {
+		return "", "", err
+	}
+
+	if err := r.DB.Model(&user).Updates(map[string]interface{}{
+		"locked_at":       nil,
+		"lock_reason":     "",
+		"lock_expires_at": nil,
+	}).Error; err != nil {
+		return "", "", err
+	}
+
+	return user.Email, user.AppID.String(), nil
+}
+
 // CountUsersByStatus returns the count of active and inactive users.
 func (r *Repository) CountUsersByStatus() (*UserStatusCounts, error) {
 	var counts UserStatusCounts
@@ -616,6 +799,15 @@ type ActivityLogListItem struct {
 	IsAnomaly bool      `json:"is_anomaly"`
 	Timestamp time.Time `json:"timestamp"`
 }
+
+// ActivityLogExportItem extends ActivityLogListItem with extra fields useful for compliance exports.
+type ActivityLogExportItem struct {
+	ActivityLogListItem
+	UserAgent string `json:"user_agent"`
+}
+
+// ExportActivityLogsMaxRows is the hard cap for admin GUI log exports.
+const ExportActivityLogsMaxRows = 10_000
 
 // ActivityLogDetail represents a full activity log view for the admin GUI detail panel.
 type ActivityLogDetail struct {
@@ -745,6 +937,60 @@ func (r *Repository) ListDistinctSeverities() ([]string, error) {
 	return severities, nil
 }
 
+// ExportActivityLogs returns up to ExportActivityLogsMaxRows activity log rows including UserAgent,
+// applying the same optional filters as ListActivityLogs (no pagination).
+// The caller should check whether len(result) == ExportActivityLogsMaxRows to detect truncation;
+// the method internally fetches ExportActivityLogsMaxRows+1 rows so the caller can detect it easily.
+func (r *Repository) ExportActivityLogs(eventType, severity, appID, search, startDate, endDate string) ([]ActivityLogExportItem, bool, error) {
+	var items []ActivityLogExportItem
+
+	applyFilters := func(q *gorm.DB) *gorm.DB {
+		q = q.Joins("LEFT JOIN users ON users.id = activity_logs.user_id::uuid").
+			Joins("LEFT JOIN applications ON applications.id = activity_logs.app_id::uuid")
+		if eventType != "" {
+			q = q.Where("activity_logs.event_type = ?", eventType)
+		}
+		if severity != "" {
+			q = q.Where("activity_logs.severity = ?", severity)
+		}
+		if appID != "" {
+			q = q.Where("activity_logs.app_id = ?", appID)
+		}
+		if search != "" {
+			q = q.Where("users.email ILIKE ?", "%"+search+"%")
+		}
+		if startDate != "" {
+			q = q.Where("activity_logs.timestamp >= ?", startDate)
+		}
+		if endDate != "" {
+			q = q.Where("activity_logs.timestamp <= ?", endDate+" 23:59:59")
+		}
+		return q
+	}
+
+	limit := ExportActivityLogsMaxRows + 1
+	dataQuery := applyFilters(r.DB.Model(&models.ActivityLog{}).
+		Select(`activity_logs.id, activity_logs.app_id,
+			COALESCE(applications.name, '') as app_name,
+			activity_logs.user_id,
+			COALESCE(users.email, '') as user_email,
+			activity_logs.event_type, activity_logs.severity,
+			activity_logs.ip_address, activity_logs.user_agent,
+			activity_logs.is_anomaly,
+			activity_logs.timestamp`))
+
+	if err := dataQuery.Order("activity_logs.timestamp desc").Limit(limit).Scan(&items).Error; err != nil {
+		return nil, false, err
+	}
+
+	truncated := len(items) > ExportActivityLogsMaxRows
+	if truncated {
+		items = items[:ExportActivityLogsMaxRows]
+	}
+
+	return items, truncated, nil
+}
+
 // ============================================================
 // API Key Operations (Admin GUI - full CRUD)
 // ============================================================
@@ -756,6 +1002,7 @@ type ApiKeyListItem struct {
 	Name       string     `json:"name"`
 	KeyPrefix  string     `json:"key_prefix"`
 	KeySuffix  string     `json:"key_suffix"`
+	Scopes     string     `json:"scopes"`
 	AppID      *uuid.UUID `json:"app_id"`
 	AppName    string     `json:"app_name"`
 	TenantName string     `json:"tenant_name"`
@@ -794,7 +1041,7 @@ func (r *Repository) ListApiKeys(page, pageSize int, keyType string) ([]ApiKeyLi
 	// Fetch paginated results
 	dataQuery := applyFilters(r.DB.Model(&models.ApiKey{}).
 		Select(`api_keys.id, api_keys.key_type, api_keys.name,
-			api_keys.key_prefix, api_keys.key_suffix,
+			api_keys.key_prefix, api_keys.key_suffix, api_keys.scopes,
 			api_keys.app_id, api_keys.expires_at,
 			api_keys.last_used_at, api_keys.is_revoked,
 			api_keys.created_at,
@@ -853,6 +1100,78 @@ func (r *Repository) FindActiveKeyByHash(keyHash string) (*models.ApiKey, error)
 func (r *Repository) UpdateApiKeyLastUsed(id uuid.UUID) {
 	// Fire-and-forget update; errors are non-critical
 	r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Update("last_used_at", time.Now())
+}
+
+// UpdateApiKeyScopes updates the name, description, and scopes for an existing key.
+func (r *Repository) UpdateApiKeyScopes(id string, name, description, scopes string) error {
+	return r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"scopes":      scopes,
+	}).Error
+}
+
+// GetKeysExpiringWithin returns all active (non-revoked) API keys expiring within `days` days.
+func (r *Repository) GetKeysExpiringWithin(days int) ([]models.ApiKey, error) {
+	var keys []models.ApiKey
+	cutoff := time.Now().UTC().Add(time.Duration(days) * 24 * time.Hour)
+	err := r.DB.Where(
+		"is_revoked = ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?",
+		false, time.Now().UTC(), cutoff,
+	).Find(&keys).Error
+	return keys, err
+}
+
+// MarkApiKeyNotified7Days sets the notified_7_days_at timestamp to now.
+func (r *Repository) MarkApiKeyNotified7Days(id uuid.UUID) error {
+	now := time.Now().UTC()
+	return r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Update("notified_7_days_at", now).Error
+}
+
+// MarkApiKeyNotified1Day sets the notified_1_day_at timestamp to now.
+func (r *Repository) MarkApiKeyNotified1Day(id uuid.UUID) error {
+	now := time.Now().UTC()
+	return r.DB.Model(&models.ApiKey{}).Where("id = ?", id).Update("notified_1_day_at", now).Error
+}
+
+// IncrementDailyUsage upserts a daily usage row for the given API key, incrementing the count by 1.
+// Uses PostgreSQL INSERT ... ON CONFLICT DO UPDATE for atomic upsert.
+func (r *Repository) IncrementDailyUsage(keyID uuid.UUID) {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	r.DB.Exec(`
+		INSERT INTO api_key_usages (api_key_id, period_date, request_count, updated_at)
+		VALUES (?, ?, 1, NOW())
+		ON CONFLICT (api_key_id, period_date)
+		DO UPDATE SET request_count = api_key_usages.request_count + 1, updated_at = NOW()
+	`, keyID, today)
+}
+
+// ApiKeyUsagePoint is a single data point for usage analytics (one day).
+type ApiKeyUsagePoint struct {
+	PeriodDate   time.Time `json:"period_date"`
+	RequestCount int64     `json:"request_count"`
+}
+
+// GetApiKeyUsageSummary returns daily usage data for a key over the last `days` days.
+func (r *Repository) GetApiKeyUsageSummary(keyID uuid.UUID, days int) ([]ApiKeyUsagePoint, error) {
+	var points []ApiKeyUsagePoint
+	since := time.Now().UTC().Truncate(24 * time.Hour).Add(-time.Duration(days-1) * 24 * time.Hour)
+	err := r.DB.Model(&models.ApiKeyUsage{}).
+		Select("period_date, request_count").
+		Where("api_key_id = ? AND period_date >= ?", keyID, since).
+		Order("period_date asc").
+		Scan(&points).Error
+	return points, err
+}
+
+// GetApiKeyTotalUsage returns the lifetime total request count for a key.
+func (r *Repository) GetApiKeyTotalUsage(keyID uuid.UUID) (int64, error) {
+	var total int64
+	err := r.DB.Model(&models.ApiKeyUsage{}).
+		Where("api_key_id = ?", keyID).
+		Select("COALESCE(SUM(request_count), 0)").
+		Scan(&total).Error
+	return total, err
 }
 
 // ============================================================
@@ -948,5 +1267,135 @@ func (r *Repository) GetAppNamesByIDs(appIDs []string) (map[string]string, error
 	for _, r := range rows {
 		result[r.ID] = r.Name
 	}
+	return result, nil
+}
+
+// ============================================================
+// User Export / Import Operations
+// ============================================================
+
+// ExportUsersMaxRows is the hard cap for user export operations.
+const ExportUsersMaxRows = 10_000
+
+// UserExportItem is a flat projection used for user export queries.
+// It maps directly to the SELECT columns in ExportUsers.
+type UserExportItem struct {
+	ID              uuid.UUID `json:"id"`
+	AppID           uuid.UUID `json:"app_id"`
+	Email           string    `json:"email"`
+	Name            string    `json:"name"`
+	FirstName       string    `json:"first_name"`
+	LastName        string    `json:"last_name"`
+	Locale          string    `json:"locale"`
+	EmailVerified   bool      `json:"email_verified"`
+	IsActive        bool      `json:"is_active"`
+	TwoFAEnabled    bool      `json:"two_fa_enabled"`
+	TwoFAMethod     string    `json:"two_fa_method"`
+	SocialProviders string    `json:"social_providers"` // STRING_AGG result, comma-separated
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// ExportUsers returns up to ExportUsersMaxRows user rows, applying optional
+// filters for appID and a text search on email/name.
+// It fetches ExportUsersMaxRows+1 internally so the caller can detect truncation.
+func (r *Repository) ExportUsers(appID, search string) ([]UserExportItem, bool, error) {
+	var items []UserExportItem
+
+	applyFilters := func(q *gorm.DB) *gorm.DB {
+		q = q.Joins("LEFT JOIN (SELECT user_id, STRING_AGG(provider, ',') AS providers FROM social_accounts GROUP BY user_id) sa ON sa.user_id = users.id")
+		if appID != "" {
+			q = q.Where("users.app_id = ?", appID)
+		}
+		if search != "" {
+			term := "%" + search + "%"
+			q = q.Where("(users.email ILIKE ? OR users.name ILIKE ?)", term, term)
+		}
+		return q
+	}
+
+	limit := ExportUsersMaxRows + 1
+	dataQuery := applyFilters(r.DB.Model(&models.User{}).
+		Select(`users.id, users.app_id, users.email, users.name,
+			users.first_name, users.last_name, users.locale,
+			users.email_verified, users.is_active,
+			users.two_fa_enabled, users.two_fa_method,
+			COALESCE(sa.providers, '') AS social_providers,
+			users.created_at, users.updated_at`))
+
+	if err := dataQuery.Order("users.created_at DESC").Limit(limit).Scan(&items).Error; err != nil {
+		return nil, false, err
+	}
+
+	truncated := len(items) > ExportUsersMaxRows
+	if truncated {
+		items = items[:ExportUsersMaxRows]
+	}
+	return items, truncated, nil
+}
+
+// ImportUsers bulk-creates users from the provided rows under the given appID.
+// Each row is processed independently — a failure on one row does not roll back
+// previously inserted rows. Duplicate (email, app_id) pairs are skipped and
+// reported in the result. The caller is responsible for validating appID before
+// calling this method.
+func (r *Repository) ImportUsers(appID string, rows []dto.UserImportRow) (dto.UserImportResult, error) {
+	result := dto.UserImportResult{Total: len(rows)}
+
+	appUUID, err := uuid.Parse(appID)
+	if err != nil {
+		return result, fmt.Errorf("invalid app_id %q: %w", appID, err)
+	}
+
+	for i, row := range rows {
+		rowNum := i + 1
+		normalizedEmail := strings.ToLower(strings.TrimSpace(row.Email))
+
+		// Check for existing (email, app_id) pair
+		var count int64
+		if err := r.DB.Model(&models.User{}).
+			Where("email = ? AND app_id = ?", normalizedEmail, appID).
+			Count(&count).Error; err != nil {
+			result.Errors = append(result.Errors, dto.UserImportRowError{
+				Row:   rowNum,
+				Email: row.Email,
+				Error: "database error checking duplicate",
+			})
+			continue
+		}
+
+		if count > 0 {
+			result.Skipped++
+			result.Errors = append(result.Errors, dto.UserImportRowError{
+				Row:   rowNum,
+				Email: row.Email,
+				Error: "skipped: email already exists in this application",
+			})
+			continue
+		}
+
+		user := models.User{
+			ID:            uuid.New(),
+			AppID:         appUUID,
+			Email:         normalizedEmail,
+			Name:          strings.TrimSpace(row.Name),
+			FirstName:     strings.TrimSpace(row.FirstName),
+			LastName:      strings.TrimSpace(row.LastName),
+			Locale:        strings.TrimSpace(row.Locale),
+			PasswordHash:  "",
+			EmailVerified: false,
+			IsActive:      true,
+		}
+		if err := r.DB.Create(&user).Error; err != nil {
+			result.Errors = append(result.Errors, dto.UserImportRowError{
+				Row:   rowNum,
+				Email: row.Email,
+				Error: "failed to create user",
+			})
+			continue
+		}
+		result.Imported++
+	}
+
 	return result, nil
 }

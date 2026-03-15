@@ -49,6 +49,15 @@ type AnomalyDetectionConfig struct {
 	LogOnGeographicChange  bool
 	LogOnUnusualTimeAccess bool
 	SessionWindow          time.Duration // How long to remember user's normal patterns
+
+	// Brute-force detection settings
+	BruteForceEnabled    bool          // Enable brute-force detection
+	BruteForceThreshold  int           // Number of failed attempts before triggering alert
+	BruteForceWindow     time.Duration // Time window for counting failed attempts
+	NotifyOnBruteForce   bool          // Send email alert on brute-force detection
+	NotifyOnNewDevice    bool          // Send email notification on new device/location login
+	NotifyOnGeoChange    bool          // Send email notification on geographic location change
+	NotificationCooldown time.Duration // Minimum time between notification emails per user
 }
 
 var defaultConfig *LoggingConfig
@@ -100,6 +109,11 @@ func initializeEventSeverities() map[string]EventSeverity {
 		"SOCIAL_LOGIN":           SeverityImportant,
 		"PROFILE_UPDATE":         SeverityImportant,
 		"RECOVERY_CODE_GENERATE": SeverityImportant,
+		"LOGIN_FAILED":           SeverityImportant,
+		"BRUTE_FORCE_DETECTED":   SeverityCritical,
+		"IP_BLOCKED":             SeverityCritical,
+		"ACCOUNT_LOCKED":         SeverityCritical,
+		"ACCOUNT_UNLOCKED":       SeverityCritical,
 
 		// Informational events - routine operations
 		"TOKEN_REFRESH":  SeverityInformational,
@@ -136,6 +150,11 @@ func initializeEnabledEvents() map[string]bool {
 		"ACCOUNT_DELETION":       true,
 		"RECOVERY_CODE_USED":     true,
 		"RECOVERY_CODE_GENERATE": true,
+		"LOGIN_FAILED":           true,
+		"BRUTE_FORCE_DETECTED":   true,
+		"IP_BLOCKED":             true,
+		"ACCOUNT_LOCKED":         true,
+		"ACCOUNT_UNLOCKED":       true,
 	}
 
 	// Apply disabled events from environment
@@ -168,6 +187,17 @@ func initializeAnomalyDetection() AnomalyDetectionConfig {
 		LogOnGeographicChange:  getEnvBool("LOG_ANOMALY_GEO_CHANGE", false), // Requires GeoIP
 		LogOnUnusualTimeAccess: getEnvBool("LOG_ANOMALY_UNUSUAL_TIME", false),
 		SessionWindow:          getEnvDuration("LOG_ANOMALY_SESSION_WINDOW", 30*24*time.Hour), // 30 days
+
+		// Brute-force detection
+		BruteForceEnabled:   getEnvBool("BRUTE_FORCE_ENABLED", true),
+		BruteForceThreshold: getEnvInt("BRUTE_FORCE_THRESHOLD", 5),
+		BruteForceWindow:    getEnvDuration("BRUTE_FORCE_WINDOW", 15*time.Minute),
+
+		// Notification settings
+		NotifyOnBruteForce:   getEnvBool("NOTIFY_ON_BRUTE_FORCE", true),
+		NotifyOnNewDevice:    getEnvBool("NOTIFY_ON_NEW_DEVICE", true),
+		NotifyOnGeoChange:    getEnvBool("NOTIFY_ON_GEO_CHANGE", true),
+		NotificationCooldown: getEnvDuration("NOTIFICATION_COOLDOWN", 1*time.Hour),
 	}
 }
 

@@ -10,12 +10,14 @@ import (
 	emailpkg "github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
+	"github.com/gjovanovicst/auth_api/internal/sms"
+	"github.com/gjovanovicst/auth_api/internal/util"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/errors"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -38,6 +40,8 @@ type Service struct {
 	SessionService    *session.Service      // Session management for multi-device tracking
 	LookupRoles       RoleLookupFunc        // Optional: if nil, tokens are generated without roles
 	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no default role is assigned on registration
+	WebhookService    *webhook.Service      // Optional: if nil, webhook dispatch is skipped
+	SMSSender         sms.Sender            // Optional: if nil, SMS 2FA auto-send is skipped
 }
 
 func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
@@ -79,6 +83,7 @@ func (s *Service) getUserRoles(appID, userID string) []string {
 type LoginResult struct {
 	RequiresTwoFA      bool
 	RequiresTwoFASetup bool
+	PasswordExpired    bool // true when the password has exceeded its max age; no tokens are issued
 	UserID             uuid.UUID
 	AccessToken        string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
 	RefreshToken       string // #nosec G101,G117 -- This is a result field, not a hardcoded credential
@@ -94,21 +99,48 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 		return uuid.UUID{}, errors.NewAppError(errors.ErrConflict, "Email already registered")
 	}
 
+	// Load app for password policy
+	var app models.Application
+	if dbErr := s.DB.Select(
+		"pw_min_length, pw_max_length, pw_require_upper, pw_require_lower, pw_require_digit, pw_require_symbol, pw_history_count",
+	).First(&app, "id = ?", appID).Error; dbErr != nil {
+		app = models.Application{} // no policy configured — use defaults
+	}
+
+	// Validate password against policy
+	if pErr := ValidatePasswordPolicy(password, &app); pErr != nil {
+		return uuid.UUID{}, errors.NewAppError(errors.ErrBadRequest, pErr.Error())
+	}
+
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to hash password")
 	}
 
-	user := &models.User{
+	// Build initial password history (one entry: the new hash)
+	newUser := &models.User{
 		AppID:         appID,
 		Email:         email,
 		PasswordHash:  string(hashedPassword),
 		EmailVerified: false,
 	}
+	now := time.Now()
+	newUser.PasswordChangedAt = &now
+	AppendPasswordHistory(newUser, string(hashedPassword), app.PwHistoryCount)
 
-	if err := s.Repo.CreateUser(user); err != nil {
+	if err := s.Repo.CreateUser(newUser); err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create user")
+	}
+
+	user := newUser
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.registered", map[string]interface{}{
+			"user_id": user.ID.String(),
+			"email":   user.Email,
+		})
 	}
 
 	// Assign default 'member' role to the new user (non-fatal if it fails)
@@ -138,6 +170,23 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
 	}
 
+	// Check if account is locked (before password check to avoid timing attacks)
+	if user.LockedAt != nil {
+		// Check if lock has expired (auto-unlock)
+		if user.LockExpiresAt != nil && time.Now().UTC().After(*user.LockExpiresAt) {
+			// Auto-unlock: clear lockout fields
+			if err := s.Repo.ClearLockout(user.ID.String()); err != nil {
+				log.Printf("Warning: failed to clear lockout for user %s: %v", user.ID.String(), err)
+			}
+			user.LockedAt = nil
+			user.LockReason = ""
+			user.LockExpiresAt = nil
+		} else {
+			// Account is still locked
+			return nil, errors.NewAppError(errors.ErrForbidden, "Account is temporarily locked due to too many failed login attempts")
+		}
+	}
+
 	// Compare password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
@@ -153,8 +202,27 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		return nil, errors.NewAppError(errors.ErrForbidden, "Email not verified. Please check your inbox.")
 	}
 
-	// Check if 2FA is enabled
-	if user.TwoFAEnabled {
+	// Load application flags once — used for 2FA gate, forced-setup check,
+	// password expiry check, and TTL resolution.
+	// Fail-open: if the query fails we treat all flags as safe defaults.
+	var app models.Application
+	appLoaded := s.DB.Select(
+		"two_fa_enabled, two_fa_required, pw_max_age_days, access_token_ttl_minutes, refresh_token_ttl_hours",
+	).First(&app, "id = ?", appID).Error == nil
+
+	// Check if the user's password has expired (before issuing any session).
+	if appLoaded && IsPasswordExpired(user, app.PwMaxAgeDays) {
+		return &LoginResult{
+			PasswordExpired: true,
+			UserID:          user.ID,
+		}, nil
+	}
+
+	// Check if 2FA is enabled for this user AND the app's master switch is ON.
+	// If two_fa_enabled is false on the application, skip the 2FA challenge
+	// entirely even when the individual user has 2FA configured — the admin has
+	// explicitly disabled 2FA at the app level.
+	if user.TwoFAEnabled && (!appLoaded || app.TwoFAEnabled) {
 		// Generate temporary token for 2FA verification
 		tempToken := uuid.New().String()
 		if err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute); err != nil {
@@ -179,6 +247,40 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 			}
 		}
 
+		// If the user uses SMS 2FA, generate and send the code now
+		if twoFAMethod == emailpkg.TwoFAMethodSMS && s.SMSSender != nil {
+			if user.PhoneVerified && user.PhoneNumber != "" {
+				code := generateSecure6DigitCode()
+				if storeErr := redis.Set2FASMSCode(appID.String(), user.ID.String(), code); storeErr != nil {
+					return nil, errors.NewAppError(errors.ErrInternal, "Failed to prepare SMS 2FA verification")
+				}
+				body := fmt.Sprintf("Your verification code is: %s  (expires in 5 minutes)", code)
+				if sendErr := s.SMSSender.Send(user.PhoneNumber, body); sendErr != nil {
+					log.Printf("Warning: Failed to send SMS 2FA code to user %s: %v", user.ID, sendErr)
+					return nil, errors.NewAppError(errors.ErrInternal, "Failed to send SMS 2FA code")
+				}
+			}
+		}
+
+		// If the user uses backup email 2FA, generate and send the code to the backup address now.
+		// Always store the code in Redis so resend works even in dev mode (no email service).
+		if twoFAMethod == emailpkg.TwoFAMethodBackupEmail {
+			if user.BackupEmailVerified && user.BackupEmail != "" {
+				code := generateSecure6DigitCode()
+				if storeErr := redis.SetBackupEmail2FACode(appID.String(), user.ID.String(), code); storeErr != nil {
+					return nil, errors.NewAppError(errors.ErrInternal, "Failed to prepare backup email 2FA verification")
+				}
+				if s.EmailService != nil {
+					if sendErr := s.EmailService.Send2FACodeEmail(appID, user.BackupEmail, code, &user.ID); sendErr != nil {
+						log.Printf("Warning: Failed to send backup email 2FA code to user %s: %v", user.ID, sendErr)
+						return nil, errors.NewAppError(errors.ErrInternal, "Failed to send backup email 2FA code")
+					}
+				} else {
+					log.Printf("[DEV MODE] Backup email 2FA code for user %s: %s", user.ID, code)
+				}
+			}
+		}
+
 		// For passkey 2FA, no server-side action needed here — the client
 		// must call /2fa/passkey/begin + /2fa/passkey/finish using the temp token.
 
@@ -186,19 +288,20 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 			RequiresTwoFA: true,
 			UserID:        user.ID,
 			TwoFAResponse: &dto.TwoFARequiredResponse{
-				Message:   "2FA verification required",
-				TempToken: tempToken,
-				Method:    twoFAMethod,
+				RequiresTwoFA: true,
+				Message:       "2FA verification required",
+				TempToken:     tempToken,
+				Method:        twoFAMethod,
 			},
 		}, nil
 	}
 
-	// Check if this application requires 2FA setup for all users
-	var app models.Application
-	if err := s.DB.Select("two_fa_required").First(&app, "id = ?", appID).Error; err == nil && app.TwoFARequired {
+	// Check if this application requires 2FA setup for all users.
+	// Reuse the already-loaded app record instead of issuing a second DB query.
+	if appLoaded && app.TwoFARequired {
 		// User doesn't have 2FA set up, but the app requires it.
 		// Issue tokens via session so the user can authenticate to /2fa/generate, but flag the response.
-		accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+		accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, &app)
 		if appErr != nil {
 			return nil, appErr
 		}
@@ -218,9 +321,22 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 	}
 
 	// Standard login — create session
-	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+	var appPtr *models.Application
+	if appLoaded {
+		appPtr = &app
+	}
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, appPtr)
 	if appErr != nil {
 		return nil, appErr
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.login", map[string]interface{}{
+			"user_id": user.ID.String(),
+			"email":   user.Email,
+			"ip":      ip,
+		})
 	}
 
 	return &LoginResult{
@@ -232,10 +348,10 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 	}, nil
 }
 
-func (s *Service) RefreshUserToken(refreshToken string) (string, string, string, *errors.AppError) {
+func (s *Service) RefreshUserToken(refreshToken string, accessTTL, refreshTTL time.Duration) (string, string, string, *errors.AppError) {
 	// Delegate to session service if available (session-based refresh with token rotation)
 	if s.SessionService != nil {
-		return s.SessionService.RefreshSession(refreshToken)
+		return s.SessionService.RefreshSession(refreshToken, accessTTL, refreshTTL)
 	}
 
 	// Legacy fallback: refresh without session tracking
@@ -257,11 +373,11 @@ func (s *Service) RefreshUserToken(refreshToken string) (string, string, string,
 
 	// Generate new access and refresh tokens (re-fetch roles for freshness)
 	roles := s.getUserRoles(claims.AppID, claims.UserID)
-	newAccessToken, err := jwt.GenerateAccessToken(claims.AppID, claims.UserID, claims.SessionID, roles)
+	newAccessToken, err := jwt.GenerateAccessToken(claims.AppID, claims.UserID, claims.SessionID, roles, accessTTL)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new access token")
 	}
-	newRefreshToken, err := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, claims.SessionID, roles)
+	newRefreshToken, err := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, claims.SessionID, roles, refreshTTL)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new refresh token")
 	}
@@ -314,20 +430,21 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 }
 
 // createSession creates a new session via the session service, or falls back to legacy token storage.
-func (s *Service) createSession(appID, userID, ip, userAgent string) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
+func (s *Service) createSession(appID, userID, ip, userAgent string, app *models.Application) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
 	roles := s.getUserRoles(appID, userID)
+	accessTTL, refreshTTL := ResolveTokenTTLs(app)
 
 	if s.SessionService != nil {
-		return s.SessionService.CreateSession(appID, userID, ip, userAgent, roles)
+		return s.SessionService.CreateSession(appID, userID, ip, userAgent, roles, accessTTL, refreshTTL)
 	}
 
 	// Legacy fallback: generate tokens without session tracking
 	var err error
-	accessToken, err = jwt.GenerateAccessToken(appID, userID, "", roles)
+	accessToken, err = jwt.GenerateAccessToken(appID, userID, "", roles, accessTTL)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate access token")
 	}
-	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, "", roles)
+	refreshToken, err = jwt.GenerateRefreshToken(appID, userID, "", roles, refreshTTL)
 	if err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
@@ -335,6 +452,18 @@ func (s *Service) createSession(appID, userID, ip, userAgent string) (accessToke
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to store refresh token")
 	}
 	return accessToken, refreshToken, "", nil
+}
+
+// CreateSessionForUser creates a new authenticated session for a user by app+userID.
+// Used by the trusted-device bypass in the Login handler to issue tokens when 2FA is skipped.
+func (s *Service) CreateSessionForUser(appID, userID uuid.UUID, ip, userAgent string) (accessToken, refreshToken string, appErr *errors.AppError) {
+	var app models.Application
+	var appPtr *models.Application
+	if s.DB.Select("access_token_ttl_minutes, refresh_token_ttl_hours").First(&app, "id = ?", appID).Error == nil {
+		appPtr = &app
+	}
+	at, rt, _, err := s.createSession(appID.String(), userID.String(), ip, userAgent, appPtr)
+	return at, rt, err
 }
 
 func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.AppError {
@@ -350,7 +479,14 @@ func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.Ap
 		return errors.NewAppError(errors.ErrInternal, "Failed to generate reset token")
 	}
 
-	resetLink := fmt.Sprintf("http://your-frontend-app/reset-password?token=%s", resetToken)
+	// Resolve per-app frontend URL and reset-password path so the link points to the correct frontend.
+	var app models.Application
+	if dbErr := s.DB.Select("frontend_url, reset_password_path").First(&app, "id = ?", appID).Error; dbErr != nil {
+		app.FrontendURL = ""
+		app.ResetPasswordPath = ""
+	}
+	resetPath := util.ResolveLinkPath(app.ResetPasswordPath, util.DefaultResetPasswordPath)
+	resetLink := fmt.Sprintf("%s%s?token=%s", util.ResolveFrontendURL(app.FrontendURL), resetPath, resetToken)
 	if err := s.EmailService.SendPasswordResetEmail(appID, user.Email, resetLink, &user.ID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send password reset email")
 	}
@@ -378,6 +514,13 @@ func (s *Service) VerifyEmail(appID uuid.UUID, token string) (uuid.UUID, *errors
 	userUUID, parseErr := uuid.Parse(userID)
 	if parseErr != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Invalid user ID format")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.verified", map[string]interface{}{
+			"user_id": userUUID.String(),
+		})
 	}
 
 	return userUUID, nil
@@ -427,12 +570,36 @@ func (s *Service) ConfirmPasswordReset(appID uuid.UUID, token, newPassword strin
 		return uuid.UUID{}, errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired reset token")
 	}
 
+	// Load app for password policy
+	var app models.Application
+	if dbErr := s.DB.Select(
+		"pw_min_length, pw_max_length, pw_require_upper, pw_require_lower, pw_require_digit, pw_require_symbol, pw_history_count",
+	).First(&app, "id = ?", appID).Error; dbErr != nil {
+		app = models.Application{}
+	}
+
+	// Validate new password against policy
+	if pErr := ValidatePasswordPolicy(newPassword, &app); pErr != nil {
+		return uuid.UUID{}, errors.NewAppError(errors.ErrBadRequest, pErr.Error())
+	}
+
+	// Fetch user to check history
+	resetUser, err := s.Repo.GetUserByID(userID)
+	if err != nil {
+		return uuid.UUID{}, errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+	if hErr := CheckPasswordHistory(newPassword, resetUser, app.PwHistoryCount); hErr != nil {
+		return uuid.UUID{}, errors.NewAppError(errors.ErrBadRequest, hErr.Error())
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcryptCost)
 	if err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to hash new password")
 	}
 
-	if err := s.Repo.UpdateUserPassword(userID, string(hashedPassword)); err != nil {
+	AppendPasswordHistory(resetUser, string(hashedPassword), app.PwHistoryCount)
+
+	if err := s.Repo.UpdateUserPasswordWithHistory(userID, string(hashedPassword), resetUser.PasswordHistory); err != nil {
 		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to update password")
 	}
 
@@ -565,20 +732,47 @@ func (s *Service) UpdateUserPassword(appID uuid.UUID, userID string, req dto.Upd
 		return errors.NewAppError(errors.ErrBadRequest, "New password must be different from current password")
 	}
 
+	// Load app for password policy
+	var app models.Application
+	if dbErr := s.DB.Select(
+		"pw_min_length, pw_max_length, pw_require_upper, pw_require_lower, pw_require_digit, pw_require_symbol, pw_history_count",
+	).First(&app, "id = ?", appID).Error; dbErr != nil {
+		app = models.Application{}
+	}
+
+	// Validate new password against policy
+	if pErr := ValidatePasswordPolicy(req.NewPassword, &app); pErr != nil {
+		return errors.NewAppError(errors.ErrBadRequest, pErr.Error())
+	}
+
+	// Check password history
+	if hErr := CheckPasswordHistory(req.NewPassword, user, app.PwHistoryCount); hErr != nil {
+		return errors.NewAppError(errors.ErrBadRequest, hErr.Error())
+	}
+
 	// Hash new password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcryptCost)
 	if err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to hash new password")
 	}
 
-	// Update password
-	if err := s.Repo.UpdateUserPassword(userID, string(hashedPassword)); err != nil {
+	AppendPasswordHistory(user, string(hashedPassword), app.PwHistoryCount)
+
+	// Update password with history
+	if err := s.Repo.UpdateUserPasswordWithHistory(userID, string(hashedPassword), user.PasswordHistory); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to update password")
 	}
 
 	// Revoke all existing tokens for security
 	if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
 		log.Printf("Warning: Failed to revoke all user tokens after password change: %v\n", err.Message)
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.password_changed", map[string]interface{}{
+			"user_id": userID,
+		})
 	}
 
 	return nil
@@ -632,7 +826,7 @@ func generateSecure6DigitCode() string {
 func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppError {
 	// Check if magic link is enabled for this application
 	var app models.Application
-	if err := s.DB.Select("magic_link_enabled").First(&app, "id = ?", appID).Error; err != nil {
+	if err := s.DB.Select("magic_link_enabled, frontend_url, magic_link_path").First(&app, "id = ?", appID).Error; err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to load application settings")
 	}
 	if !app.MagicLinkEnabled {
@@ -665,12 +859,9 @@ func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppErr
 		return errors.NewAppError(errors.ErrInternal, "Failed to generate magic link")
 	}
 
-	// Build the magic link URL using the frontend URL from config (same as verification email)
-	frontendURL := viper.GetString("FRONTEND_URL")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:8080"
-	}
-	magicLink := fmt.Sprintf("%s/magic-link?token=%s", frontendURL, magicToken)
+	// Build the magic link URL — use per-app FrontendURL and MagicLinkPath, falling back to global defaults.
+	magicPath := util.ResolveLinkPath(app.MagicLinkPath, util.DefaultMagicLinkPath)
+	magicLink := fmt.Sprintf("%s%s?token=%s&app_id=%s", util.ResolveFrontendURL(app.FrontendURL), magicPath, magicToken, appID.String())
 
 	if err := s.EmailService.SendMagicLinkEmail(appID, user.Email, magicLink, &user.ID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to send magic link email")
@@ -684,7 +875,7 @@ func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppErr
 func (s *Service) VerifyMagicLink(appID uuid.UUID, token, ip, userAgent string) (*LoginResult, *errors.AppError) {
 	// Check if magic link is enabled for this application
 	var app models.Application
-	if err := s.DB.Select("magic_link_enabled").First(&app, "id = ?", appID).Error; err != nil {
+	if err := s.DB.Select("magic_link_enabled, access_token_ttl_minutes, refresh_token_ttl_hours").First(&app, "id = ?", appID).Error; err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to load application settings")
 	}
 	if !app.MagicLinkEnabled {
@@ -724,7 +915,7 @@ func (s *Service) VerifyMagicLink(appID uuid.UUID, token, ip, userAgent string) 
 	}
 
 	// Create session (skip 2FA — magic link is itself an email-based verification factor)
-	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent)
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, &app)
 	if appErr != nil {
 		return nil, appErr
 	}

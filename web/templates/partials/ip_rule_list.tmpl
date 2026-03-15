@@ -1,0 +1,94 @@
+{{define "ip_rule_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Rules}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="">
+                    <tr>
+                        <th class="ps-3">Rule</th>
+                        <th>Type</th>
+                        <th>Match</th>
+                        <th>Value</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Rules}}
+                    <tr{{if not .IsActive}} class="table-secondary text-muted"{{end}}>
+                        <td class="ps-3">
+                            <small class="text-muted font-monospace">{{.ID}}</small>
+                        </td>
+                        <td>
+                            {{if eq .RuleType "allow"}}
+                            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle-fill me-1"></i>Allow</span>
+                            {{else}}
+                            <span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle-fill me-1"></i>Block</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            {{if eq .MatchType "ip"}}
+                            <span class="badge bg-info bg-opacity-10 text-info"><i class="bi bi-pc-display me-1"></i>IP</span>
+                            {{else if eq .MatchType "cidr"}}
+                            <span class="badge bg-primary bg-opacity-10 text-primary"><i class="bi bi-diagram-3 me-1"></i>CIDR</span>
+                            {{else}}
+                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-globe me-1"></i>Country</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <code>{{.Value}}</code>
+                        </td>
+                        <td>
+                            <small class="text-muted">{{.Description}}</small>
+                        </td>
+                        <td>
+                            {{if .IsActive}}
+                            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle-fill me-1"></i>Active</span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary"><i class="bi bi-pause-circle me-1"></i>Inactive</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/ip-rules/{{.ID}}/edit"
+                                    hx-target="#iprule-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/ip-rules/{{.ID}}/delete"
+                                    hx-target="#delete-iprule-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteIPRuleModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-footer bg-body-tertiary border-top">
+            <small class="text-muted">{{.Total}} rule{{if ne .Total 1}}s{{end}} total</small>
+        </div>
+
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-shield-lock fs-1"></i>
+            <p class="mt-2 mb-0">No IP rules configured for this application.</p>
+            <p class="small">Create a rule to control access by IP address, CIDR range, or country.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

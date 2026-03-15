@@ -9,6 +9,8 @@ type ActivityLogResponse struct {
 	IPAddress string      `json:"ip_address"`
 	UserAgent string      `json:"user_agent"`
 	Details   interface{} `json:"details" swaggertype:"object"`
+	IsAnomaly bool        `json:"is_anomaly" example:"false"`
+	Severity  string      `json:"severity" example:"INFORMATIONAL"`
 }
 
 // ActivityLogListRequest represents query parameters for listing activity logs
@@ -34,4 +36,20 @@ type PaginationResponse struct {
 	TotalPages   int   `json:"total_pages"`
 	HasNext      bool  `json:"has_next"`
 	HasPrevious  bool  `json:"has_previous"`
+}
+
+// ActivityLogExportRequest represents query parameters for exporting activity logs
+type ActivityLogExportRequest struct {
+	Format    string `form:"format" binding:"omitempty,oneof=csv json"`
+	EventType string `form:"event_type" binding:"omitempty"`
+	StartDate string `form:"start_date" binding:"omitempty"` // Format: 2006-01-02
+	EndDate   string `form:"end_date" binding:"omitempty"`   // Format: 2006-01-02
+}
+
+// ActivityLogExportResponse wraps exported logs for JSON format responses
+type ActivityLogExportResponse struct {
+	Data       []ActivityLogResponse `json:"data"`
+	Count      int                   `json:"count"`
+	Truncated  bool                  `json:"truncated"`
+	ExportedAt string                `json:"exported_at"`
 }

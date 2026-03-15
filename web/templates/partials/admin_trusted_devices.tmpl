@@ -1,0 +1,69 @@
+{{define "admin_trusted_devices"}}
+<div class="card border-0 shadow-sm" id="trusted-devices-card">
+    <div class="card-header bg-transparent border-bottom d-flex align-items-center justify-content-between">
+        <h6 class="mb-0 fw-semibold"><i class="bi bi-device-hdd me-2"></i>Trusted Devices</h6>
+        {{if .Devices}}
+        <button class="btn btn-outline-danger btn-sm"
+                hx-delete="/gui/my-account/trusted-devices/all"
+                hx-target="#trusted-devices-card"
+                hx-swap="outerHTML"
+                hx-confirm="Revoke all trusted devices? You will need to pass 2FA on your next login from each device."
+                hx-on::after-request="htmx.ajax('GET', '/gui/my-account/trusted-devices', {target: '#trusted-devices-card', swap: 'outerHTML'})">
+            <i class="bi bi-x-circle me-1"></i>Revoke All
+        </button>
+        {{end}}
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Trusted devices skip 2FA verification for a configured number of days. Revoke a device to require 2FA again on that device.
+        </p>
+
+        {{if .Devices}}
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle mb-0">
+                <thead class="">
+                    <tr>
+                        <th>Device</th>
+                        <th>IP Address</th>
+                        <th>Last Used</th>
+                        <th>Expires</th>
+                        <th class="text-center" style="width: 80px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Devices}}
+                    <tr id="my-trusted-device-row-{{.ID}}">
+                        <td>
+                            <i class="bi bi-laptop me-1 text-muted"></i>
+                            {{if .Name}}{{.Name}}{{else}}<span class="text-muted fst-italic">Unknown device</span>{{end}}
+                        </td>
+                        <td>
+                            {{if .IPAddress}}<small class="text-muted">{{.IPAddress}}</small>{{else}}<small class="text-muted fst-italic">-</small>{{end}}
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .LastUsedAt}}">{{timeAgo .LastUsedAt}}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .ExpiresAt}}">{{timeAgo .ExpiresAt}}</small>
+                        </td>
+                        <td class="text-center">
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-delete="/gui/my-account/trusted-devices/{{.ID}}"
+                                    hx-target="#my-trusted-device-row-{{.ID}}"
+                                    hx-swap="outerHTML"
+                                    hx-confirm="Revoke this trusted device? You will need to pass 2FA on your next login from this device."
+                                    title="Revoke device">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <p class="text-muted small mb-0">No trusted devices registered.</p>
+        {{end}}
+    </div>
+</div>
+{{end}}

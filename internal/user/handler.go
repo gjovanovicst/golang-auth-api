@@ -2,21 +2,173 @@ package user
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gjovanovicst/auth_api/internal/bruteforce"
+	"github.com/gjovanovicst/auth_api/internal/config"
+	"github.com/gjovanovicst/auth_api/internal/geoip"
+	"github.com/gjovanovicst/auth_api/internal/health"
 	"github.com/gjovanovicst/auth_api/internal/log"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
+	"github.com/gjovanovicst/auth_api/pkg/jwt"
+	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 )
 
+// TrustedDeviceValidateFunc validates a plain trusted-device token and returns the
+// associated userID and appID on success.  It is called during Login to skip 2FA when
+// a valid trusted-device cookie is present.  Wired from main.go to avoid an import cycle.
+type TrustedDeviceValidateFunc func(plainToken string) (userID uuid.UUID, appID uuid.UUID, ok bool)
+
 type Handler struct {
-	Service *Service
+	Service               *Service
+	IPRuleEvaluator       *geoip.IPRuleEvaluator    // IP access control evaluator (nil = no IP rules)
+	AnomalyDetector       *log.AnomalyDetector      // Anomaly detector for login monitoring (nil = disabled)
+	BruteForceService     *bruteforce.Service       // Brute-force protection service (lockout, delays, CAPTCHA)
+	ValidateTrustedDevice TrustedDeviceValidateFunc // Optional: skip 2FA when a valid trusted-device cookie is present
 }
 
 func NewHandler(s *Service) *Handler {
 	return &Handler{Service: s}
+}
+
+// checkIPAccess evaluates IP rules for the given app and IP address.
+// Returns true if access is allowed, false if blocked.
+// When blocked, it sends the appropriate JSON error response and logs the event.
+func (h *Handler) checkIPAccess(c *gin.Context, appID uuid.UUID, ipAddress, userAgent string) bool {
+	if h.IPRuleEvaluator == nil {
+		return true // No evaluator configured, allow by default
+	}
+	result := h.IPRuleEvaluator.EvaluateAccess(appID, ipAddress)
+	if !result.Allowed {
+		log.LogIPBlocked(appID, ipAddress, userAgent, map[string]interface{}{
+			"reason":  result.Reason,
+			"country": result.Country,
+		})
+		health.IncLoginFailure(appID.String(), "ip_blocked")
+		c.JSON(http.StatusForbidden, dto.ErrorResponse{Error: "Access denied from your location"})
+		return false
+	}
+	return true
+}
+
+// runLoginAnomalyDetection runs anomaly detection for a successful login and logs with the result.
+// eventType allows callers to emit the appropriate event (e.g. EventLogin, EventMagicLinkLogin).
+func (h *Handler) runLoginAnomalyDetection(appID, userID uuid.UUID, email, ipAddress, userAgent string, eventType string, details map[string]interface{}) {
+	if h.AnomalyDetector == nil {
+		// Fall back to standard logging
+		log.GetLogService().LogActivity(appID, userID, eventType, ipAddress, userAgent, details)
+		return
+	}
+
+	cfg := config.GetLoggingConfig()
+	ctx := log.UserContext{
+		UserID:    userID,
+		AppID:     appID,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		Timestamp: time.Now().UTC(),
+	}
+	anomalyCfg := log.AnomalyConfig{
+		Enabled:                cfg.AnomalyDetection.Enabled,
+		LogOnNewIP:             cfg.AnomalyDetection.LogOnNewIP,
+		LogOnNewUserAgent:      cfg.AnomalyDetection.LogOnNewUserAgent,
+		LogOnGeographicChange:  cfg.AnomalyDetection.LogOnGeographicChange,
+		LogOnUnusualTimeAccess: cfg.AnomalyDetection.LogOnUnusualTimeAccess,
+		SessionWindow:          cfg.AnomalyDetection.SessionWindow,
+		BruteForceEnabled:      cfg.AnomalyDetection.BruteForceEnabled,
+		BruteForceThreshold:    cfg.AnomalyDetection.BruteForceThreshold,
+		BruteForceWindow:       cfg.AnomalyDetection.BruteForceWindow,
+		NotifyOnBruteForce:     cfg.AnomalyDetection.NotifyOnBruteForce,
+		NotifyOnNewDevice:      cfg.AnomalyDetection.NotifyOnNewDevice,
+		NotifyOnGeoChange:      cfg.AnomalyDetection.NotifyOnGeoChange,
+		NotificationCooldown:   cfg.AnomalyDetection.NotificationCooldown,
+	}
+	anomalyResult := h.AnomalyDetector.DetectAnomaly(ctx, anomalyCfg)
+	log.GetLogService().LogActivityWithAnomalyResult(appID, userID, email, eventType, ipAddress, userAgent, details, &anomalyResult)
+}
+
+// handleFailedLogin tracks a failed login attempt for brute-force detection.
+// Returns wasLocked and lockExpiresAt if the account was locked as a result.
+func (h *Handler) handleFailedLogin(appID uuid.UUID, email, ipAddress, userAgent string, bfCfg bruteforce.BruteForceConfig) (bool, *time.Time) {
+	// Log the failed attempt
+	log.LogLoginFailed(appID, ipAddress, userAgent, map[string]interface{}{
+		"email": email,
+	})
+
+	// Increment login failure metric
+	health.IncLoginFailure(appID.String(), "invalid_credentials")
+
+	var wasLocked bool
+	var lockExpiresAt *time.Time
+	var failCount int64
+
+	// Brute-force protection: account lockout + counter increment.
+	// When BruteForceService is present, it owns the Redis counter increment
+	// to avoid double-counting with the anomaly detector.
+	if h.BruteForceService != nil {
+		var lockErr error
+		wasLocked, lockExpiresAt, failCount, lockErr = h.BruteForceService.HandleFailedLogin(appID, email, bfCfg)
+		if lockErr == nil && wasLocked {
+			log.LogAccountLocked(appID, uuid.Nil, ipAddress, userAgent, map[string]interface{}{
+				"email":        email,
+				"locked_until": lockExpiresAt.Format(time.RFC3339),
+			})
+		}
+
+		// Increment delay tiers for both email and IP
+		h.BruteForceService.IncrementDelayTier(appID, email, ipAddress, bfCfg)
+	}
+
+	// Anomaly detection for brute-force notifications
+	if h.AnomalyDetector != nil {
+		cfg := config.GetLoggingConfig()
+		if cfg.AnomalyDetection.BruteForceEnabled {
+			// If BruteForceService already incremented the counter, use its count.
+			// Otherwise, increment via the anomaly detector (legacy path).
+			count := failCount
+			if h.BruteForceService == nil {
+				var err error
+				count, err = h.AnomalyDetector.IncrementAndCheckBruteForce(appID, email, cfg.AnomalyDetection.BruteForceWindow)
+				if err != nil {
+					count = 0
+				}
+			}
+
+			if count >= int64(cfg.AnomalyDetection.BruteForceThreshold) {
+				ctx := log.UserContext{
+					AppID:     appID,
+					IPAddress: ipAddress,
+					UserAgent: userAgent,
+					Timestamp: time.Now().UTC(),
+				}
+				bruteResult := h.AnomalyDetector.DetectBruteForce(ctx, log.AnomalyConfig{
+					BruteForceEnabled:    cfg.AnomalyDetection.BruteForceEnabled,
+					BruteForceThreshold:  cfg.AnomalyDetection.BruteForceThreshold,
+					BruteForceWindow:     cfg.AnomalyDetection.BruteForceWindow,
+					NotifyOnBruteForce:   cfg.AnomalyDetection.NotifyOnBruteForce,
+					NotificationCooldown: cfg.AnomalyDetection.NotificationCooldown,
+				}, count)
+
+				log.LogBruteForceDetected(appID, uuid.Nil, ipAddress, userAgent, map[string]interface{}{
+					"email":        email,
+					"failed_count": count,
+				})
+
+				if bruteResult.NotifyUser {
+					log.GetLogService().LogActivityWithAnomalyResult(appID, uuid.Nil, email, log.EventBruteForceDetected, ipAddress, userAgent, map[string]interface{}{
+						"email":        email,
+						"failed_count": count,
+					}, &bruteResult)
+				}
+			}
+		}
+	}
+
+	return wasLocked, lockExpiresAt
 }
 
 // @Summary Register a new user
@@ -61,6 +213,9 @@ func (h *Handler) Register(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	log.LogRegister(appID, userID, ipAddress, userAgent, req.Email)
 
+	// Increment registration metric
+	health.IncRegister(appID.String())
+
 	c.JSON(http.StatusCreated, dto.MessageResponse{Message: "User registered successfully. Please check your email for verification."})
 }
 
@@ -73,8 +228,9 @@ func (h *Handler) Register(c *gin.Context) {
 // @Success 200 {object}  dto.LoginResponse
 // @Success 202 {object}  dto.TwoFARequiredResponse "2FA verification or setup required"
 // @Failure 400 {object}  dto.ErrorResponse
-// @Failure 401 {object}  dto.ErrorResponse
-// @Failure 429 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse "May include retry_after (seconds) advisory field"
+// @Failure 403 {object}  dto.CaptchaRequiredResponse "CAPTCHA verification required"
+// @Failure 423 {object}  dto.AccountLockedResponse "Account is locked"
 // @Failure 500 {object}  dto.ErrorResponse
 // @Router /login [post]
 func (h *Handler) Login(c *gin.Context) {
@@ -100,15 +256,145 @@ func (h *Handler) Login(c *gin.Context) {
 	// Get client info for logging and session tracking
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Check IP-based access rules before processing login
+	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
+		return
+	}
+
+	// --- Resolve per-app brute-force configuration ---
+	// Load the Application from DB to get per-app overrides; fallback to global defaults.
+	var bfCfg bruteforce.BruteForceConfig
+	if h.BruteForceService != nil {
+		var app models.Application
+		if dbErr := h.Service.DB.Select(
+			"bf_lockout_enabled, bf_lockout_threshold, bf_lockout_durations, bf_lockout_window, bf_lockout_tier_ttl, "+
+				"bf_delay_enabled, bf_delay_start_after, bf_delay_max_seconds, bf_delay_tier_ttl, "+
+				"bf_captcha_enabled, bf_captcha_site_key, bf_captcha_secret_key, bf_captcha_threshold",
+		).First(&app, "id = ?", appID).Error; dbErr != nil {
+			// App not found or DB error — use global defaults
+			bfCfg = bruteforce.ResolveConfig(nil)
+		} else {
+			bfCfg = bruteforce.ResolveConfig(&app)
+		}
+	}
+
+	// --- Brute-force pre-auth checks ---
+	if h.BruteForceService != nil {
+		// Check CAPTCHA requirement (before any processing).
+		// CAPTCHA acts as a gate — the request is rejected until a valid token is provided.
+		captchaRequired, captchaErr := h.BruteForceService.IsCaptchaRequired(appID, req.Email, bfCfg)
+		if captchaErr == nil && captchaRequired {
+			// Compute advisory delay for the response
+			advisoryDelay, _ := h.BruteForceService.GetDelay(appID, req.Email, ipAddress, bfCfg)
+
+			if req.CaptchaToken == "" {
+				// CAPTCHA is required but no token provided — tell client to solve CAPTCHA
+				health.IncLoginFailure(appID.String(), "captcha_required")
+				c.JSON(http.StatusForbidden, dto.CaptchaRequiredResponse{
+					Error:           "CAPTCHA verification required",
+					CaptchaRequired: true,
+					SiteKey:         bfCfg.CaptchaSiteKey,
+					RetryAfter:      advisoryDelay,
+				})
+				return
+			}
+			// Verify the provided CAPTCHA token
+			if err := bruteforce.VerifyCaptcha(req.CaptchaToken, ipAddress, bfCfg); err != nil {
+				health.IncLoginFailure(appID.String(), "captcha_failed")
+				c.JSON(http.StatusForbidden, dto.CaptchaRequiredResponse{
+					Error:           "CAPTCHA verification failed",
+					CaptchaRequired: true,
+					SiteKey:         bfCfg.CaptchaSiteKey,
+					RetryAfter:      advisoryDelay,
+				})
+				return
+			}
+		}
+	}
+
 	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password, ipAddress, userAgent)
 	if err != nil {
+		// Only track as failed login if it was an authentication failure (401),
+		// not if the account is locked/deactivated (403) or other errors.
+		if err.Code == http.StatusUnauthorized {
+			wasLocked, lockExpiresAt := h.handleFailedLogin(appID, req.Email, ipAddress, userAgent, bfCfg)
+
+			if wasLocked && lockExpiresAt != nil {
+				retryAfter := int(time.Until(*lockExpiresAt).Seconds())
+				if retryAfter < 0 {
+					retryAfter = 0
+				}
+				c.JSON(http.StatusLocked, dto.AccountLockedResponse{
+					Error:      "Account has been locked due to too many failed login attempts",
+					LockedUtil: lockExpiresAt.Format(time.RFC3339),
+					RetryAfter: retryAfter,
+				})
+				return
+			}
+
+			// Include advisory delay info in the 401 response so the client
+			// knows how long to wait, without blocking the failure counter.
+			if h.BruteForceService != nil {
+				advisoryDelay, _ := h.BruteForceService.GetDelay(appID, req.Email, ipAddress, bfCfg)
+				if advisoryDelay > 0 {
+					c.JSON(err.Code, gin.H{
+						"error":       err.Message,
+						"retry_after": advisoryDelay,
+					})
+					return
+				}
+			}
+		}
+
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
 	}
 
+	// Successful credential verification — reset brute-force counters
+	if h.AnomalyDetector != nil {
+		_ = h.AnomalyDetector.ResetBruteForceCounter(appID, req.Email)
+	}
+	if h.BruteForceService != nil {
+		h.BruteForceService.ResetOnSuccess(appID, req.Email, ipAddress)
+	}
+
+	// Password expired: inform the client so it can redirect to change-password flow.
+	// No tokens are issued in this case.
+	if loginResult.PasswordExpired {
+		c.JSON(http.StatusOK, dto.LoginResponse{
+			PasswordExpired: true,
+		})
+		return
+	}
+
+	// Trusted device check: if the client presents a valid trusted-device cookie and
+	// it matches this app + user, skip 2FA entirely and issue tokens immediately.
+	if loginResult.RequiresTwoFA && h.ValidateTrustedDevice != nil {
+		if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
+			if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
+				tdUserID == loginResult.UserID && tdAppID == appID {
+				// Trusted device is valid — bypass 2FA by creating a fresh session
+				accessToken, refreshToken, sessionErr := h.Service.CreateSessionForUser(appID, loginResult.UserID, ipAddress, userAgent)
+				if sessionErr == nil {
+					details := map[string]interface{}{
+						"requires_2fa":   false,
+						"trusted_device": true,
+					}
+					h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
+					health.IncLoginSuccess(appID.String())
+					c.JSON(http.StatusOK, dto.LoginResponse{
+						AccessToken:  accessToken,
+						RefreshToken: refreshToken,
+					})
+					return
+				}
+			}
+		}
+	}
+
 	// Check if 2FA is required
 	if loginResult.RequiresTwoFA {
-		// Log partial login (2FA required)
+		// Log partial login (2FA required) — anomaly detection will run after 2FA completion
 		details := map[string]interface{}{
 			"requires_2fa": true,
 		}
@@ -127,11 +413,12 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	// Log successful login
+	// Log successful login with anomaly detection
 	details := map[string]interface{}{
 		"requires_2fa": false,
 	}
-	log.LogLogin(appID, loginResult.UserID, ipAddress, userAgent, details)
+	h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
+	health.IncLoginSuccess(appID.String())
 
 	// Standard login response
 	c.JSON(http.StatusOK, dto.LoginResponse{
@@ -159,7 +446,19 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	newAccessToken, newRefreshToken, userID, err := h.Service.RefreshUserToken(req.RefreshToken)
+	// Parse the refresh token claims to determine the app, then load per-app TTL overrides.
+	// Fail-open: if parsing fails or the app can't be loaded, fall through with zero TTLs
+	// (which causes jwt.Generate* to use the global defaults).
+	var accessTTL, refreshTTL time.Duration
+	if claims, parseErr := jwt.ParseToken(req.RefreshToken); parseErr == nil && claims.AppID != "" {
+		var app models.Application
+		if h.Service.DB.Select("access_token_ttl_minutes, refresh_token_ttl_hours").
+			First(&app, "id = ?", claims.AppID).Error == nil {
+			accessTTL, refreshTTL = ResolveTokenTTLs(&app)
+		}
+	}
+
+	newAccessToken, newRefreshToken, userID, err := h.Service.RefreshUserToken(req.RefreshToken, accessTTL, refreshTTL)
 	if err != nil {
 		c.JSON(err.Code, gin.H{"error": err.Message})
 		return
@@ -411,6 +710,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		ProfilePicture: user.ProfilePicture,
 		Locale:         user.Locale,
 		TwoFAEnabled:   user.TwoFAEnabled,
+		TwoFAMethod:    user.TwoFAMethod,
 		Roles:          userRoles,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -474,6 +774,9 @@ func (h *Handler) Logout(c *gin.Context) {
 	if parseErr == nil {
 		log.LogLogout(appID, userUUID, ipAddress, userAgent)
 	}
+
+	// Increment logout metric
+	health.IncLogout(appID.String())
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Successfully logged out"})
 }
@@ -852,7 +1155,21 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 	}
 	appID := appIDVal.(uuid.UUID)
 
+	// Allow the request body to supply an explicit app_id, overriding the header-sourced value.
+	// This ensures magic link tokens are looked up under the correct app even when the user
+	// clicks a link for app B while the frontend is set to app A (multi-app scenario).
+	if req.AppID != "" {
+		if parsed, err := uuid.Parse(req.AppID); err == nil {
+			appID = parsed
+		}
+	}
+
 	ipAddress, userAgent := util.GetClientInfo(c)
+
+	// Check IP-based access rules before processing magic link
+	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
+		return
+	}
 
 	result, err := h.Service.VerifyMagicLink(appID, req.Token, ipAddress, userAgent)
 	if err != nil {
@@ -862,8 +1179,27 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 		return
 	}
 
-	// Log successful magic link login
-	log.LogMagicLinkLogin(appID, result.UserID, ipAddress, userAgent)
+	// Look up user email for anomaly detection notifications
+	userEmail := ""
+	if user, lookupErr := h.Service.Repo.GetUserByID(result.UserID.String()); lookupErr == nil {
+		userEmail = user.Email
+	}
+
+	// Log successful magic link login with anomaly detection
+	h.runLoginAnomalyDetection(appID, result.UserID, userEmail, ipAddress, userAgent, log.EventMagicLinkLogin, map[string]interface{}{
+		"login_method": "magic_link",
+	})
+	health.IncLoginSuccess(appID.String())
+
+	// Dispatch webhook event (non-fatal)
+	if h.Service.WebhookService != nil {
+		h.Service.WebhookService.Dispatch(appID, "user.login", map[string]interface{}{
+			"user_id": result.UserID.String(),
+			"email":   userEmail,
+			"ip":      ipAddress,
+			"method":  "magic_link",
+		})
+	}
 
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  result.AccessToken,

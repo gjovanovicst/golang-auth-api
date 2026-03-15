@@ -3,7 +3,7 @@
     <div class="card-body">
         <h6 class="fw-bold mb-3">
             {{if .IsEdit}}
-            <i class="bi bi-pencil me-2"></i>Edit Application
+            <i class="bi bi-pencil me-2"></i>Edit Application — {{.Name}}
             {{else}}
             <i class="bi bi-plus-lg me-2"></i>Create Application
             {{end}}
@@ -15,109 +15,493 @@
               {{end}}
               hx-target="#app-form-container"
               hx-swap="innerHTML">
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <label for="appTenant" class="form-label small text-muted">Tenant</label>
-                    <select class="form-select" id="appTenant" name="tenant_id" {{if .IsEdit}}disabled{{end}} required>
-                        {{if not .IsEdit}}
-                        <option value="">Select a tenant...</option>
-                        {{end}}
-                        {{range .Tenants}}
-                        <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.TenantID}}selected{{end}}>{{.Name}}</option>
-                        {{end}}
-                    </select>
-                    {{if .IsEdit}}
-                    <input type="hidden" name="tenant_id" value="{{.TenantID}}">
-                    {{end}}
-                </div>
-                <div class="col-md-4">
-                    <label for="appName" class="form-label small text-muted">Application Name</label>
-                    <input type="text" class="form-control" id="appName" name="name"
-                           value="{{.Name}}" placeholder="Enter application name" required autofocus>
-                </div>
-                <div class="col-md-4">
-                    <label for="appDescription" class="form-label small text-muted">Description</label>
-                    <input type="text" class="form-control" id="appDescription" name="description"
-                           value="{{.Description}}" placeholder="Optional description">
-                </div>
-            </div>
 
-            <!-- Two-Factor Authentication Settings -->
-            <div class="border rounded p-3 mt-3 bg-light bg-opacity-50">
-                <h6 class="fw-semibold mb-3"><i class="bi bi-shield-lock me-2"></i>Two-Factor Authentication</h6>
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <label for="appTwoFAIssuerName" class="form-label small text-muted">Authenticator Issuer Name</label>
-                        <input type="text" class="form-control" id="appTwoFAIssuerName" name="two_fa_issuer_name"
-                               value="{{.TwoFAIssuerName}}" placeholder="Shown in authenticator apps">
-                        <div class="form-text">Custom name displayed in Google Authenticator, Authy, etc. Falls back to application name if empty.</div>
-                    </div>
-                    <div class="col-md-4 d-flex align-items-center">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" id="appTwoFAEnabled"
-                                   name="two_fa_enabled" {{if .TwoFAEnabled}}checked{{end}}>
-                            <label class="form-check-label" for="appTwoFAEnabled">
-                                <span class="small text-muted">Enable 2FA</span>
-                            </label>
-                            <div class="form-text">Allow users to set up two-factor authentication.</div>
-                        </div>
-                    </div>
-                    <div class="col-md-4 d-flex align-items-center">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" id="appTwoFARequired"
-                                   name="two_fa_required" {{if .TwoFARequired}}checked{{end}}>
-                            <label class="form-check-label" for="appTwoFARequired">
-                                <span class="small text-muted">Require 2FA</span>
-                            </label>
-                            <div class="form-text">Force all users to set up 2FA on login.</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <!-- Tab Navigation -->
+            <ul class="nav nav-tabs mb-3" id="appFormTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="tab-general-btn" data-bs-toggle="tab"
+                            data-bs-target="#tab-general" type="button" role="tab"
+                            aria-controls="tab-general" aria-selected="true">
+                        <i class="bi bi-gear me-1"></i>General
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="tab-auth-btn" data-bs-toggle="tab"
+                            data-bs-target="#tab-auth" type="button" role="tab"
+                            aria-controls="tab-auth" aria-selected="false">
+                        <i class="bi bi-shield-lock me-1"></i>Authentication
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="tab-security-btn" data-bs-toggle="tab"
+                            data-bs-target="#tab-security" type="button" role="tab"
+                            aria-controls="tab-security" aria-selected="false">
+                        <i class="bi bi-shield-exclamation me-1"></i>Security
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="tab-custom-btn" data-bs-toggle="tab"
+                            data-bs-target="#tab-custom" type="button" role="tab"
+                            aria-controls="tab-custom" aria-selected="false">
+                        <i class="bi bi-palette me-1"></i>Customization
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="tab-advanced-btn" data-bs-toggle="tab"
+                            data-bs-target="#tab-advanced" type="button" role="tab"
+                            aria-controls="tab-advanced" aria-selected="false">
+                        <i class="bi bi-sliders me-1"></i>Advanced
+                    </button>
+                </li>
+            </ul>
 
-            <!-- Passkey / WebAuthn Settings -->
-            <div class="border rounded p-3 mt-3 bg-light bg-opacity-50">
-                <h6 class="fw-semibold mb-3"><i class="bi bi-key me-2"></i>Passkey / WebAuthn</h6>
-                <div class="row g-3">
-                    <div class="col-md-6 d-flex align-items-center">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" id="appPasskey2FAEnabled"
-                                   name="passkey_2fa_enabled" {{if .Passkey2FAEnabled}}checked{{end}}>
-                            <label class="form-check-label" for="appPasskey2FAEnabled">
-                                <span class="small text-muted">Passkey as 2FA Method</span>
-                            </label>
-                            <div class="form-text">Allow users to verify their identity with a passkey as a second factor during login.</div>
-                        </div>
-                    </div>
-                    <div class="col-md-6 d-flex align-items-center">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" id="appPasskeyLoginEnabled"
-                                   name="passkey_login_enabled" {{if .PasskeyLoginEnabled}}checked{{end}}>
-                            <label class="form-check-label" for="appPasskeyLoginEnabled">
-                                <span class="small text-muted">Passwordless Login</span>
-                            </label>
-                            <div class="form-text">Allow users to sign in using only a passkey, without entering a password.</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <!-- Tab Panes -->
+            <div class="tab-content" id="appFormTabContent">
 
-            <!-- Magic Link Settings -->
-            <div class="border rounded p-3 mt-3 bg-light bg-opacity-50">
-                <h6 class="fw-semibold mb-3"><i class="bi bi-envelope-arrow-up me-2"></i>Magic Link Login</h6>
-                <div class="row g-3">
-                    <div class="col-md-6 d-flex align-items-center">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" role="switch" id="appMagicLinkEnabled"
-                                   name="magic_link_enabled" {{if .MagicLinkEnabled}}checked{{end}}>
-                            <label class="form-check-label" for="appMagicLinkEnabled">
-                                <span class="small text-muted">Enable Magic Link Login</span>
-                            </label>
-                            <div class="form-text">Allow users to sign in via a one-time link sent to their email address. Skips 2FA verification.</div>
+                <!-- ── General ─────────────────────────────────────────── -->
+                <div class="tab-pane fade show active" id="tab-general" role="tabpanel" aria-labelledby="tab-general-btn">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label for="appTenant" class="form-label small text-muted">Tenant</label>
+                            <select class="form-select" id="appTenant" name="tenant_id" {{if .IsEdit}}disabled{{end}} required>
+                                {{if not .IsEdit}}
+                                <option value="">Select a tenant...</option>
+                                {{end}}
+                                {{range .Tenants}}
+                                <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.TenantID}}selected{{end}}>{{.Name}}</option>
+                                {{end}}
+                            </select>
+                            {{if .IsEdit}}
+                            <input type="hidden" name="tenant_id" value="{{.TenantID}}">
+                            {{end}}
+                        </div>
+                        <div class="col-md-4">
+                            <label for="appName" class="form-label small text-muted">Application Name</label>
+                            <input type="text" class="form-control" id="appName" name="name"
+                                   value="{{.Name}}" placeholder="Enter application name" required autofocus>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="appDescription" class="form-label small text-muted">Description</label>
+                            <input type="text" class="form-control" id="appDescription" name="description"
+                                   value="{{.Description}}" placeholder="Optional description">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="appFrontendURL" class="form-label small text-muted">Frontend URL</label>
+                            <input type="text" class="form-control" id="appFrontendURL" name="frontend_url"
+                                   value="{{.FrontendURL}}" placeholder="https://app.example.com">
+                            <div class="form-text">Base URL of the frontend app. Used for email verification, password reset, and magic link URLs. Falls back to the global <code>FRONTEND_URL</code> env var if empty.</div>
+                        </div>
+                        <div class="col-12">
+                            <p class="form-label small text-muted mb-2"><i class="bi bi-link-45deg me-1"></i>Email Action Link Paths <span class="text-secondary fw-normal">(optional — leave empty to use system defaults)</span></p>
+                            <div class="row g-2">
+                                <div class="col-md-4">
+                                    <label for="appResetPasswordPath" class="form-label small text-muted">Password Reset Path</label>
+                                    <input type="text" class="form-control" id="appResetPasswordPath" name="reset_password_path"
+                                           value="{{.ResetPasswordPath}}" placeholder="/reset-password">
+                                    <div class="form-text">Default: <code>/reset-password</code></div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="appMagicLinkPath" class="form-label small text-muted">Magic Link Path</label>
+                                    <input type="text" class="form-control" id="appMagicLinkPath" name="magic_link_path"
+                                           value="{{.MagicLinkPath}}" placeholder="/magic-link">
+                                    <div class="form-text">Default: <code>/magic-link</code></div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="appVerifyEmailPath" class="form-label small text-muted">Email Verification Path</label>
+                                    <input type="text" class="form-control" id="appVerifyEmailPath" name="verify_email_path"
+                                           value="{{.VerifyEmailPath}}" placeholder="/verify-email">
+                                    <div class="form-text">Default: <code>/verify-email</code></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
+
+                <!-- ── Authentication ──────────────────────────────────── -->
+                <div class="tab-pane fade" id="tab-auth" role="tabpanel" aria-labelledby="tab-auth-btn">
+
+                    <!-- Two-Factor Authentication -->
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-shield-lock me-2"></i>Two-Factor Authentication</h6>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="appTwoFAIssuerName" class="form-label small text-muted">Authenticator Issuer Name</label>
+                                <input type="text" class="form-control" id="appTwoFAIssuerName" name="two_fa_issuer_name"
+                                       value="{{.TwoFAIssuerName}}" placeholder="Shown in authenticator apps">
+                                <div class="form-text">Custom name displayed in Google Authenticator, Authy, etc. Falls back to application name if empty.</div>
+                            </div>
+                            <div class="col-md-4 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appTwoFAEnabled"
+                                           name="two_fa_enabled" {{if .TwoFAEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="appTwoFAEnabled">
+                                        <span class="small text-muted">Enable 2FA</span>
+                                    </label>
+                                    <div class="form-text">Allow users to set up two-factor authentication.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appTwoFARequired"
+                                           name="two_fa_required" {{if .TwoFARequired}}checked{{end}} {{if not .TwoFAEnabled}}disabled{{end}}>
+                                    <label class="form-check-label" for="appTwoFARequired">
+                                        <span class="small text-muted">Require 2FA</span>
+                                    </label>
+                                    <div class="form-text">Force all users to set up 2FA on login.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Passkey / WebAuthn -->
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-key me-2"></i>Passkey / WebAuthn</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appPasskey2FAEnabled"
+                                           name="passkey_2fa_enabled" {{if .Passkey2FAEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="appPasskey2FAEnabled">
+                                        <span class="small text-muted">Passkey as 2FA Method</span>
+                                    </label>
+                                    <div class="form-text">Allow users to verify their identity with a passkey as a second factor during login.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appPasskeyLoginEnabled"
+                                           name="passkey_login_enabled" {{if .PasskeyLoginEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="appPasskeyLoginEnabled">
+                                        <span class="small text-muted">Passwordless Login</span>
+                                    </label>
+                                    <div class="form-text">Allow users to sign in using only a passkey, without entering a password.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Magic Link -->
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-envelope-arrow-up me-2"></i>Magic Link Login</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appMagicLinkEnabled"
+                                           name="magic_link_enabled" {{if .MagicLinkEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="appMagicLinkEnabled">
+                                        <span class="small text-muted">Enable Magic Link Login</span>
+                                    </label>
+                                    <div class="form-text">Allow users to sign in via a one-time link sent to their email address. Skips 2FA verification.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- OIDC -->
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-diagram-3 me-2"></i>OpenID Connect (OIDC) Provider</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appOIDCEnabled"
+                                           name="oidc_enabled" {{if .OIDCEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="appOIDCEnabled">
+                                        <span class="small text-muted">Enable OIDC Provider</span>
+                                    </label>
+                                    <div class="form-text">Expose OIDC endpoints so this application can act as an identity provider.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SMS 2FA & Trusted Devices -->
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-phone me-2"></i>SMS 2FA &amp; Trusted Devices</h6>
+                        <div class="row g-3">
+                            <div class="col-md-4 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appSMS2FAEnabled"
+                                           name="sms_2fa_enabled" {{if .SMS2FAEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="appSMS2FAEnabled">
+                                        <span class="small text-muted">Enable SMS 2FA</span>
+                                    </label>
+                                    <div class="form-text">Allow users to verify their identity via SMS one-time codes.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appTrustedDeviceEnabled"
+                                           name="trusted_device_enabled" {{if .TrustedDeviceEnabled}}checked{{end}}
+                                           onchange="document.getElementById('trustedDeviceMaxDaysField').style.display = this.checked ? '' : 'none'">
+                                    <label class="form-check-label" for="appTrustedDeviceEnabled">
+                                        <span class="small text-muted">Enable Trusted Devices</span>
+                                    </label>
+                                    <div class="form-text">Allow users to skip 2FA on trusted devices for a configurable number of days.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-4" id="trustedDeviceMaxDaysField" {{if not .TrustedDeviceEnabled}}style="display:none"{{end}}>
+                                <label for="appTrustedDeviceMaxDays" class="form-label small text-muted">Trust Duration (days)</label>
+                                <input type="number" class="form-control" id="appTrustedDeviceMaxDays" name="trusted_device_max_days"
+                                       value="{{if .TrustedDeviceMaxDays}}{{.TrustedDeviceMaxDays}}{{else}}30{{end}}" min="1" max="365">
+                                <div class="form-text">How long a device remains trusted before requiring 2FA again.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- ── Security ────────────────────────────────────────── -->
+                <div class="tab-pane fade" id="tab-security" role="tabpanel" aria-labelledby="tab-security-btn">
+                    <p class="small text-muted mb-3">Override brute-force protection settings for this application. When a section is toggled off, the system defaults (shown as pre-filled values) are used.</p>
+
+                    <!-- Account Lockout -->
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="bfLockoutOverride"
+                                   name="bf_lockout_override" {{if .BfLockoutOverride}}checked{{end}}
+                                   onchange="document.getElementById('bfLockoutFields').style.display = this.checked ? '' : 'none'">
+                            <label class="form-check-label fw-semibold small" for="bfLockoutOverride">
+                                <i class="bi bi-lock me-1"></i>Override Account Lockout Settings
+                            </label>
+                        </div>
+                        <div id="bfLockoutFields" {{if not .BfLockoutOverride}}style="display:none"{{end}}>
+                            <div class="row g-3 mt-1">
+                                <div class="col-md-4 d-flex align-items-center">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="bfLockoutEnabled"
+                                               name="bf_lockout_enabled" {{if .BfLockoutEnabled}}checked{{end}}>
+                                        <label class="form-check-label" for="bfLockoutEnabled">
+                                            <span class="small text-muted">Enable Lockout</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="bfLockoutThreshold" class="form-label small text-muted">Threshold (attempts)</label>
+                                    <input type="number" class="form-control" id="bfLockoutThreshold" name="bf_lockout_threshold"
+                                           value="{{.BfLockoutThreshold}}" placeholder="e.g. 5" min="1">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="bfLockoutDurations" class="form-label small text-muted">Durations</label>
+                                    <input type="text" class="form-control" id="bfLockoutDurations" name="bf_lockout_durations"
+                                           value="{{.BfLockoutDurations}}" placeholder="e.g. 15m,30m,1h,24h">
+                                    <div class="form-text">Comma-separated escalating lockout durations.</div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="bfLockoutWindow" class="form-label small text-muted">Window</label>
+                                    <input type="text" class="form-control" id="bfLockoutWindow" name="bf_lockout_window"
+                                           value="{{.BfLockoutWindow}}" placeholder="e.g. 15m">
+                                    <div class="form-text">Sliding window for counting failed attempts.</div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="bfLockoutTierTTL" class="form-label small text-muted">Tier TTL</label>
+                                    <input type="text" class="form-control" id="bfLockoutTierTTL" name="bf_lockout_tier_ttl"
+                                           value="{{.BfLockoutTierTTL}}" placeholder="e.g. 24h">
+                                    <div class="form-text">How long the lockout tier persists before resetting.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Progressive Delay -->
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="bfDelayOverride"
+                                   name="bf_delay_override" {{if .BfDelayOverride}}checked{{end}}
+                                   onchange="document.getElementById('bfDelayFields').style.display = this.checked ? '' : 'none'">
+                            <label class="form-check-label fw-semibold small" for="bfDelayOverride">
+                                <i class="bi bi-hourglass-split me-1"></i>Override Progressive Delay Settings
+                            </label>
+                        </div>
+                        <div id="bfDelayFields" {{if not .BfDelayOverride}}style="display:none"{{end}}>
+                            <div class="row g-3 mt-1">
+                                <div class="col-md-3 d-flex align-items-center">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="bfDelayEnabled"
+                                               name="bf_delay_enabled" {{if .BfDelayEnabled}}checked{{end}}>
+                                        <label class="form-check-label" for="bfDelayEnabled">
+                                            <span class="small text-muted">Enable Delays</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="bfDelayStartAfter" class="form-label small text-muted">Start After (attempts)</label>
+                                    <input type="number" class="form-control" id="bfDelayStartAfter" name="bf_delay_start_after"
+                                           value="{{.BfDelayStartAfter}}" placeholder="e.g. 2" min="1">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="bfDelayMaxSeconds" class="form-label small text-muted">Max Delay (seconds)</label>
+                                    <input type="number" class="form-control" id="bfDelayMaxSeconds" name="bf_delay_max_seconds"
+                                           value="{{.BfDelayMaxSeconds}}" placeholder="e.g. 30" min="1">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="bfDelayTierTTL" class="form-label small text-muted">Tier TTL</label>
+                                    <input type="text" class="form-control" id="bfDelayTierTTL" name="bf_delay_tier_ttl"
+                                           value="{{.BfDelayTierTTL}}" placeholder="e.g. 30m">
+                                    <div class="form-text">Delay tier persistence.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CAPTCHA -->
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="bfCaptchaOverride"
+                                   name="bf_captcha_override" {{if .BfCaptchaOverride}}checked{{end}}
+                                   onchange="document.getElementById('bfCaptchaFields').style.display = this.checked ? '' : 'none'">
+                            <label class="form-check-label fw-semibold small" for="bfCaptchaOverride">
+                                <i class="bi bi-puzzle me-1"></i>Override CAPTCHA Settings
+                            </label>
+                        </div>
+                        <div id="bfCaptchaFields" {{if not .BfCaptchaOverride}}style="display:none"{{end}}>
+                            <div class="row g-3 mt-1">
+                                <div class="col-md-3 d-flex align-items-center">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="bfCaptchaEnabled"
+                                               name="bf_captcha_enabled" {{if .BfCaptchaEnabled}}checked{{end}}>
+                                        <label class="form-check-label" for="bfCaptchaEnabled">
+                                            <span class="small text-muted">Enable CAPTCHA</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="bfCaptchaThreshold" class="form-label small text-muted">Threshold (attempts)</label>
+                                    <input type="number" class="form-control" id="bfCaptchaThreshold" name="bf_captcha_threshold"
+                                           value="{{.BfCaptchaThreshold}}" placeholder="e.g. 3" min="1">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="bfCaptchaSiteKey" class="form-label small text-muted">reCAPTCHA Site Key</label>
+                                    <input type="text" class="form-control" id="bfCaptchaSiteKey" name="bf_captcha_site_key"
+                                           value="{{.BfCaptchaSiteKey}}" placeholder="Leave empty to use global key">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="bfCaptchaSecretKey" class="form-label small text-muted">reCAPTCHA Secret Key</label>
+                                    <input type="password" class="form-control" id="bfCaptchaSecretKey" name="bf_captcha_secret_key"
+                                           placeholder="{{if .BfCaptchaHasSecret}}Secret key configured (leave empty to keep){{else}}No secret key configured{{end}}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Customization ───────────────────────────────────── -->
+                <div class="tab-pane fade" id="tab-custom" role="tabpanel" aria-labelledby="tab-custom-btn">
+
+                    <!-- Login Page Branding -->
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-palette me-2"></i>Login Page Branding</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="appLoginLogoURL" class="form-label small text-muted">Logo URL</label>
+                                <input type="text" class="form-control" id="appLoginLogoURL" name="login_logo_url"
+                                       value="{{.LoginLogoURL}}" placeholder="https://example.com/logo.png">
+                                <div class="form-text">URL of the logo shown on the login page.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="appLoginDisplayName" class="form-label small text-muted">Display Name</label>
+                                <input type="text" class="form-control" id="appLoginDisplayName" name="login_display_name"
+                                       value="{{.LoginDisplayName}}" placeholder="Falls back to application name">
+                                <div class="form-text">Name displayed on the login page. Defaults to application name if empty.</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="appLoginPrimaryColor" class="form-label small text-muted">Primary Color</label>
+                                <input type="text" class="form-control" id="appLoginPrimaryColor" name="login_primary_color"
+                                       value="{{.LoginPrimaryColor}}" placeholder="#4f46e5">
+                                <div class="form-text">Hex color code for the primary brand color.</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="appLoginSecondaryColor" class="form-label small text-muted">Secondary Color</label>
+                                <input type="text" class="form-control" id="appLoginSecondaryColor" name="login_secondary_color"
+                                       value="{{.LoginSecondaryColor}}" placeholder="#7c3aed">
+                                <div class="form-text">Hex color code for the secondary brand color.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Password Policy -->
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-file-lock me-2"></i>Password Policy</h6>
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <label for="appPwMinLength" class="form-label small text-muted">Min Length</label>
+                                <input type="number" class="form-control" id="appPwMinLength" name="pw_min_length"
+                                       value="{{if .PwMinLength}}{{.PwMinLength}}{{else}}8{{end}}" min="1" max="128">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="appPwMaxLength" class="form-label small text-muted">Max Length</label>
+                                <input type="number" class="form-control" id="appPwMaxLength" name="pw_max_length"
+                                       value="{{if .PwMaxLength}}{{.PwMaxLength}}{{else}}128{{end}}" min="1" max="1024">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="appPwHistoryCount" class="form-label small text-muted">Password History</label>
+                                <input type="number" class="form-control" id="appPwHistoryCount" name="pw_history_count"
+                                       value="{{.PwHistoryCount}}" min="0" max="24" placeholder="0 = disabled">
+                                <div class="form-text">Prevent reuse of last N passwords (0 = disabled).</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label for="appPwMaxAgeDays" class="form-label small text-muted">Max Age (days)</label>
+                                <input type="number" class="form-control" id="appPwMaxAgeDays" name="pw_max_age_days"
+                                       value="{{.PwMaxAgeDays}}" min="0" placeholder="0 = never">
+                                <div class="form-text">Days before password expires (0 = never).</div>
+                            </div>
+                            <div class="col-12">
+                                <p class="form-label small text-muted mb-2">Complexity Requirements</p>
+                                <div class="d-flex flex-wrap gap-4">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="appPwRequireUpper"
+                                               name="pw_require_upper" {{if .PwRequireUpper}}checked{{end}}>
+                                        <label class="form-check-label small text-muted" for="appPwRequireUpper">Require Uppercase</label>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="appPwRequireLower"
+                                               name="pw_require_lower" {{if .PwRequireLower}}checked{{end}}>
+                                        <label class="form-check-label small text-muted" for="appPwRequireLower">Require Lowercase</label>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="appPwRequireDigit"
+                                               name="pw_require_digit" {{if .PwRequireDigit}}checked{{end}}>
+                                        <label class="form-check-label small text-muted" for="appPwRequireDigit">Require Digit</label>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="appPwRequireSymbol"
+                                               name="pw_require_symbol" {{if .PwRequireSymbol}}checked{{end}}>
+                                        <label class="form-check-label small text-muted" for="appPwRequireSymbol">Require Symbol</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- ── Advanced ────────────────────────────────────────── -->
+                <div class="tab-pane fade" id="tab-advanced" role="tabpanel" aria-labelledby="tab-advanced-btn">
+
+                    <!-- Token Lifetimes -->
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-clock me-2"></i>Token Lifetimes</h6>
+                        <p class="small text-muted mb-3">Override per-app token TTLs. Set to 0 to use the global defaults from environment variables.</p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="appAccessTokenTTL" class="form-label small text-muted">Access Token TTL (minutes)</label>
+                                <input type="number" class="form-control" id="appAccessTokenTTL" name="access_token_ttl_minutes"
+                                       value="{{.AccessTokenTTLMinutes}}" min="0" placeholder="0 = use global default">
+                                <div class="form-text">How long access tokens are valid. 0 uses the <code>ACCESS_TOKEN_EXPIRATION_MINUTES</code> env var.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="appRefreshTokenTTL" class="form-label small text-muted">Refresh Token TTL (hours)</label>
+                                <input type="number" class="form-control" id="appRefreshTokenTTL" name="refresh_token_ttl_hours"
+                                       value="{{.RefreshTokenTTLHours}}" min="0" placeholder="0 = use global default">
+                                <div class="form-text">How long refresh tokens are valid. 0 uses the <code>REFRESH_TOKEN_EXPIRATION_HOURS</code> env var.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div><!-- /tab-content -->
+
+            <!-- Submit / Cancel — always visible outside the tabs -->
             <div class="mt-3 d-flex gap-2">
                 <button type="submit" class="btn btn-primary">
                     <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update{{else}}Create{{end}}
@@ -132,4 +516,57 @@
         </form>
     </div>
 </div>
+<script>
+(function() {
+    // ── 2FA enable/require sync ──────────────────────────────────────────
+    var enableSwitch  = document.getElementById('appTwoFAEnabled');
+    var requireSwitch = document.getElementById('appTwoFARequired');
+    if (enableSwitch && requireSwitch) {
+        function syncRequireSwitch() {
+            if (!enableSwitch.checked) {
+                requireSwitch.checked  = false;
+                requireSwitch.disabled = true;
+            } else {
+                requireSwitch.disabled = false;
+            }
+        }
+        enableSwitch.addEventListener('change', syncRequireSwitch);
+        syncRequireSwitch();
+    }
+
+    // ── Trusted device max-days field visibility ─────────────────────────
+    var tdSwitch      = document.getElementById('appTrustedDeviceEnabled');
+    var tdMaxDaysField = document.getElementById('trustedDeviceMaxDaysField');
+    if (tdSwitch && tdMaxDaysField) {
+        tdMaxDaysField.style.display = tdSwitch.checked ? '' : 'none';
+    }
+
+    // ── Restore last active tab from sessionStorage ──────────────────────
+    // Key is per-application so editing a different app always starts on General.
+    var tabStorageKey = 'appFormActiveTab_{{.ID}}';
+    var savedTab = sessionStorage.getItem(tabStorageKey);
+    if (savedTab) {
+        var tabEl = document.querySelector('[data-bs-target="' + savedTab + '"]');
+        // Only switch tabs if the target is not already the active tab.
+        // Calling bootstrap.Tab.show() on an already-active tab triggers its
+        // hide/show transition which temporarily removes the 'show' class from
+        // the active pane — causing blank General tab content when clicking
+        // Edit on a second application while staying on the General tab.
+        if (tabEl && !tabEl.classList.contains('active')) {
+            // Defer one tick so HTMX's DOM swap fully settles before Bootstrap
+            // re-evaluates the active pane — prevents blank content on first load.
+            setTimeout(function() {
+                var tab = new bootstrap.Tab(tabEl);
+                tab.show();
+            }, 0);
+        }
+    }
+    var tabButtons = document.querySelectorAll('#appFormTabs [data-bs-toggle="tab"]');
+    tabButtons.forEach(function(btn) {
+        btn.addEventListener('shown.bs.tab', function(e) {
+            sessionStorage.setItem(tabStorageKey, e.target.getAttribute('data-bs-target'));
+        });
+    });
+})();
+</script>
 {{end}}

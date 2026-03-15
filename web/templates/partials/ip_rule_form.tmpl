@@ -1,0 +1,98 @@
+{{define "ip_rule_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .IsEdit}}
+            <i class="bi bi-pencil me-2"></i>Edit IP Rule
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Create IP Rule
+            {{end}}
+        </h6>
+        <form {{if .IsEdit}}
+                hx-put="/gui/ip-rules/{{.ID}}"
+              {{else}}
+                hx-post="/gui/ip-rules"
+              {{end}}
+              hx-target="#iprule-form-container"
+              hx-swap="innerHTML">
+            <input type="hidden" name="app_id" value="{{.AppID}}">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="ruleType" class="form-label small text-muted">Rule Type</label>
+                    <select class="form-select" id="ruleType" name="rule_type" required>
+                        <option value="block"{{if eq .RuleType "block"}} selected{{end}}>Block</option>
+                        <option value="allow"{{if eq .RuleType "allow"}} selected{{end}}>Allow</option>
+                    </select>
+                    <div class="form-text small">Block denies access; Allow creates a whitelist.</div>
+                </div>
+                <div class="col-md-3">
+                    <label for="matchType" class="form-label small text-muted">Match Type</label>
+                    <select class="form-select" id="matchType" name="match_type" required
+                            onchange="updateRuleValueHint(this.value)">
+                        <option value="ip"{{if eq .MatchType "ip"}} selected{{end}}>IP Address</option>
+                        <option value="cidr"{{if eq .MatchType "cidr"}} selected{{end}}>CIDR Range</option>
+                        <option value="country"{{if eq .MatchType "country"}} selected{{end}}>Country Code</option>
+                    </select>
+                    <div class="form-text small">How the value is matched against client IPs.</div>
+                </div>
+                <div class="col-md-3">
+                    <label for="ruleValue" class="form-label small text-muted">Value</label>
+                    <input type="text" class="form-control" id="ruleValue" name="value"
+                           value="{{.Value}}" placeholder="e.g., 192.168.1.1" required>
+                    <div class="form-text small" id="ruleValueHint">A single IPv4 or IPv6 address.</div>
+                </div>
+                <div class="col-md-3">
+                    <label for="ruleDescription" class="form-label small text-muted">Description <span class="text-muted">(optional)</span></label>
+                    <input type="text" class="form-control" id="ruleDescription" name="description"
+                           value="{{.Description}}" placeholder="Reason for this rule">
+                </div>
+            </div>
+            <div class="row g-3 mt-0">
+                <div class="col-md-3">
+                    <div class="form-check form-switch mt-2">
+                        <input class="form-check-input" type="checkbox" id="ruleIsActive" name="is_active"
+                               {{if .IsEdit}}{{if .IsActive}}checked{{end}}{{else}}checked{{end}}>
+                        <label class="form-check-label small" for="ruleIsActive">Active</label>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update Rule{{else}}Create Rule{{end}}
+                </button>
+                <button type="button" class="btn btn-outline-secondary"
+                        hx-get="/gui/ip-rules/form-cancel"
+                        hx-target="#iprule-form-container"
+                        hx-swap="innerHTML">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+function updateRuleValueHint(matchType) {
+    var input = document.getElementById('ruleValue');
+    var hint = document.getElementById('ruleValueHint');
+    switch (matchType) {
+        case 'ip':
+            input.placeholder = 'e.g., 192.168.1.1';
+            hint.textContent = 'A single IPv4 or IPv6 address.';
+            break;
+        case 'cidr':
+            input.placeholder = 'e.g., 10.0.0.0/8 or 172.19.0.0/16';
+            hint.textContent = 'A network range in CIDR notation (address/prefix).';
+            break;
+        case 'country':
+            input.placeholder = 'e.g., US, DE, JP';
+            hint.textContent = 'A 2-letter ISO 3166-1 alpha-2 country code.';
+            break;
+    }
+}
+// Set initial hint based on current selection
+(function() {
+    var sel = document.getElementById('matchType');
+    if (sel) updateRuleValueHint(sel.value);
+})();
+</script>
+{{end}}

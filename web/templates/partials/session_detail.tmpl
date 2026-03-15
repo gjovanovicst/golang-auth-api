@@ -53,6 +53,18 @@
                     <div>{{.LastActive}}</div>
                 </div>
                 <div class="mb-3">
+                    <label class="form-label small text-muted mb-1">Status</label>
+                    <div>
+                        {{if eq .Status "active"}}
+                        <span class="badge bg-success">Active</span>
+                        {{else if eq .Status "idle"}}
+                        <span class="badge bg-warning text-dark">Idle</span>
+                        {{else}}
+                        <span class="badge bg-secondary">Stale</span>
+                        {{end}}
+                    </div>
+                </div>
+                <div class="mb-3">
                     <label class="form-label small text-muted mb-1">User Agent</label>
                     <div>
                         <small class="text-muted" style="word-break: break-all;">{{if .UserAgent}}{{.UserAgent}}{{else}}<span class="fst-italic">Not recorded</span>{{end}}</small>

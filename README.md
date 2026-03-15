@@ -23,12 +23,19 @@ A complete authentication and authorization system with multi-tenancy, social lo
 - **Authentication** -- Registration, login, JWT access/refresh tokens, token blacklisting, password reset, email verification, resend verification
 - **WebAuthn/Passkeys** -- FIDO2 passkey registration, passkey as 2FA method, and fully passwordless login via discoverable credentials
 - **Magic Link Login** -- Passwordless authentication via email magic links for both users and admin accounts
-- **Two-Factor Authentication** -- TOTP with authenticator apps, email-based 2FA, passkey-based 2FA, and recovery codes
+- **Two-Factor Authentication** -- TOTP with authenticator apps, SMS-based 2FA, email-based 2FA, passkey-based 2FA, backup email recovery, recovery codes, and trusted devices
 - **Social Login** -- Google, Facebook, and GitHub OAuth2 with account linking and unlinking
+- **OIDC Provider** -- Each application can act as a standards-compliant OpenID Connect issuer (Authorization Code + PKCE, RS256 ID tokens, JWKS, introspection, token revocation)
+- **Webhook System** -- Register HTTP endpoints to receive HMAC-signed event notifications with delivery tracking and automatic retries
+- **Brute-Force Protection** -- Per-application account lockout, progressive login delays, and CAPTCHA trigger thresholds
+- **GeoIP & IP Rules** -- MaxMind GeoLite2-based IP access rules with CIDR/country allow-lists and block-lists per application
+- **API Key Scopes & Usage** -- Granular permission scopes on API keys with per-key daily usage analytics and expiry notifications
+- **Health & Metrics** -- `GET /health` liveness check and `GET /metrics` Prometheus endpoint with request and system metrics
 - **Role-Based Access Control** -- Per-application roles and permissions with admin management and self-healing default role assignment
 - **Session Management** -- List active sessions across devices, revoke individual sessions, and revoke all other sessions
-- **Admin GUI** -- Built-in web panel for managing tenants, apps, users, OAuth configs, API keys, roles, permissions, sessions, and settings
-- **Activity Logging** -- Smart event categorization, anomaly detection, and automatic retention cleanup
+- **Admin GUI** -- Built-in web panel for managing tenants, apps, users, OAuth configs, API keys, roles, permissions, sessions, webhooks, OIDC clients, IP rules, monitoring, and settings
+- **Activity Logging** -- Smart event categorization, anomaly detection, CSV export, and automatic retention cleanup
+- **User Import/Export** -- Bulk CSV export and import of user accounts via the admin panel
 - **Security Hardening** -- Rate limiting, security headers, timing-safe CSRF, JWT token type enforcement, Redis session validation
 - **API Documentation** -- Interactive Swagger UI
 
@@ -98,7 +105,10 @@ For early fork users upgrading from before multi-tenancy was added, see the [Pre
 | Cache/Sessions | Redis 6+ with [go-redis](https://github.com/redis/go-redis) |
 | Authentication | JWT ([golang-jwt](https://github.com/golang-jwt/jwt)), OAuth2 |
 | WebAuthn | [go-webauthn](https://github.com/go-webauthn/webauthn) |
-| 2FA | TOTP ([pquerna/otp](https://github.com/pquerna/otp)) |
+| 2FA | TOTP ([pquerna/otp](https://github.com/pquerna/otp)), SMS (Twilio) |
+| OIDC | Built-in OpenID Connect provider (RS256, PKCE, JWKS) |
+| GeoIP | MaxMind GeoLite2 |
+| Metrics | Prometheus |
 | API Docs | [Swagger/Swaggo](https://github.com/swaggo/swag) |
 | Admin GUI | Go Templates, HTMX, Bootstrap 5 |
 | Containerization | Docker, Docker Compose |

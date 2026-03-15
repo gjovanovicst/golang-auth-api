@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -241,6 +242,15 @@ func IsUserTokensBlacklisted(appID, userID string) (bool, error) {
 	return true, nil // All user tokens are blacklisted
 }
 
+// ClearUserTokenBlacklist removes the user-wide token blacklist entry.
+// Called when a user successfully authenticates with fresh credentials (e.g. new login
+// after a password reset) so that newly issued tokens are not blocked by the stale
+// post-reset blacklist.
+func ClearUserTokenBlacklist(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:blacklist_user:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
 // ==================== Session Management Functions ====================
 
 // CreateSession stores a new session as a Redis Hash with metadata.
@@ -301,6 +311,14 @@ func GetSessionRefreshToken(appID, sessionID string) (string, error) {
 func UpdateSessionRefreshToken(appID, sessionID, newRefreshToken string) error {
 	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
 	return Rdb.HSet(ctx, key, "refresh_token", newRefreshToken).Err()
+}
+
+// ResetSessionTTL resets the TTL on a session hash key.
+// Call this on every token rotation so the session lifetime slides forward
+// with the newly issued refresh token instead of expiring at the original login time.
+func ResetSessionTTL(appID, sessionID string, ttl time.Duration) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.Expire(ctx, key, ttl).Err()
 }
 
 // TouchSession updates the last_active timestamp of a session.
@@ -697,4 +715,264 @@ func DeleteAdminMagicLinkToken(token string) error {
 		Rdb.Del(ctx, reverseKey) // Best-effort cleanup
 	}
 	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== Failed Login Tracking (Brute-Force Detection) ====================
+
+// IncrFailedLogin increments the failed login counter for a given app + identifier (email or IP).
+// The counter auto-expires after the given window duration.
+// Returns the new count after increment.
+func IncrFailedLogin(appID, identifier string, window time.Duration) (int64, error) {
+	key := fmt.Sprintf("app:%s:failed_login:%s", appID, identifier)
+	count, err := Rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	// Set TTL only on first attempt (when count == 1)
+	if count == 1 {
+		Rdb.Expire(ctx, key, window)
+	}
+	return count, nil
+}
+
+// GetFailedLoginCount returns the current failed login count for a given app + identifier.
+func GetFailedLoginCount(appID, identifier string) (int64, error) {
+	key := fmt.Sprintf("app:%s:failed_login:%s", appID, identifier)
+	count, err := Rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return count, err
+}
+
+// ResetFailedLogins clears the failed login counter for a given app + identifier.
+// Call this on successful login.
+func ResetFailedLogins(appID, identifier string) error {
+	key := fmt.Sprintf("app:%s:failed_login:%s", appID, identifier)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== Notification Cooldown ====================
+
+// SetNotificationCooldown sets a cooldown flag to prevent spamming notification emails.
+// Key pattern: notify_cooldown:{appID}:{userID}:{notificationType}
+func SetNotificationCooldown(appID, userID, notificationType string, cooldown time.Duration) error {
+	key := fmt.Sprintf("notify_cooldown:%s:%s:%s", appID, userID, notificationType)
+	return Rdb.Set(ctx, key, "1", cooldown).Err()
+}
+
+// IsNotificationOnCooldown checks whether a notification cooldown is active for a user.
+func IsNotificationOnCooldown(appID, userID, notificationType string) (bool, error) {
+	key := fmt.Sprintf("notify_cooldown:%s:%s:%s", appID, userID, notificationType)
+	_, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ==================== Account Lockout Tier Tracking ====================
+
+// IncrLockoutTier increments the lockout tier for a given app + email and sets the TTL.
+// The tier determines which escalating lockout duration to use (e.g., tier 0 = 15m, tier 1 = 30m, etc.).
+// Returns the new tier value (1-based after increment).
+func IncrLockoutTier(appID, email string, ttl time.Duration) (int64, error) {
+	key := fmt.Sprintf("app:%s:lockout_tier:%s", appID, email)
+	tier, err := Rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	// Always refresh TTL on each lockout so the tier escalation window resets
+	Rdb.Expire(ctx, key, ttl)
+	return tier, nil
+}
+
+// GetLockoutTier returns the current lockout tier for a given app + email.
+// Returns 0 if no tier is set (user has not been locked out recently).
+func GetLockoutTier(appID, email string) (int64, error) {
+	key := fmt.Sprintf("app:%s:lockout_tier:%s", appID, email)
+	tier, err := Rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return tier, err
+}
+
+// ResetLockoutTier clears the lockout tier for a given app + email.
+// Called by admin when manually unlocking an account.
+func ResetLockoutTier(appID, email string) error {
+	key := fmt.Sprintf("app:%s:lockout_tier:%s", appID, email)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== Progressive Delay Tier Tracking ====================
+
+// IncrDelayTier increments the delay tier for a given app + identifier (email or IP).
+// The tier determines the exponential backoff delay applied before login processing.
+// Returns the new tier value (1-based after increment).
+func IncrDelayTier(appID, identifier string, ttl time.Duration) (int64, error) {
+	key := fmt.Sprintf("app:%s:delay_tier:%s", appID, identifier)
+	tier, err := Rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if tier == 1 {
+		Rdb.Expire(ctx, key, ttl)
+	}
+	return tier, nil
+}
+
+// GetDelayTier returns the current delay tier for a given app + identifier.
+// Returns 0 if no tier is set (no recent failed attempts).
+func GetDelayTier(appID, identifier string) (int64, error) {
+	key := fmt.Sprintf("app:%s:delay_tier:%s", appID, identifier)
+	tier, err := Rdb.Get(ctx, key).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return tier, err
+}
+
+// ResetDelayTier clears the delay tier for a given app + identifier.
+// Called on successful login to reset progressive delays.
+func ResetDelayTier(appID, identifier string) error {
+	key := fmt.Sprintf("app:%s:delay_tier:%s", appID, identifier)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ─── OIDC browser session (login cookie) ───────────────────────────────────────
+
+// SetOIDCBrowserSession stores an opaque session token → userID mapping used by
+// the OIDC login cookie. The token is a random value, never the user UUID.
+func SetOIDCBrowserSession(appID, sessionToken, userID string, ttl time.Duration) error {
+	key := fmt.Sprintf("app:%s:oidc_browser:%s", appID, sessionToken)
+	return Rdb.Set(ctx, key, userID, ttl).Err()
+}
+
+// GetOIDCBrowserSession resolves an opaque OIDC browser session token to a userID.
+// Returns ("", nil) when the session does not exist.
+func GetOIDCBrowserSession(appID, sessionToken string) (string, error) {
+	key := fmt.Sprintf("app:%s:oidc_browser:%s", appID, sessionToken)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	return val, err
+}
+
+// DeleteOIDCBrowserSession removes the OIDC browser session (e.g. on logout).
+func DeleteOIDCBrowserSession(appID, sessionToken string) error {
+	key := fmt.Sprintf("app:%s:oidc_browser:%s", appID, sessionToken)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== Backup Email Verification ====================
+
+// SetBackupEmailVerificationToken stores a token → (userID, pendingEmail) mapping used during
+// backup email verification. The token is a random URL-safe value emailed to the backup address.
+func SetBackupEmailVerificationToken(appID, userID, token, pendingEmail string, expiration time.Duration) error {
+	// token → "userID|pendingEmail"
+	key := fmt.Sprintf("app:%s:backup_email_verify:%s", appID, token)
+	value := userID + "|" + pendingEmail
+	return Rdb.Set(ctx, key, value, expiration).Err()
+}
+
+// GetBackupEmailVerificationToken retrieves the userID and pending email for a backup email verification token.
+func GetBackupEmailVerificationToken(appID, token string) (userID, pendingEmail string, err error) {
+	key := fmt.Sprintf("app:%s:backup_email_verify:%s", appID, token)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err != nil {
+		return "", "", err
+	}
+	// Split on first "|" only
+	idx := strings.Index(val, "|")
+	if idx < 0 {
+		return val, "", nil
+	}
+	return val[:idx], val[idx+1:], nil
+}
+
+// DeleteBackupEmailVerificationToken removes a backup email verification token after use.
+func DeleteBackupEmailVerificationToken(appID, token string) error {
+	key := fmt.Sprintf("app:%s:backup_email_verify:%s", appID, token)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ==================== SMS / Phone Verification Codes ====================
+
+// SetPhoneVerificationCode stores a 6-digit code used to verify a new phone number.
+func SetPhoneVerificationCode(appID, userID, code string, expiration time.Duration) error {
+	key := fmt.Sprintf("app:%s:phone_verify:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, expiration).Err()
+}
+
+// GetPhoneVerificationCode retrieves a phone verification code.
+func GetPhoneVerificationCode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:phone_verify:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeletePhoneVerificationCode removes a phone verification code after successful use.
+func DeletePhoneVerificationCode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:phone_verify:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// Set2FASMSCode stores a 6-digit SMS 2FA / recovery code during login (5-minute TTL).
+func Set2FASMSCode(appID, userID, code string) error {
+	key := fmt.Sprintf("app:%s:2fa_sms:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, 5*time.Minute).Err()
+}
+
+// Get2FASMSCode retrieves a stored SMS 2FA code.
+func Get2FASMSCode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:2fa_sms:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// Delete2FASMSCode removes an SMS 2FA code after successful verification (one-time use).
+func Delete2FASMSCode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:2fa_sms:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// SetBackupEmail2FACode stores a 6-digit code sent to the backup email during login (5-minute TTL).
+func SetBackupEmail2FACode(appID, userID, code string) error {
+	key := fmt.Sprintf("app:%s:2fa_backup_email:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, 5*time.Minute).Err()
+}
+
+// GetBackupEmail2FACode retrieves a stored backup-email 2FA code.
+func GetBackupEmail2FACode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:2fa_backup_email:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// DeleteBackupEmail2FACode removes a backup-email 2FA code after successful verification.
+func DeleteBackupEmail2FACode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:2fa_backup_email:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
+// ─── OIDC granted scopes (per session) ─────────────────────────────────────────
+
+// SetOIDCGrantedScopes stores the space-separated scopes that were granted for
+// a given OIDC session. Used by the UserInfo endpoint to gate which claims are
+// returned without embedding scopes in the JWT itself.
+func SetOIDCGrantedScopes(appID, sessionID, scopes string, ttl time.Duration) error {
+	key := fmt.Sprintf("app:%s:oidc_scopes:%s", appID, sessionID)
+	return Rdb.Set(ctx, key, scopes, ttl).Err()
+}
+
+// GetOIDCGrantedScopes retrieves the space-separated scopes for an OIDC session.
+// Returns ("", nil) when not found (e.g. token issued before this feature).
+func GetOIDCGrantedScopes(appID, sessionID string) (string, error) {
+	key := fmt.Sprintf("app:%s:oidc_scopes:%s", appID, sessionID)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", nil
+	}
+	return val, err
 }

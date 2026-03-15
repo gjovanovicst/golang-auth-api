@@ -67,6 +67,13 @@ func MigrateDatabase() {
 		&models.Permission{},         // RBAC permissions (global)
 		&models.UserRole{},           // RBAC user-role assignments
 		&models.WebAuthnCredential{}, // WebAuthn/Passkey credentials
+		&models.IPRule{},             // IP-based access rules (per-app)
+		&models.ApiKeyUsage{},        // API key daily usage analytics
+		&models.WebhookEndpoint{},    // Webhook endpoint registrations
+		&models.WebhookDelivery{},    // Webhook delivery history and retry tracking
+		&models.OIDCClient{},         // OIDC relying-party clients (per-app)
+		&models.OIDCAuthCode{},       // OIDC single-use authorization codes
+		&models.TrustedDevice{},      // Trusted device tokens for 2FA bypass
 	)
 
 	if err != nil {

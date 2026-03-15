@@ -12,64 +12,173 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Future enhancements planned for the `1.0.0` official release._
 
-### Planned — Security Enhancements
-
-#### IP-Based Anomaly Detection Improvements
-`internal/log/anomaly.go` exists but could be expanded:
-- Login from new device/location notifications
-- Suspicious activity alerts via email
-- Geo-IP based blocking/allowlisting per application
-
-#### Brute-Force Protection Enhancements
-Rate limiting exists, but could be enhanced with:
-- Progressive delays (exponential backoff)
-- CAPTCHA integration triggers after N failed attempts
-- Account lockout with admin unlock via GUI
-
-#### Audit Log Export
-Activity logs are viewable but not exportable:
-- CSV/JSON export endpoints for compliance
-
-#### API Key Scoping & Expiry Notifications
-API keys exist but could be enhanced with:
-- Granular permission scopes per key
-- Email notifications before key expiration
-- Usage analytics per key
-
-### Planned — Developer Experience
-
-#### Webhook System
-Allow applications to register webhook URLs for events:
-- `user.registered`, `user.verified`, `user.login`, `user.password_changed`
-- `2fa.enabled`, `2fa.disabled`
-- `social.linked`, `social.unlinked`
-
-#### OpenID Connect (OIDC) Provider
-Extend beyond being just an auth API — become a proper OIDC provider:
-- `/.well-known/openid-configuration`
-- `/userinfo` endpoint
-- ID tokens with standard OIDC claims
-
-#### Multi-Factor Recovery Improvements
-- Allow backup email for recovery
-- SMS-based recovery (even if not primary 2FA)
-- Trusted device management ("remember this device for 30 days")
-
-### Planned — Operational / Admin Features
-
-#### User Import/Export
-Admin bulk operations:
-- CSV/JSON import of users
-- Export user lists for compliance (GDPR data portability)
-
-#### Application-Level Customization
+### Planned — Application-Level Customization
 - Custom login page branding per app (logo, colors)
 - Configurable password policies per app (min length, complexity, history)
 - Configurable token TTLs per application (currently global)
 
-#### Health Check & Metrics Endpoint
-- `GET /health` — Database, Redis, SMTP connectivity checks
-- `GET /metrics` — Prometheus-compatible metrics (login counts, error rates, latency)
+### Planned — Multi-Factor Recovery
+- SMS-based recovery (even if not primary 2FA method)
+
+---
+
+## [1.0.0-alpha.6] - 2026-03-15
+
+### Added
+
+#### OpenID Connect (OIDC) Provider
+- **Full OIDC provider** — the API can now act as a standards-compliant OIDC identity provider (opt-in via `OIDC_ENABLED=true`)
+- Discovery document: `GET /.well-known/openid-configuration` (global redirect) and `GET /oidc/:app_id/.well-known/openid-configuration`
+- JWKS endpoint: `GET /oidc/:app_id/.well-known/jwks.json`
+- Authorization endpoint with login/consent UI: `GET /oidc/:app_id/authorize`, `POST /oidc/:app_id/authorize`
+- Token endpoint (authorization_code, client_credentials, refresh_token grants): `POST /oidc/:app_id/token`
+- UserInfo endpoint: `GET|POST /oidc/:app_id/userinfo`
+- Token introspection: `POST /oidc/:app_id/introspect`
+- Token revocation: `POST /oidc/:app_id/revoke`
+- End session (RP-initiated logout): `GET|POST /oidc/:app_id/end_session`
+- Admin API for OIDC client management: `POST|GET|PUT|DELETE /admin/oidc/apps/:id/clients`, plus secret rotation
+- Admin GUI pages for managing OIDC clients (create, edit, delete, rotate secret)
+- New models: `OIDCClient` (`pkg/models/oidc_client.go`), `OIDCAuthCode` (`pkg/models/oidc_auth_code.go`)
+- New DTOs: `pkg/dto/oidc.go`
+- New domain package: `internal/oidc/` (handler, service, repository, id\_token, keys)
+- New env vars: `OIDC_ENABLED`, `PUBLIC_URL`, `OIDC_ID_TOKEN_EXPIRATION_MINUTES`, `OIDC_AUTH_CODE_EXPIRATION_MINUTES`
+- SQL migration: `20260306_add_oidc.sql`
+- Supports scopes: `openid`, `profile`, `email`, `roles`, `offline_access`; PKCE (S256); RS256 signed ID tokens
+
+#### Webhook System
+- **Event-driven webhooks** — applications can register HTTPS endpoints to receive real-time event notifications
+- Events delivered: `user.registered`, `user.verified`, `user.login`, `user.password_changed`, `2fa.enabled`, `2fa.disabled`, `social.linked`, `social.unlinked`
+- Delivery queue with async background dispatcher, automatic retries, and per-delivery status tracking
+- Admin API: `GET|POST /admin/webhooks`, `GET|POST /admin/webhooks/apps/:app_id`, `PUT /admin/webhooks/:id/toggle`, `DELETE /admin/webhooks/:id`, plus delivery history endpoints
+- App-scoped API: `GET|POST|PUT|DELETE /app/:id/webhooks`, `GET /app/:id/webhooks/deliveries`
+- Admin GUI Webhooks page (create, toggle, delete, view delivery history)
+- New models: `WebhookEndpoint` (`pkg/models/webhook_endpoint.go`), `WebhookDelivery` (`pkg/models/webhook_delivery.go`)
+- New DTOs: `pkg/dto/webhook.go`
+- New domain package: `internal/webhook/` (handler, service, repository)
+- SQL migration: `20260305_add_webhooks.sql`
+
+#### Brute-Force Protection
+- **Account lockout** — after configurable failed login attempts, accounts are temporarily locked with progressive backoff
+- **CAPTCHA trigger** — after N failures, a CAPTCHA challenge is required before the next attempt
+- Admin GUI: unlock button on User detail page (`PUT /gui/users/:id/unlock`)
+- Admin API: configurable per-application settings via `20260305_add_app_bruteforce_settings.sql` migration
+- New package: `internal/bruteforce/` (service, captcha)
+- Login failure reasons tracked in Prometheus metrics (`auth_login_failure_total` with `reason` label)
+
+#### GeoIP Service and IP Access Rules
+- **IP-based access control** — allow or block login attempts by CIDR range or country code, per application
+- Uses MaxMind GeoLite2 database for country/city resolution (gracefully disabled when `GEOIP_DB_PATH` is not set)
+- Admin API: `GET|POST|PUT|DELETE /admin/apps/:id/ip-rules`, `GET /admin/apps/:id/ip-rules/:rule_id`, `POST /admin/apps/:id/ip-rules/check`
+- Admin GUI IP Rules page (create, edit, delete, test access)
+- Anomaly detection enhanced: new IP addresses now resolve to city/country and trigger notification emails
+- New model: `IPRule` (`pkg/models/ip_rule.go`)
+- New DTOs: `pkg/dto/ip_rule.go`
+- New package: `internal/geoip/` (service, ip\_rules repository/evaluator)
+- New env var: `GEOIP_DB_PATH` (optional — path to MaxMind `.mmdb` file)
+
+#### Health Check and Prometheus Metrics
+- `GET /health` — checks PostgreSQL, Redis, and SMTP connectivity with latency; returns 200 when healthy, 503 when any component is down
+- `GET /metrics` — Prometheus exposition format; requires Admin API Key
+- Metrics tracked: `http_requests_total`, `http_request_duration_seconds`, `auth_login_success_total`, `auth_login_failure_total`, `auth_register_total`, `auth_logout_total`, DB connection pool gauges, `active_sessions_total`
+- `PrometheusMiddleware` instruments every HTTP request automatically
+- Admin GUI Monitoring page with live health and metrics summary
+- New package: `internal/health/` (handler)
+- New DTOs: `pkg/dto/health.go`
+
+#### SMS Two-Factor Authentication
+- **SMS-based 2FA** via Twilio — users can receive one-time codes by SMS as a second factor
+- New endpoints: `POST /2fa/sms/enable` (protected), `POST /2fa/sms/resend` (public, during login)
+- Phone number management: `POST /phone` (add), `POST /phone/verify`, `DELETE /phone`, `GET /phone/status`
+- New package: `internal/sms/` (sender interface, Twilio implementation)
+- New env vars: `SMS_PROVIDER` (`"twilio"` or empty to disable), `SMS_TWILIO_ACCOUNT_SID`, `SMS_TWILIO_AUTH_TOKEN`, `SMS_TWILIO_FROM_NUMBER`
+- Graceful degradation: SMS is silently disabled when `SMS_PROVIDER` is not set
+
+#### Backup Email Two-Factor Authentication
+- Users can register a secondary email address as a 2FA fallback channel
+- New endpoints: `POST /2fa/backup-email` (add), `DELETE /2fa/backup-email` (remove), `GET /2fa/backup-email/status`, `POST /2fa/backup-email/enable`, `POST /2fa/backup-email/disable`, `GET /2fa/backup-email/verify`, `POST /2fa/backup-email/resend`
+- Admin GUI My Account: manage backup email for admin accounts
+- SQL migration: `20260309_seed_backup_email_verification_type.sql`
+
+#### Trusted Device Management
+- **"Remember this device"** — users can mark a device as trusted to skip 2FA for a configurable period
+- New endpoints: `GET /2fa/trusted-devices`, `DELETE /2fa/trusted-devices/:id`, `DELETE /2fa/trusted-devices` (revoke all)
+- Admin API: `GET|DELETE /admin/users/:id/trusted-devices`, `DELETE /admin/users/:id/trusted-devices/:device_id`
+- Admin GUI: trusted device list on User detail page, My Account page for admin self-management
+- New model: `TrustedDevice` (`pkg/models/trusted_device.go`)
+- New repository: `internal/twofa/trusted_device_repository.go`
+
+#### Activity Log Export
+- `GET /activity-logs/export` — export the authenticated user's logs (CSV)
+- `GET /admin/activity-logs/export` — export all users' logs (CSV, admin-only)
+- `GET /gui/logs/export` — export from admin GUI
+
+#### User Import/Export
+- `GET /admin/users/export` — export user list as CSV
+- `POST /admin/users/import` — bulk import users from CSV/JSON
+- Admin GUI: export button and import modal on Users page
+- New DTO: `pkg/dto/user_import.go`
+- New helper: `internal/user/import.go`
+
+#### API Key Scopes and Usage Tracking
+- API keys now support granular permission **scopes** to limit which endpoints a key can access
+- **Usage tracking**: every API key request is recorded in `api_key_usages` table; viewable on a per-key usage page in the Admin GUI
+- **Expiry notification service**: background service emails admins when API keys are nearing expiration
+- New model: `ApiKeyUsage` (`pkg/models/api_key_usage.go`)
+- New service: `internal/admin/apikey_notification.go`
+- SQL migrations: `20260305_add_api_key_scopes_columns.sql`, `20260305_create_api_key_usages.sql`, `20260305_seed_api_key_expiring_soon_email_type.sql`
+
+#### Available 2FA Methods Endpoint
+- `GET /2fa/methods` — public endpoint returning the 2FA methods enabled for the current application; used by login UI to show available options
+
+#### App-Config Endpoint
+- `GET /app-config/:app_id` — returns the public login configuration for an application (enabled auth methods, feature flags); used by frontend login/register UI without authentication
+
+#### Configurable Email Action Link Paths
+- Per-application configuration for the path segments used in email action links (verify email, password reset, magic link)
+- SQL migration: `20260314_add_app_link_paths.sql`
+
+#### Application-Level 2FA Enforcement
+- Applications can now enforce 2FA for all users via a feature flag
+- SQL migration: `20260310_add_two_fa_previous_method.sql` — tracks the previous 2FA method when switching methods
+
+#### Application Customization
+- New per-application customization fields (frontend URL, branding hints)
+- SQL migration: `20260311_add_app_customization.sql`
+
+#### Security Email Types
+- Seeded new security-related email types: anomaly notifications (new device login, suspicious activity)
+- SQL migrations: `20260305_seed_security_email_types.sql`, `20260305_seed_api_key_expiring_soon_email_type.sql`
+
+#### Anomaly Notification Emails
+- When anomaly detection fires, the system now sends email notifications to the affected user
+- Two email types: `new_device_login` and `suspicious_activity`
+- Wired via callback from log service to email service in `main.go`
+
+#### OIDC Login Activity Logging
+- Successful OIDC logins are recorded in the activity log with `OIDC_LOGIN` event type
+
+### Changed
+
+#### 2FA Method Switching
+- Previous 2FA method is preserved in `two_fa_previous_method` field when a user switches methods, enabling smoother recovery flows
+
+#### Session Management Enhancement
+- Sessions now track a `status` field for richer state management (active, revoked, expired)
+- User token blacklist is cleared when a new session starts (prevents stale blacklist entries from blocking valid new sessions)
+
+#### Middleware
+- `middleware.Scope()` added for API key scope validation on app-scoped routes
+- Rate limits added for OIDC endpoints (`OIDCAuthorizeRateLimit`, `OIDCTokenRateLimit`, `OIDCUserInfoRateLimit`, `OIDCIntrospectRateLimit`, `OIDCRevokeRateLimit`)
+- Rate limits added for 2FA SMS and backup-email resend endpoints
+
+#### Admin GUI Expansion
+- New pages: **Monitoring** (health check + Prometheus metrics summary), **Webhooks**, **OIDC Clients**, **IP Rules**, **API Key Usage**
+- Users page: unlock button for brute-force-locked accounts, trusted device management per user
+- My Account page: backup email management, trusted device management
+- Dashboard: activity chart updated
+
+### Fixed
+- Session: clearing the token blacklist on new session creation prevents a race condition where a fresh token was incorrectly rejected after logout followed by immediate re-login
 
 ---
 

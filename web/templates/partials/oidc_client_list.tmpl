@@ -1,0 +1,95 @@
+{{define "oidc_client_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Clients}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        <th>Client ID</th>
+                        <th>Application</th>
+                        <th>Grant Types</th>
+                        <th class="text-center">Confidential</th>
+                        <th class="text-center">Active</th>
+                        <th>Created</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Clients}}
+                    <tr>
+                        <td class="ps-3">
+                            <span class="fw-semibold">{{.Name}}</span>
+                            {{if .Description}}
+                            <br><small class="text-muted">{{truncate .Description 60}}</small>
+                            {{end}}
+                        </td>
+                        <td>
+                            <small class="font-monospace text-truncate d-inline-block" style="max-width: 160px;" title="{{.ClientID}}">{{.ClientID}}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted">{{.AppID}}</small>
+                        </td>
+                        <td>
+                            {{range splitScopes .AllowedGrantTypes}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary me-1">{{.}}</span>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            {{if .IsConfidential}}
+                            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-lock-fill me-1"></i>Yes</span>
+                            {{else}}
+                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="bi bi-unlock me-1"></i>Public</span>
+                            {{end}}
+                        </td>
+                        <td class="text-center">
+                            {{if .IsActive}}
+                            <span class="badge bg-success bg-opacity-10 text-success"><i class="bi bi-check-circle-fill me-1"></i>On</span>
+                            {{else}}
+                            <span class="badge bg-danger bg-opacity-10 text-danger"><i class="bi bi-x-circle-fill me-1"></i>Off</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{.CreatedAtFull}}">{{.CreatedAtStr}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/oidc-clients/{{.ID}}/edit"
+                                    hx-target="#oidc-client-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm me-1"
+                                    hx-post="/gui/oidc-clients/{{.ID}}/rotate-secret"
+                                    hx-target="#oidc-client-form-container"
+                                    hx-swap="innerHTML"
+                                    hx-confirm="Rotate client secret? The current secret will be invalidated."
+                                    title="Rotate Secret">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/oidc-clients/{{.ID}}/delete"
+                                    hx-target="#delete-oidc-client-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteOIDCClientModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-fingerprint fs-1"></i>
+            <p class="mt-2 mb-0">No OIDC clients yet. Create your first client to get started.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

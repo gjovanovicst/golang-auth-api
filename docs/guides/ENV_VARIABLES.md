@@ -170,6 +170,39 @@ RATE_LIMIT_WINDOW=60s
 CORS_ALLOWED_ORIGINS=http://localhost:3000,https://yourapp.com
 ```
 
+## OIDC Provider
+
+```bash
+# Base URL used as OIDC issuer and in discovery documents
+PUBLIC_URL=https://auth.example.com
+
+# Token TTL overrides (optional — defaults to global JWT expiration settings)
+OIDC_ID_TOKEN_EXPIRATION_MINUTES=60    # ID token lifetime (default: 60)
+OIDC_AUTH_CODE_EXPIRATION_MINUTES=5    # Authorization code lifetime (default: 5)
+```
+
+> RSA key pairs for RS256 ID token signing are auto-generated per application and stored in the database.
+
+## GeoIP Configuration
+
+```bash
+# Path to the MaxMind GeoLite2-City or GeoLite2-Country .mmdb file
+# If unset or file not found, country-based IP rules are skipped; CIDR rules still apply
+GEOIP_DB_PATH=/data/GeoLite2-City.mmdb
+```
+
+## SMS / Twilio Configuration
+
+```bash
+# Set to 'twilio' to enable SMS-based 2FA; leave empty to disable
+SMS_PROVIDER=twilio
+
+# Twilio credentials (required when SMS_PROVIDER=twilio)
+SMS_TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+SMS_TWILIO_AUTH_TOKEN=your_auth_token
+SMS_TWILIO_FROM_NUMBER=+15551234567    # Twilio phone number to send from
+```
+
 ## Quick Configuration Presets
 
 ### Development Environment

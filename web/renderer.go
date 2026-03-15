@@ -2,6 +2,7 @@ package web
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -42,6 +43,10 @@ type TemplateData struct {
 	// 2FA-specific fields
 	TempToken   string // Temporary token for 2FA login verification
 	TwoFAMethod string // "totp" or "email" — which 2FA method is required
+
+	// Theme is the active UI theme: "light" or "dark".
+	// Read from the gui_theme cookie via web.GetTheme(c).
+	Theme string
 
 	// Page-specific data (each page can put arbitrary data here)
 	Data interface{}
@@ -226,6 +231,41 @@ func defaultFuncMap() template.FuncMap {
 		},
 		"sub": func(a, b int) int {
 			return a - b
+		},
+
+		// splitScopes splits a comma-separated scope string into a []string for range iteration.
+		"splitScopes": func(s string) []string {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				return nil
+			}
+			parts := strings.Split(s, ",")
+			out := make([]string, 0, len(parts))
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					out = append(out, p)
+				}
+			}
+			return out
+		},
+
+		// truncate shortens a string to at most n characters, appending "…" if cut.
+		"truncate": func(s string, n int) string {
+			runes := []rune(s)
+			if len(runes) <= n {
+				return s
+			}
+			return string(runes[:n]) + "…"
+		},
+
+		// toJSON marshals a value to a JSON string for use in inline <script> blocks.
+		"toJSON": func(v interface{}) template.JS {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return template.JS("null")
+			}
+			return template.JS(b) // #nosec G203 -- JSON-encoded server data only.
 		},
 	}
 }

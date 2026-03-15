@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"log"
 
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
@@ -99,11 +99,8 @@ func (r *VariableResolver) applySettingsVars(vars map[string]string, appID uuid.
 	// app_name: application name from DB -> env -> default
 	vars[VarAppName] = r.resolveAppName(appID)
 
-	// frontend_url: from env/config
-	frontendURL := viper.GetString("FRONTEND_URL")
-	if frontendURL != "" {
-		vars[VarFrontendURL] = frontendURL
-	}
+	// frontend_url: per-app FrontendURL → FRONTEND_URL env var → default
+	vars[VarFrontendURL] = r.resolveAppFrontendURL(appID)
 }
 
 // applyUserVars loads the user by ID and populates user-sourced variables.
@@ -150,9 +147,19 @@ func (r *VariableResolver) resolveAppName(appID uuid.UUID) string {
 			return app.Name
 		}
 	}
-	appName := viper.GetString("APP_NAME")
-	if appName == "" {
-		appName = "Auth API"
-	}
+	appName := util.ResolveAppName()
 	return appName
+}
+
+// resolveAppFrontendURL returns the effective frontend URL for an application.
+// Delegates to util.ResolveFrontendURL with per-app DB lookup.
+// Priority: per-app FrontendURL → FRONTEND_URL env var → http://localhost:8080
+func (r *VariableResolver) resolveAppFrontendURL(appID uuid.UUID) string {
+	if r.db != nil {
+		var app models.Application
+		if err := r.db.Select("frontend_url").First(&app, "id = ?", appID).Error; err == nil {
+			return util.ResolveFrontendURL(app.FrontendURL)
+		}
+	}
+	return util.ResolveFrontendURL("")
 }

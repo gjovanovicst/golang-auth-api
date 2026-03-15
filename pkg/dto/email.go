@@ -170,11 +170,12 @@ type TwoFAMethodsResponse struct {
 	Email2FAEnabled  bool     `json:"email_2fa_enabled"`
 	TOTPEnabled      bool     `json:"totp_enabled"`
 	PasskeyEnabled   bool     `json:"passkey_enabled"`
+	SMSEnabled       bool     `json:"sms_enabled"`
 }
 
 // TwoFASetMethodRequest represents a request to set the user's preferred 2FA method
 type TwoFASetMethodRequest struct {
-	Method string `json:"method" validate:"required,oneof=totp email passkey"`
+	Method string `json:"method" validate:"required,oneof=totp email passkey sms backup_email"`
 }
 
 // TwoFAEmail2FASetupRequest represents a request to set up email-based 2FA

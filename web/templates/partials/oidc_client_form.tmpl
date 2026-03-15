@@ -1,0 +1,167 @@
+{{define "oidc_client_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .IsEdit}}
+            <i class="bi bi-pencil me-2"></i>Edit OIDC Client
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Create OIDC Client
+            {{end}}
+        </h6>
+        <form {{if .IsEdit}}
+                hx-put="/gui/oidc-clients/{{.ID}}"
+              {{else}}
+                hx-post="/gui/oidc-clients"
+              {{end}}
+              hx-target="#oidc-client-form-container"
+              hx-swap="innerHTML">
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="oidcApp" class="form-label small text-muted">Application *</label>
+                    <select class="form-select" id="oidcApp" name="app_id" {{if .IsEdit}}disabled{{end}} required>
+                        {{if not .IsEdit}}
+                        <option value="">Select an application...</option>
+                        {{end}}
+                        {{range .Apps}}
+                        <option value="{{.ID}}" {{if eq (printf "%s" .ID) $.AppID}}selected{{end}}>{{.Name}} ({{.TenantName}})</option>
+                        {{end}}
+                    </select>
+                    {{if .IsEdit}}
+                    <input type="hidden" name="app_id" value="{{.AppID}}">
+                    {{end}}
+                </div>
+                <div class="col-md-6">
+                    <label for="oidcName" class="form-label small text-muted">Client Name *</label>
+                    <input type="text" class="form-control" id="oidcName" name="name"
+                           value="{{.Name}}" placeholder="e.g. My Web App" required maxlength="100">
+                </div>
+            </div>
+
+            <div class="row g-3 mt-0">
+                <div class="col-12">
+                    <label for="oidcDescription" class="form-label small text-muted">Description</label>
+                    <input type="text" class="form-control" id="oidcDescription" name="description"
+                           value="{{.Description}}" placeholder="Optional description shown on consent screen">
+                </div>
+            </div>
+
+            <div class="row g-3 mt-0">
+                <div class="col-12">
+                    <label for="oidcRedirectURIs" class="form-label small text-muted">Redirect URIs *</label>
+                    <input type="text" class="form-control" id="oidcRedirectURIs" name="redirect_uris"
+                           value="{{.RedirectURIs}}"
+                           placeholder='["https://app.example.com/callback"]'
+                           required>
+                    <div class="form-text">JSON array of allowed redirect URIs. Example: <code>["https://app.example.com/cb"]</code></div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-0">
+                <div class="col-md-6">
+                    <label for="oidcGrantTypes" class="form-label small text-muted">Allowed Grant Types *</label>
+                    <input type="text" class="form-control" id="oidcGrantTypes" name="allowed_grant_types"
+                           value="{{.AllowedGrantTypes}}"
+                           placeholder="authorization_code,refresh_token" required>
+                    <div class="form-text">Comma-separated. Options: <code>authorization_code</code>, <code>client_credentials</code>, <code>refresh_token</code></div>
+                </div>
+                <div class="col-md-6">
+                    <label for="oidcScopes" class="form-label small text-muted">Allowed Scopes *</label>
+                    <input type="text" class="form-control" id="oidcScopes" name="allowed_scopes"
+                           value="{{.AllowedScopes}}"
+                           placeholder="openid profile email" required>
+                    <div class="form-text">Comma-separated. Options: <code>openid</code>, <code>profile</code>, <code>email</code>, <code>roles</code></div>
+                </div>
+            </div>
+
+            <div class="row g-3 mt-0">
+                <div class="col-md-6">
+                    <label for="oidcLogoURL" class="form-label small text-muted">Logo URL</label>
+                    <input type="url" class="form-control" id="oidcLogoURL" name="logo_url"
+                           value="{{.LogoURL}}" placeholder="https://example.com/logo.png">
+                    <div class="form-text">Displayed on the consent screen.</div>
+                </div>
+                <div class="col-md-6 d-flex align-items-end pb-1 gap-4">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="oidcIsConfidential" name="is_confidential" value="true"
+                               {{if .IsConfidential}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="oidcIsConfidential">Confidential Client</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="oidcPKCE" name="pkce_required" value="true"
+                               {{if .PKCERequired}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="oidcPKCE">Require PKCE</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="oidcConsent" name="require_consent" value="true"
+                               {{if .RequireConsent}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="oidcConsent">Require Consent</label>
+                    </div>
+                </div>
+            </div>
+
+            {{if .IsEdit}}
+            <div class="row g-3 mt-0">
+                <div class="col-md-3 d-flex align-items-end pb-1">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="oidcIsActive" name="is_active" value="true"
+                               {{if .IsActive}}checked{{end}}>
+                        <label class="form-check-label small text-muted" for="oidcIsActive">Active</label>
+                    </div>
+                </div>
+            </div>
+            {{end}}
+
+            <div class="row g-3 mt-0">
+                <div class="col-md-4">
+                    <label for="oidcLoginTheme" class="form-label small text-muted">Login Page Theme</label>
+                    <select class="form-select" id="oidcLoginTheme" name="login_theme">
+                        <option value="app"   {{if eq .LoginTheme "app"}}selected{{end}}>Follow App Settings</option>
+                        <option value="auto"  {{if eq .LoginTheme "auto"}}selected{{end}}>Auto — Follow OS</option>
+                        <option value="light" {{if eq .LoginTheme "light"}}selected{{end}}>Light</option>
+                        <option value="dark"  {{if eq .LoginTheme "dark"}}selected{{end}}>Dark</option>
+                    </select>
+                    <div class="form-text">Controls light/dark appearance of OIDC login &amp; consent pages.</div>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label small text-muted">Primary Color</label>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="color" class="form-control form-control-color" id="oidcPrimaryColorPicker"
+                               value="{{if .LoginPrimaryColor}}{{.LoginPrimaryColor}}{{else}}#0d6efd{{end}}"
+                               title="Pick a primary color">
+                        <input type="text" class="form-control" id="oidcPrimaryColorHex" name="login_primary_color"
+                               value="{{.LoginPrimaryColor}}" placeholder="#0d6efd (leave blank for default)"
+                               maxlength="7" pattern="^(#[0-9a-fA-F]{6})?$">
+                    </div>
+                    <div class="form-text">Hex code e.g. <code>#0d6efd</code>. Leave blank to use Bootstrap default blue.</div>
+                </div>
+            </div>
+            <script>
+            (function() {
+                var picker = document.getElementById('oidcPrimaryColorPicker');
+                var hex    = document.getElementById('oidcPrimaryColorHex');
+                picker.addEventListener('input', function() { hex.value = picker.value; });
+                hex.addEventListener('input', function() {
+                    if (/^#[0-9a-fA-F]{6}$/.test(hex.value)) { picker.value = hex.value; }
+                });
+                hex.addEventListener('change', function() {
+                    if (hex.value === '') { picker.value = '#0d6efd'; }
+                });
+            })();
+            </script>
+
+            <div class="mt-3 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg me-1"></i>{{if .IsEdit}}Update{{else}}Create{{end}}
+                </button>
+                <button type="button" class="btn btn-outline-secondary"
+                        hx-get="/gui/oidc-clients/form-cancel"
+                        hx-target="#oidc-client-form-container"
+                        hx-swap="innerHTML">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

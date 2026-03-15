@@ -1,0 +1,119 @@
+{{define "ip_rules"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}IP Rules{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-shield-lock-fill me-2"></i>IP Access Rules
+    </h4>
+    <div class="d-flex align-items-center gap-3">
+        <!-- Application filter dropdown -->
+        <div class="d-flex align-items-center gap-2">
+            <label for="appFilter" class="form-label mb-0 small text-muted text-nowrap">Application:</label>
+            <select class="form-select form-select-sm" id="appFilter" name="app_id" style="min-width: 220px;">
+                <option value="">Select an application...</option>
+                {{range .Data}}
+                <option value="{{.ID}}">{{.Name}} ({{.TenantName}})</option>
+                {{end}}
+            </select>
+        </div>
+        <button class="btn btn-primary btn-sm" id="btnCreateRule" disabled
+                hx-get="/gui/ip-rules/new"
+                hx-target="#iprule-form-container"
+                hx-swap="innerHTML">
+            <i class="bi bi-plus-lg me-1"></i>Create Rule
+        </button>
+    </div>
+</div>
+
+<!-- Form container (populated by HTMX when creating/editing) -->
+<div id="iprule-form-container" class="mb-3"></div>
+
+<!-- IP access check tool -->
+<div class="card border-0 shadow-sm mb-3">
+    <div class="card-body py-2">
+        <form id="ipCheckForm" class="d-flex align-items-center gap-3"
+              hx-post="/gui/ip-rules/check"
+              hx-target="#ip-check-result"
+              hx-swap="innerHTML">
+            <input type="hidden" name="app_id" id="checkAppId" value="">
+            <span class="small text-muted text-nowrap"><i class="bi bi-search me-1"></i>Test IP:</span>
+            <input type="text" class="form-control form-control-sm" name="ip_address"
+                   placeholder="Enter IP address to test (e.g., 203.0.113.50)" style="max-width: 300px;">
+            <button type="submit" class="btn btn-outline-secondary btn-sm" id="btnCheckIP" disabled>
+                <i class="bi bi-arrow-right-circle me-1"></i>Check Access
+            </button>
+        </form>
+    </div>
+</div>
+<div id="ip-check-result" class="mb-3"></div>
+
+<!-- IP rules table (loaded via HTMX) -->
+<div id="iprule-table"
+     hx-get="/gui/ip-rules/list"
+     hx-trigger="load, ipRuleListRefresh from:body"
+     hx-swap="innerHTML"
+     hx-include="#appFilter">
+    <!-- Loading placeholder -->
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-funnel fs-1"></i>
+        <p class="mt-2 mb-0">Select an application above to view its IP rules.</p>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteIPRuleModal" tabindex="-1" aria-labelledby="deleteIPRuleModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteIPRuleModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete IP Rule
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-iprule-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close delete modal after successful deletion
+    document.body.addEventListener('ipRuleDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteIPRuleModal'));
+        if (modal) modal.hide();
+    });
+
+    var appFilter = document.getElementById('appFilter');
+    var btnCreate = document.getElementById('btnCreateRule');
+    var btnCheck = document.getElementById('btnCheckIP');
+    var checkAppId = document.getElementById('checkAppId');
+
+    // When app filter changes, reload the list and update button states
+    appFilter.addEventListener('change', function() {
+        var appId = this.value;
+        btnCreate.disabled = !appId;
+        btnCheck.disabled = !appId;
+        checkAppId.value = appId;
+
+        // Update the create button to include the app_id
+        if (appId) {
+            btnCreate.setAttribute('hx-get', '/gui/ip-rules/new?app_id=' + appId);
+        }
+        htmx.process(btnCreate);
+
+        // Reload the list
+        var url = '/gui/ip-rules/list';
+        if (appId) {
+            url += '?app_id=' + appId;
+        }
+        htmx.ajax('GET', url, {target: '#iprule-table', swap: 'innerHTML'});
+    });
+</script>
+{{end}}

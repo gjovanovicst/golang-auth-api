@@ -26,6 +26,23 @@
                 {{end}}
             </select>
         </div>
+        <!-- Export buttons -->
+        <a id="exportCsvBtn"
+           href="/gui/users/export?format=csv"
+           class="btn btn-outline-secondary btn-sm text-nowrap">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Export CSV
+        </a>
+        <a id="exportJsonBtn"
+           href="/gui/users/export?format=json"
+           class="btn btn-outline-secondary btn-sm text-nowrap">
+            <i class="bi bi-file-earmark-code me-1"></i>Export JSON
+        </a>
+        <!-- Import button -->
+        <button type="button"
+                class="btn btn-outline-primary btn-sm text-nowrap"
+                onclick="openImportModal()">
+            <i class="bi bi-upload me-1"></i>Import
+        </button>
     </div>
 </div>
 
@@ -81,6 +98,20 @@
         </div>
     </div>
 </div>
+
+<!-- Import users modal -->
+<div class="modal fade" id="importUsersModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div id="import-modal-body"
+                 hx-get="/gui/users/import/modal"
+                 hx-trigger="show.bs.modal from:#importUsersModal"
+                 hx-swap="innerHTML">
+                <!-- Populated by HTMX on modal open -->
+            </div>
+        </div>
+    </div>
+</div>
 {{end}}
 
 {{define "scripts"}}
@@ -95,9 +126,25 @@
         return url;
     }
 
-    // When app filter changes, reload the list with filter
+    // Update export button hrefs to match current filter/search state
+    function updateExportLinks() {
+        var appID  = document.getElementById('appFilter').value;
+        var search = document.getElementById('userSearch').value.trim();
+        ['exportCsvBtn', 'exportJsonBtn'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            var fmt = el.href.indexOf('format=json') !== -1 ? 'json' : 'csv';
+            var url = '/gui/users/export?format=' + fmt;
+            if (appID)  url += '&app_id=' + appID;
+            if (search) url += '&search=' + encodeURIComponent(search);
+            el.href = url;
+        });
+    }
+
+    // When app filter changes, reload the list and update export links
     document.getElementById('appFilter').addEventListener('change', function() {
         htmx.ajax('GET', getUserListURL(1), {target: '#user-table', swap: 'innerHTML'});
+        updateExportLinks();
     });
 
     // Debounced search on keyup
@@ -106,6 +153,7 @@
         if (searchTimeout) clearTimeout(searchTimeout);
         searchTimeout = setTimeout(function() {
             htmx.ajax('GET', getUserListURL(1), {target: '#user-table', swap: 'innerHTML'});
+            updateExportLinks();
         }, 300);
     });
 
@@ -125,5 +173,21 @@
         var modal = bootstrap.Modal.getInstance(document.getElementById('deletePasskeyModal'));
         if (modal) modal.hide();
     });
+
+    // After a successful import, refresh the user list
+    document.body.addEventListener('userImportComplete', function() {
+        htmx.ajax('GET', getUserListURL(1), {target: '#user-table', swap: 'innerHTML'});
+    });
+
+    // Open the import modal with the current app_id injected into the HTMX URL
+    function openImportModal() {
+        var appID = document.getElementById('appFilter').value;
+        var url = '/gui/users/import/modal';
+        if (appID) url += '?app_id=' + encodeURIComponent(appID);
+        var body = document.getElementById('import-modal-body');
+        body.setAttribute('hx-get', url);
+        htmx.process(body);
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('importUsersModal')).show();
+    }
 </script>
 {{end}}

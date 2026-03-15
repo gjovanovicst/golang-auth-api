@@ -42,6 +42,12 @@
                     <label for="keyExpiresAt" class="form-label small text-muted">Expires At <span class="text-muted">(optional)</span></label>
                     <input type="datetime-local" class="form-control" id="keyExpiresAt" name="expires_at">
                 </div>
+                <div class="col-md-4">
+                    <label for="keyScopes" class="form-label small text-muted">Scopes <span class="text-muted">(optional)</span></label>
+                    <input type="text" class="form-control" id="keyScopes" name="scopes"
+                           placeholder="e.g. users:read,auth:*">
+                    <div class="form-text">Comma-separated <code>resource:action</code> scopes. Leave blank for unrestricted access.</div>
+                </div>
             </div>
             <div class="mt-3 d-flex gap-2">
                 <button type="submit" class="btn btn-primary">

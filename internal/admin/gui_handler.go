@@ -522,20 +522,23 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 	}
 
 	type formData struct {
-		ID                  string
-		Name                string
-		Description         string
-		FrontendURL         string
-		TenantID            string
-		TwoFAIssuerName     string
-		TwoFAEnabled        bool
-		TwoFARequired       bool
-		Passkey2FAEnabled   bool
-		PasskeyLoginEnabled bool
-		MagicLinkEnabled    bool
-		OIDCEnabled         bool
-		Tenants             []models.Tenant
-		IsEdit              bool
+		ID                   string
+		Name                 string
+		Description          string
+		FrontendURL          string
+		TenantID             string
+		TwoFAIssuerName      string
+		TwoFAEnabled         bool
+		TwoFARequired        bool
+		Passkey2FAEnabled    bool
+		PasskeyLoginEnabled  bool
+		MagicLinkEnabled     bool
+		OIDCEnabled          bool
+		SMS2FAEnabled        bool
+		TrustedDeviceEnabled bool
+		TrustedDeviceMaxDays int
+		Tenants              []models.Tenant
+		IsEdit               bool
 		// Brute-force overrides (nil = use global default)
 		BfLockoutOverride  bool
 		BfLockoutEnabled   bool

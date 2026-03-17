@@ -134,7 +134,7 @@ func (r *Repository) SeedDefaultRolesForApp(appID uuid.UUID) error {
 			{
 				Name:        "member",
 				Description: "Standard user with read and limited write access",
-				PermKeys:    []string{"user:read", "user:write", "log:read", "role:read"},
+				PermKeys:    []string{"user:read", "user:write", "log:read", "role:read", "settings:read", "settings:write"},
 			},
 			{
 				Name:        "viewer",

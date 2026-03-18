@@ -778,6 +778,50 @@ func (s *Service) UpdateUserPassword(appID uuid.UUID, userID string, req dto.Upd
 	return nil
 }
 
+// SetInitialPassword sets a password for a social-only user (no existing PasswordHash).
+// Returns ErrConflict if the user already has a password — callers should use
+// UpdateUserPassword instead in that case.
+func (s *Service) SetInitialPassword(appID uuid.UUID, userID string, newPassword string) *errors.AppError {
+	user, err := s.Repo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+
+	if user.PasswordHash != "" {
+		return errors.NewAppError(errors.ErrConflict, "Password already set. Use the change-password endpoint to update it.")
+	}
+
+	// Load app for password policy
+	var app models.Application
+	if dbErr := s.DB.Select(
+		"pw_min_length, pw_max_length, pw_require_upper, pw_require_lower, pw_require_digit, pw_require_symbol, pw_history_count",
+	).First(&app, "id = ?", appID).Error; dbErr != nil {
+		app = models.Application{}
+	}
+
+	if pErr := ValidatePasswordPolicy(newPassword, &app); pErr != nil {
+		return errors.NewAppError(errors.ErrBadRequest, pErr.Error())
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcryptCost)
+	if err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to hash password")
+	}
+
+	if err := s.Repo.UpdateUserPasswordWithHistory(userID, string(hashedPassword), user.PasswordHistory); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to set password")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.password_set", map[string]interface{}{
+			"user_id": userID,
+		})
+	}
+
+	return nil
+}
+
 // DeleteUserAccount deletes the user account after verifying password
 func (s *Service) DeleteUserAccount(appID uuid.UUID, userID string, req dto.DeleteAccountRequest) *errors.AppError {
 	// Get current user to verify password

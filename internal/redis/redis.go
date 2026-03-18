@@ -976,3 +976,39 @@ func GetOIDCGrantedScopes(appID, sessionID string) (string, error) {
 	}
 	return val, err
 }
+
+// ============================================================================
+// Account Merge Token helpers
+//
+// A merge token is a short-lived (15 min) Redis entry that stores all the
+// information needed to link a social provider account to an existing user
+// account.  It is created when a social-login callback detects that the
+// provider email matches an existing user who does not yet have that social
+// account linked, so the frontend can prompt the user to confirm the merge
+// by supplying their existing password.
+//
+// Key layout: app:{appID}:merge_token:{mergeToken}  →  JSON-encoded payload
+// ============================================================================
+
+// SetMergeToken stores a merge token with a JSON-encoded payload and the given TTL.
+func SetMergeToken(appID, mergeToken, payload string, expiration time.Duration) error {
+	key := fmt.Sprintf("app:%s:merge_token:%s", appID, mergeToken)
+	return Rdb.Set(ctx, key, payload, expiration).Err()
+}
+
+// GetMergeToken retrieves the JSON payload for a merge token.
+// Returns ("", redis.Nil) when the token does not exist or has expired.
+func GetMergeToken(appID, mergeToken string) (string, error) {
+	key := fmt.Sprintf("app:%s:merge_token:%s", appID, mergeToken)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", err
+	}
+	return val, err
+}
+
+// DeleteMergeToken removes a merge token after it has been consumed.
+func DeleteMergeToken(appID, mergeToken string) error {
+	key := fmt.Sprintf("app:%s:merge_token:%s", appID, mergeToken)
+	return Rdb.Del(ctx, key).Err()
+}

@@ -5637,6 +5637,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/merge/confirm": {
+            "post": {
+                "description": "Confirms merging a social-login provider into an existing email/password account.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "social"
+                ],
+                "summary": "Confirm account merge",
+                "parameters": [
+                    {
+                        "description": "Merge confirmation payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.MergeAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MergeAccountResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/validate": {
             "get": {
                 "security": [
@@ -7130,6 +7182,69 @@ const docTemplate = `{
                 }
             }
         },
+        "/profile/set-password": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Set a password for a user who registered via social login and has no password yet. Returns 409 if a password is already set.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Set initial password for social-only users",
+                "parameters": [
+                    {
+                        "description": "New password",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.SetPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/profile/social-accounts": {
             "get": {
                 "security": [
@@ -7773,6 +7888,10 @@ const docTemplate = `{
                 "magic_link_enabled": {
                     "type": "boolean"
                 },
+                "oidc_client_login_theme": {
+                    "description": "OIDCClientLoginTheme is the login_theme of the first active OIDC client for this app.\n\"app\" means the client follows the app's own theme (frontend should send ?ui_theme=).\nEmpty string means no active OIDC client exists.",
+                    "type": "string"
+                },
                 "oidc_enabled": {
                     "type": "boolean"
                 },
@@ -8014,6 +8133,14 @@ const docTemplate = `{
                 },
                 "is_confidential": {
                     "type": "boolean"
+                },
+                "login_primary_color": {
+                    "description": "LoginPrimaryColor overrides Bootstrap's default primary color (e.g. \"#4f46e5\"). Empty = Bootstrap default.",
+                    "type": "string"
+                },
+                "login_theme": {
+                    "description": "LoginTheme controls the color scheme of OIDC pages: \"app\" (inherit from Application),\n\"auto\" (default, follow OS preference), \"light\", or \"dark\".",
+                    "type": "string"
                 },
                 "logo_url": {
                     "type": "string"
@@ -8713,6 +8840,41 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.MergeAccountRequest": {
+            "type": "object",
+            "required": [
+                "merge_token",
+                "password"
+            ],
+            "properties": {
+                "merge_token": {
+                    "description": "#nosec G101 -- DTO field, not a hardcoded credential",
+                    "type": "string"
+                },
+                "password": {
+                    "description": "#nosec G101,G117 -- DTO field, not a hardcoded credential",
+                    "type": "string",
+                    "maxLength": 128,
+                    "example": "s3cr3t"
+                }
+            }
+        },
+        "dto.MergeAccountResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "description": "#nosec G101,G117 -- DTO field",
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "refresh_token": {
+                    "description": "#nosec G101,G117 -- DTO field",
+                    "type": "string"
+                }
+            }
+        },
         "dto.MessageResponse": {
             "type": "object",
             "properties": {
@@ -8783,6 +8945,13 @@ const docTemplate = `{
                 },
                 "is_confidential": {
                     "type": "boolean"
+                },
+                "login_primary_color": {
+                    "type": "string"
+                },
+                "login_theme": {
+                    "description": "LoginTheme: \"app\" (inherit from Application), \"auto\", \"light\", or \"dark\".",
+                    "type": "string"
                 },
                 "logo_url": {
                     "type": "string"
@@ -9339,6 +9508,21 @@ const docTemplate = `{
                 }
             }
         },
+        "dto.SetPasswordRequest": {
+            "type": "object",
+            "required": [
+                "new_password"
+            ],
+            "properties": {
+                "new_password": {
+                    "description": "#nosec G101,G117 -- DTO field",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 8,
+                    "example": "Sup3rS3cure!"
+                }
+            }
+        },
         "dto.SetRolePermissionsRequest": {
             "type": "object",
             "required": [
@@ -9654,6 +9838,14 @@ const docTemplate = `{
                 "is_confidential": {
                     "type": "boolean"
                 },
+                "login_primary_color": {
+                    "description": "LoginPrimaryColor overrides Bootstrap's default primary color. Empty = Bootstrap default.",
+                    "type": "string"
+                },
+                "login_theme": {
+                    "description": "LoginTheme controls the color scheme of OIDC pages: \"app\" (inherit from Application),\n\"auto\", \"light\", or \"dark\".",
+                    "type": "string"
+                },
                 "logo_url": {
                     "type": "string"
                 },
@@ -9880,6 +10072,10 @@ const docTemplate = `{
                 },
                 "first_name": {
                     "type": "string"
+                },
+                "has_password": {
+                    "description": "false for social-only users",
+                    "type": "boolean"
                 },
                 "id": {
                     "type": "string"

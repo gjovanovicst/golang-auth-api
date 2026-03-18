@@ -97,6 +97,12 @@ definitions:
         type: string
       magic_link_enabled:
         type: boolean
+      oidc_client_login_theme:
+        description: |-
+          OIDCClientLoginTheme is the login_theme of the first active OIDC client for this app.
+          "app" means the client follows the app's own theme (frontend should send ?ui_theme=).
+          Empty string means no active OIDC client exists.
+        type: string
       oidc_enabled:
         type: boolean
       passkey_login_enabled:
@@ -262,6 +268,15 @@ definitions:
         type: string
       is_confidential:
         type: boolean
+      login_primary_color:
+        description: LoginPrimaryColor overrides Bootstrap's default primary color
+          (e.g. "#4f46e5"). Empty = Bootstrap default.
+        type: string
+      login_theme:
+        description: |-
+          LoginTheme controls the color scheme of OIDC pages: "app" (inherit from Application),
+          "auto" (default, follow OS preference), "light", or "dark".
+        type: string
       logo_url:
         type: string
       name:
@@ -749,6 +764,31 @@ definitions:
     required:
     - token
     type: object
+  dto.MergeAccountRequest:
+    properties:
+      merge_token:
+        description: '#nosec G101 -- DTO field, not a hardcoded credential'
+        type: string
+      password:
+        description: '#nosec G101,G117 -- DTO field, not a hardcoded credential'
+        example: s3cr3t
+        maxLength: 128
+        type: string
+    required:
+    - merge_token
+    - password
+    type: object
+  dto.MergeAccountResponse:
+    properties:
+      access_token:
+        description: '#nosec G101,G117 -- DTO field'
+        type: string
+      message:
+        type: string
+      refresh_token:
+        description: '#nosec G101,G117 -- DTO field'
+        type: string
+    type: object
   dto.MessageResponse:
     properties:
       message:
@@ -796,6 +836,12 @@ definitions:
         type: boolean
       is_confidential:
         type: boolean
+      login_primary_color:
+        type: string
+      login_theme:
+        description: 'LoginTheme: "app" (inherit from Application), "auto", "light",
+          or "dark".'
+        type: string
       logo_url:
         type: string
       name:
@@ -1164,6 +1210,17 @@ definitions:
       user_agent:
         type: string
     type: object
+  dto.SetPasswordRequest:
+    properties:
+      new_password:
+        description: '#nosec G101,G117 -- DTO field'
+        example: Sup3rS3cure!
+        maxLength: 128
+        minLength: 8
+        type: string
+    required:
+    - new_password
+    type: object
   dto.SetRolePermissionsRequest:
     properties:
       permission_ids:
@@ -1373,6 +1430,15 @@ definitions:
         type: boolean
       is_confidential:
         type: boolean
+      login_primary_color:
+        description: LoginPrimaryColor overrides Bootstrap's default primary color.
+          Empty = Bootstrap default.
+        type: string
+      login_theme:
+        description: |-
+          LoginTheme controls the color scheme of OIDC pages: "app" (inherit from Application),
+          "auto", "light", or "dark".
+        type: string
       logo_url:
         type: string
       name:
@@ -1530,6 +1596,9 @@ definitions:
         type: boolean
       first_name:
         type: string
+      has_password:
+        description: false for social-only users
+        type: boolean
       id:
         type: string
       last_name:
@@ -5363,6 +5432,41 @@ paths:
       summary: Google OAuth2 Login
       tags:
       - social
+  /auth/merge/confirm:
+    post:
+      consumes:
+      - application/json
+      description: Confirms merging a social-login provider into an existing email/password
+        account.
+      parameters:
+      - description: Merge confirmation payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.MergeAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MergeAccountResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Confirm account merge
+      tags:
+      - social
   /auth/validate:
     get:
       description: Validates a JWT token and returns basic user info for external
@@ -6331,6 +6435,47 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Update user password
+      tags:
+      - User
+  /profile/set-password:
+    post:
+      consumes:
+      - application/json
+      description: Set a password for a user who registered via social login and has
+        no password yet. Returns 409 if a password is already set.
+      parameters:
+      - description: New password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.SetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Set initial password for social-only users
       tags:
       - User
   /profile/social-accounts:

@@ -383,6 +383,9 @@ func main() {
 		auth.GET("/github/login", socialHandler.GithubLogin)
 		auth.GET("/github/callback", socialHandler.GithubCallback)
 
+		// Account merge confirmation (public — requires merge_token + existing password)
+		auth.POST("/merge/confirm", socialHandler.MergeConfirm)
+
 		// Account linking callbacks (public — user ID embedded in OAuth state)
 		auth.GET("/google/link/callback", socialHandler.GoogleLinkCallback)
 		auth.GET("/facebook/link/callback", socialHandler.FacebookLinkCallback)
@@ -408,6 +411,7 @@ func main() {
 		protected.DELETE("/profile", middleware.AuthorizePermission(rbacService, "user", "delete"), userHandler.DeleteAccount)
 		protected.PUT("/profile/email", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdateEmail)
 		protected.PUT("/profile/password", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdatePassword)
+		protected.POST("/profile/set-password", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.SetPassword)
 
 		// Social account management routes
 		protected.GET("/profile/social-accounts", middleware.AuthorizePermission(rbacService, "user", "read"), socialHandler.ListSocialAccounts)
@@ -754,6 +758,7 @@ func main() {
 			guiAuth.GET("/user-roles/list", guiHandler.UserRoleList)
 			guiAuth.GET("/user-roles/new", guiHandler.UserRoleCreateForm)
 			guiAuth.POST("/user-roles", guiHandler.UserRoleCreate)
+			guiAuth.PUT("/user-roles", guiHandler.UserRoleUpdate)
 			guiAuth.GET("/user-roles/roles-for-app", guiHandler.UserRoleRolesForApp)
 			guiAuth.GET("/user-roles/search-users", guiHandler.UserRoleSearchUsers)
 			guiAuth.GET("/user-roles/revoke", guiHandler.UserRoleRevokeConfirm)

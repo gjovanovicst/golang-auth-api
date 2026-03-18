@@ -4656,35 +4656,7 @@ func (h *GUIHandler) UserRoleList(c *gin.Context) {
 	}
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	if page < 1 {
-		page = 1
-	}
-	pageSize := 20
-
-	items, total, err := h.RBACService.Repo.GetUsersWithRoleInApp(appID, page, pageSize)
-	if err != nil {
-		c.String(http.StatusInternalServerError,
-			`<div class="alert alert-danger">Failed to load user roles.</div>`)
-		return
-	}
-
-	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
-
-	type userRoleListData struct {
-		Items      []rbac.UserRoleListItem
-		AppID      string
-		Page       int
-		TotalPages int
-		Total      int64
-	}
-
-	c.HTML(http.StatusOK, "user_role_list", userRoleListData{
-		Items:      items,
-		AppID:      appID,
-		Page:       page,
-		TotalPages: totalPages,
-		Total:      total,
-	})
+	h.renderUserRoleList(c, appID, page)
 }
 
 // UserRoleCreateForm returns the assign role form HTML fragment for HTMX.
@@ -4720,8 +4692,89 @@ func (h *GUIHandler) UserRoleCreate(c *gin.Context) {
 		return
 	}
 
+	// Signal the page to refresh the user-role table for the assigned app.
+	c.Header("HX-Trigger", fmt.Sprintf(`{"userRoleAssigned":{"appID":"%s"}}`, appID))
 	c.String(http.StatusOK,
 		`<div class="alert alert-success alert-dismissible fade show" role="alert">Role assigned successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// UserRoleUpdate handles changing a user's role assignment.
+// PUT /gui/user-roles
+// Atomically revokes the old role and assigns the new one.
+func (h *GUIHandler) UserRoleUpdate(c *gin.Context) {
+	userID := strings.TrimSpace(c.PostForm("user_id"))
+	oldRoleID := strings.TrimSpace(c.PostForm("old_role_id"))
+	newRoleID := strings.TrimSpace(c.PostForm("new_role_id"))
+	appID := strings.TrimSpace(c.PostForm("app_id"))
+
+	if userID == "" || oldRoleID == "" || newRoleID == "" || appID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger">Missing required parameters.</div>`)
+		return
+	}
+
+	// No-op if role did not change.
+	if oldRoleID == newRoleID {
+		h.renderUserRoleList(c, appID, 1)
+		return
+	}
+
+	// Revoke old role then assign new one.
+	if err := h.RBACService.RevokeRoleFromUser(userID, oldRoleID, appID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to revoke old role.</div>`)
+		return
+	}
+
+	if err := h.RBACService.AssignRoleToUser(userID, newRoleID, appID, nil); err != nil {
+		// Attempt to restore old role so the user is not left with none.
+		_ = h.RBACService.AssignRoleToUser(userID, oldRoleID, appID, nil)
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to assign new role. Previous role has been restored.</div>`)
+		return
+	}
+
+	h.renderUserRoleList(c, appID, 1)
+}
+
+// renderUserRoleList fetches the user-role list for an app and renders it as an HTMX fragment.
+func (h *GUIHandler) renderUserRoleList(c *gin.Context, appID string, page int) {
+	if page < 1 {
+		page = 1
+	}
+	const pageSize = 20
+
+	items, total, err := h.RBACService.Repo.GetUsersWithRoleInApp(appID, page, pageSize)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to reload user roles.</div>`)
+		return
+	}
+
+	roles, err := h.RBACService.GetRolesByAppID(appID)
+	if err != nil {
+		roles = nil
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+
+	type userRoleListData struct {
+		Items          []rbac.UserRoleListItem
+		AppID          string
+		Page           int
+		TotalPages     int
+		Total          int64
+		AvailableRoles []models.Role
+	}
+
+	c.HTML(http.StatusOK, "user_role_list", userRoleListData{
+		Items:          items,
+		AppID:          appID,
+		Page:           page,
+		TotalPages:     totalPages,
+		Total:          total,
+		AvailableRoles: roles,
+	})
 }
 
 // UserRoleRolesForApp returns HTML <option> elements for the roles in an app.
@@ -4839,34 +4892,7 @@ func (h *GUIHandler) UserRoleRevoke(c *gin.Context) {
 	}
 
 	c.Header("HX-Trigger", "roleRevoked")
-
-	// Re-fetch and render the updated user-role list
-	page := 1
-	pageSize := 20
-	items, total, err := h.RBACService.Repo.GetUsersWithRoleInApp(appID, page, pageSize)
-	if err != nil {
-		c.String(http.StatusInternalServerError,
-			`<div class="alert alert-danger">Role revoked but failed to refresh list.</div>`)
-		return
-	}
-
-	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
-
-	type userRoleListData struct {
-		Items      []rbac.UserRoleListItem
-		AppID      string
-		Page       int
-		TotalPages int
-		Total      int64
-	}
-
-	c.HTML(http.StatusOK, "user_role_list", userRoleListData{
-		Items:      items,
-		AppID:      appID,
-		Page:       page,
-		TotalPages: totalPages,
-		Total:      total,
-	})
+	h.renderUserRoleList(c, appID, 1)
 }
 
 // UserRoleFormCancel clears the user-role form container.

@@ -217,6 +217,11 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 				foundUser.Locale = googleUser.Locale
 				updated = true
 			}
+			// Sync email verification status from Google on every login
+			if foundUser.EmailVerified != googleUser.VerifiedEmail {
+				foundUser.EmailVerified = googleUser.VerifiedEmail
+				updated = true
+			}
 			if updated {
 				if err := s.UserRepo.UpdateUser(foundUser); err != nil {
 					// Log error but don't fail authentication
@@ -365,6 +370,11 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 			}
 			if foundUser.Locale != facebookUser.Locale && facebookUser.Locale != "" {
 				foundUser.Locale = facebookUser.Locale
+				updated = true
+			}
+			// Facebook-sourced emails are always considered verified
+			if !foundUser.EmailVerified {
+				foundUser.EmailVerified = true
 				updated = true
 			}
 			if updated {
@@ -544,6 +554,11 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 			}
 			if foundUser.ProfilePicture != githubUser.AvatarURL && githubUser.AvatarURL != "" {
 				foundUser.ProfilePicture = githubUser.AvatarURL
+				updated = true
+			}
+			// GitHub emails are pre-filtered to primary+verified, so always heal if unverified
+			if !foundUser.EmailVerified {
+				foundUser.EmailVerified = true
 				updated = true
 			}
 			if updated {

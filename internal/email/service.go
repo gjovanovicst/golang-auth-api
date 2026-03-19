@@ -3,6 +3,7 @@ package email
 import (
 	"fmt"
 	"log"
+	"net/url"
 
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/models"
@@ -84,7 +85,7 @@ func (s *Service) SendVerificationEmail(appID uuid.UUID, toEmail, token string, 
 		s.resolver.db.Select("frontend_url, verify_email_path").First(&app, "id = ?", appID)
 	}
 	verifyPath := util.ResolveLinkPath(app.VerifyEmailPath, util.DefaultVerifyEmailPath)
-	verificationLink := fmt.Sprintf("%s%s?token=%s", util.ResolveFrontendURL(app.FrontendURL), verifyPath, token)
+	verificationLink := fmt.Sprintf("%s%s?token=%s&email=%s", util.ResolveFrontendURL(app.FrontendURL), verifyPath, token, url.QueryEscape(toEmail))
 
 	return s.SendEmailWithContext(appID, TypeEmailVerification, toEmail, userID, map[string]string{
 		VarVerificationLink:  verificationLink,

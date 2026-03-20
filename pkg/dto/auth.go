@@ -162,7 +162,7 @@ type UpdatePasswordRequest struct {
 
 // DeleteAccountRequest represents the request payload for account deletion
 type DeleteAccountRequest struct {
-	Password        string `json:"password" validate:"required,max=128" example:"password123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	Password        string `json:"password" validate:"omitempty,max=128" example:"password123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
 	ConfirmDeletion bool   `json:"confirm_deletion" validate:"required,eq=true" example:"true"`
 }
 

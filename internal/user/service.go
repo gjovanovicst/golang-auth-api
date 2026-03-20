@@ -842,9 +842,18 @@ func (s *Service) DeleteUserAccount(appID uuid.UUID, userID string, req dto.Dele
 		return errors.NewAppError(errors.ErrBadRequest, "Account deletion must be confirmed")
 	}
 
-	// Revoke all tokens
-	if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
-		log.Printf("Warning: Failed to revoke all user tokens before account deletion: %v\n", err.Message)
+	// Revoke all sessions and tokens. RevokeAllUserSessions deletes the Redis
+	// session hashes and blacklists all tokens, ensuring no active sessions or
+	// tokens remain after the account is gone.
+	if s.SessionService != nil {
+		if err := s.SessionService.RevokeAllUserSessions(appID.String(), userID); err != nil {
+			log.Printf("Warning: Failed to revoke all user sessions before account deletion: %v\n", err.Message)
+		}
+	} else {
+		// Fallback if SessionService is not wired: blacklist tokens only
+		if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
+			log.Printf("Warning: Failed to revoke all user tokens before account deletion: %v\n", err.Message)
+		}
 	}
 
 	// Delete user from database (cascade will delete related records)

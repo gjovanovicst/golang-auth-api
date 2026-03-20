@@ -359,7 +359,6 @@ definitions:
         type: string
     required:
     - confirm_deletion
-    - password
     type: object
   dto.EmailPreviewRequest:
     properties:
@@ -6268,8 +6267,8 @@ paths:
     delete:
       consumes:
       - application/json
-      description: Delete authenticated user's account permanently (requires password
-        verification and confirmation)
+      description: Delete authenticated user's account permanently. Password is required
+        for password-based accounts; omit for social-only (OAuth) accounts.
       parameters:
       - description: Account Deletion Data
         in: body

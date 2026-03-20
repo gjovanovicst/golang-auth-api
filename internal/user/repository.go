@@ -86,9 +86,34 @@ func (r *Repository) UpdateRecoveryCodes(userID, recoveryCodes string) error {
 	return r.DB.Model(&models.User{}).Where("id = ?", userID).Update("two_fa_recovery_codes", recoveryCodes).Error
 }
 
-// DeleteUser deletes a user and all related data (cascade)
+// DeleteUser deletes a user and all related data within a transaction.
+// FK-constrained tables (social_accounts, user_roles) are deleted first to avoid
+// "update or delete violates foreign key constraint" errors from NO ACTION constraints.
 func (r *Repository) DeleteUser(userID string) error {
-	return r.DB.Where("id = ?", userID).Delete(&models.User{}).Error
+	return r.DB.Transaction(func(tx *gorm.DB) error {
+		// 1. social_accounts.user_id → users.id (NOT NULL, NO ACTION) — must delete first
+		if err := tx.Exec("DELETE FROM social_accounts WHERE user_id = ?", userID).Error; err != nil {
+			return err
+		}
+		// 2. user_roles.user_id → users.id (NOT NULL, NO ACTION) — must delete first
+		if err := tx.Exec("DELETE FROM user_roles WHERE user_id = ?", userID).Error; err != nil {
+			return err
+		}
+		// 3. trusted_devices — no FK constraint, but clean up
+		if err := tx.Exec("DELETE FROM trusted_devices WHERE user_id = ?", userID).Error; err != nil {
+			return err
+		}
+		// 4. web_authn_credentials — no FK constraint, but clean up
+		if err := tx.Exec("DELETE FROM web_authn_credentials WHERE user_id = ?", userID).Error; err != nil {
+			return err
+		}
+		// 5. activity_logs — no FK constraint, but clean up
+		if err := tx.Exec("DELETE FROM activity_logs WHERE user_id = ?", userID).Error; err != nil {
+			return err
+		}
+		// 6. Finally hard-delete the user row
+		return tx.Where("id = ?", userID).Delete(&models.User{}).Error
+	})
 }
 
 // UpdateUserProfile updates user profile fields (name, first_name, last_name, profile_picture, locale)

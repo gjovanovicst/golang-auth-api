@@ -7012,7 +7012,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Delete authenticated user's account permanently (requires password verification and confirmation)",
+                "description": "Delete authenticated user's account permanently. Password is required for password-based accounts; omit for social-only (OAuth) accounts.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8241,8 +8241,7 @@ const docTemplate = `{
         "dto.DeleteAccountRequest": {
             "type": "object",
             "required": [
-                "confirm_deletion",
-                "password"
+                "confirm_deletion"
             ],
             "properties": {
                 "confirm_deletion": {

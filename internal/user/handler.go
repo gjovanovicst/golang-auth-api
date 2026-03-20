@@ -1027,7 +1027,7 @@ func (h *Handler) UpdatePassword(c *gin.Context) {
 }
 
 // @Summary Delete user account
-// @Description Delete authenticated user's account permanently (requires password verification and confirmation)
+// @Description Delete authenticated user's account permanently. Password is required for password-based accounts; omit for social-only (OAuth) accounts.
 // @Tags User
 // @Security ApiKeyAuth
 // @Accept json

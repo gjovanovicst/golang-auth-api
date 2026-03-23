@@ -32,6 +32,14 @@
                     {{if .Definition.Sensitive}}
                     <code class="small text-muted">********</code>
                     <span class="ms-2 text-muted small">(set via {{.Definition.EnvVar}})</span>
+                    {{else if eq (printf "%s" .Definition.UIHint) "tag_list"}}
+                    <!-- tag_list env: show chips read-only -->
+                    <div class="tag-chips-readonly d-flex flex-wrap gap-1">
+                        {{range splitScopes .Value}}
+                        <span class="badge tag-chip-ro">{{.}}</span>
+                        {{end}}
+                    </div>
+                    <span class="ms-2 text-muted small">(set via {{.Definition.EnvVar}})</span>
                     {{else}}
                     <code class="small">{{.Value}}</code>
                     <span class="ms-2 text-muted small">(set via {{.Definition.EnvVar}})</span>
@@ -42,7 +50,7 @@
                 <form hx-put="/gui/settings/{{.Definition.Key}}"
                       hx-target="#setting-row-{{.Definition.Key}}"
                       hx-swap="outerHTML"
-                      class="d-flex align-items-center gap-2">
+                      class="d-flex align-items-start gap-2 flex-wrap">
                     {{if eq (printf "%s" .Definition.Type) "bool"}}
                         <select class="form-select form-select-sm setting-value-input" name="value">
                             <option value="true" {{if eq .RawValue "true"}}selected{{end}}>true</option>
@@ -62,6 +70,25 @@
                                 <i class="bi bi-eye" id="sensitive-icon-{{.Definition.Key}}"></i>
                             </button>
                         </div>
+                    {{else if eq (printf "%s" .Definition.UIHint) "tag_list"}}
+                        <!-- Tag-chip widget: hidden input carries the comma-separated value on submit -->
+                        <div class="tag-input-wrapper w-100">
+                            <input type="hidden"
+                                   name="value"
+                                   id="setting-input-{{.Definition.Key}}"
+                                   value="{{.RawValue}}">
+                            <div class="tag-input-box form-control form-control-sm"
+                                 id="tag-box-{{.Definition.Key}}"
+                                 data-for="setting-input-{{.Definition.Key}}"
+                                 data-values="{{.RawValue}}">
+                            </div>
+                            <div class="form-text mt-1">
+                                <i class="bi bi-info-circle"></i>
+                                Type a value and press <kbd>Enter</kbd> to add &nbsp;·&nbsp;
+                                Click <strong>×</strong> on a chip to remove &nbsp;·&nbsp;
+                                <kbd>Backspace</kbd> on empty input removes the last entry
+                            </div>
+                        </div>
                     {{else}}
                         <input type="text"
                                class="form-control form-control-sm setting-value-input"
@@ -70,19 +97,21 @@
                                value="{{.RawValue}}"
                                placeholder="{{.Definition.DefaultValue}}">
                     {{end}}
-                    <button type="submit" class="btn btn-primary btn-sm" title="Save">
-                        <i class="bi bi-check-lg"></i>
-                    </button>
-                    {{if eq (printf "%s" .Source) "db"}}
-                    <button type="button" class="btn btn-outline-secondary btn-sm"
-                            hx-delete="/gui/settings/{{.Definition.Key}}"
-                            hx-target="#setting-row-{{.Definition.Key}}"
-                            hx-swap="outerHTML"
-                            hx-confirm="Reset this setting to its default value?"
-                            title="Reset to default">
-                        <i class="bi bi-arrow-counterclockwise"></i>
-                    </button>
-                    {{end}}
+                    <div class="d-flex gap-2 mt-1">
+                        <button type="submit" class="btn btn-primary btn-sm" title="Save">
+                            <i class="bi bi-check-lg"></i> Save
+                        </button>
+                        {{if eq (printf "%s" .Source) "db"}}
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                hx-delete="/gui/settings/{{.Definition.Key}}"
+                                hx-target="#setting-row-{{.Definition.Key}}"
+                                hx-swap="outerHTML"
+                                hx-confirm="Reset this setting to its default value?"
+                                title="Reset to default">
+                            <i class="bi bi-arrow-counterclockwise"></i> Reset
+                        </button>
+                        {{end}}
+                    </div>
                 </form>
                 {{if eq (printf "%s" .Source) "db"}}
                 <div class="mt-1">

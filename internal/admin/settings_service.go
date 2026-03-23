@@ -26,6 +26,16 @@ const (
 	SettingTypeDuration SettingType = "duration"
 )
 
+// SettingUIHint controls how the admin GUI renders the value input for a setting.
+type SettingUIHint string
+
+const (
+	// UIHintDefault renders a plain text input (or bool select / password input).
+	UIHintDefault SettingUIHint = ""
+	// UIHintTagList renders an interactive tag-chip widget for comma-separated values.
+	UIHintTagList SettingUIHint = "tag_list"
+)
+
 // SettingSource indicates where a resolved setting value came from.
 type SettingSource string
 
@@ -41,11 +51,12 @@ type SettingDefinition struct {
 	EnvVar          string // Environment variable name (usually same as Key)
 	Category        string // Category slug for grouping
 	Type            SettingType
-	DefaultValue    string // Default as string
-	Label           string // Human-readable label
-	Description     string // Help text
-	Sensitive       bool   // If true, value is masked in display
-	RequiresRestart bool   // If true, changes need app restart
+	DefaultValue    string        // Default as string
+	Label           string        // Human-readable label
+	Description     string        // Help text
+	Sensitive       bool          // If true, value is masked in display
+	RequiresRestart bool          // If true, changes need app restart
+	UIHint          SettingUIHint // Optional rendering hint for the GUI
 }
 
 // ResolvedSetting holds a setting definition with its resolved value and source.
@@ -106,6 +117,7 @@ var categoryMeta = []struct {
 	{"general", "General", "bi-gear"},
 	{"jwt", "JWT & Tokens", "bi-shield-lock"},
 	{"admin", "Admin Session", "bi-person-lock"},
+	{"cors", "CORS", "bi-globe"},
 	{"log_retention", "Log Retention", "bi-archive"},
 	{"log_cleanup", "Log Cleanup", "bi-trash"},
 	{"log_behavior", "Log Behavior", "bi-toggles"},
@@ -116,17 +128,21 @@ var categoryMeta = []struct {
 var settingsRegistry = []SettingDefinition{
 	// --- General ---
 	{Key: "APP_NAME", EnvVar: "APP_NAME", Category: "general", Type: SettingTypeString, DefaultValue: "Auth API", Label: "Application Name", Description: "Display name used in emails, TOTP, and UI.", Sensitive: false, RequiresRestart: false},
-	{Key: "PORT", EnvVar: "PORT", Category: "general", Type: SettingTypeInt, DefaultValue: "8080", Label: "Server Port", Description: "HTTP port the server listens on.", Sensitive: false, RequiresRestart: true},
-	{Key: "GIN_MODE", EnvVar: "GIN_MODE", Category: "general", Type: SettingTypeString, DefaultValue: "debug", Label: "Gin Mode", Description: "Gin framework mode: debug, release, or test.", Sensitive: false, RequiresRestart: true},
-	{Key: "FRONTEND_URL", EnvVar: "FRONTEND_URL", Category: "general", Type: SettingTypeString, DefaultValue: "", Label: "Frontend URL", Description: "Frontend application URL for CORS and redirects.", Sensitive: false, RequiresRestart: true},
 
 	// --- JWT & Tokens ---
-	{Key: "JWT_SECRET", EnvVar: "JWT_SECRET", Category: "jwt", Type: SettingTypeString, DefaultValue: "", Label: "JWT Secret", Description: "Secret key used to sign JWT tokens. Keep this secure.", Sensitive: true, RequiresRestart: true},
 	{Key: "ACCESS_TOKEN_EXPIRATION_MINUTES", EnvVar: "ACCESS_TOKEN_EXPIRATION_MINUTES", Category: "jwt", Type: SettingTypeInt, DefaultValue: "15", Label: "Access Token Expiration (minutes)", Description: "How long access tokens remain valid.", Sensitive: false, RequiresRestart: false},
 	{Key: "REFRESH_TOKEN_EXPIRATION_HOURS", EnvVar: "REFRESH_TOKEN_EXPIRATION_HOURS", Category: "jwt", Type: SettingTypeInt, DefaultValue: "720", Label: "Refresh Token Expiration (hours)", Description: "How long refresh tokens remain valid (720 = 30 days).", Sensitive: false, RequiresRestart: false},
 
 	// --- Admin Session ---
 	{Key: "ADMIN_SESSION_EXPIRATION_HOURS", EnvVar: "ADMIN_SESSION_EXPIRATION_HOURS", Category: "admin", Type: SettingTypeInt, DefaultValue: "8", Label: "Session Expiration (hours)", Description: "How long admin GUI sessions remain active.", Sensitive: false, RequiresRestart: false},
+
+	// --- CORS ---
+	{Key: "CORS_ALLOWED_ORIGINS", EnvVar: "CORS_ALLOWED_ORIGINS", Category: "cors", Type: SettingTypeString, DefaultValue: "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:8080", Label: "Allowed Origins", Description: "Origins allowed to make cross-origin requests (e.g. https://app.example.com). Add one origin per tag.", Sensitive: false, RequiresRestart: true, UIHint: UIHintTagList},
+	{Key: "CORS_ALLOWED_METHODS", EnvVar: "CORS_ALLOWED_METHODS", Category: "cors", Type: SettingTypeString, DefaultValue: "GET,POST,PUT,DELETE,OPTIONS,HEAD", Label: "Allowed Methods", Description: "HTTP methods permitted in cross-origin requests. Add one method per tag.", Sensitive: false, RequiresRestart: true, UIHint: UIHintTagList},
+	{Key: "CORS_ALLOWED_HEADERS", EnvVar: "CORS_ALLOWED_HEADERS", Category: "cors", Type: SettingTypeString, DefaultValue: "Origin,Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,Accept,Cache-Control,X-Requested-With,X-App-ID", Label: "Allowed Headers", Description: "Request headers browsers are permitted to send in cross-origin requests. Add one header per tag.", Sensitive: false, RequiresRestart: true, UIHint: UIHintTagList},
+	{Key: "CORS_EXPOSE_HEADERS", EnvVar: "CORS_EXPOSE_HEADERS", Category: "cors", Type: SettingTypeString, DefaultValue: "Content-Length,Access-Control-Allow-Origin,Access-Control-Allow-Headers,Content-Type", Label: "Expose Headers", Description: "Response headers exposed to browser JavaScript. Add one header per tag.", Sensitive: false, RequiresRestart: true, UIHint: UIHintTagList},
+	{Key: "CORS_MAX_AGE_HOURS", EnvVar: "CORS_MAX_AGE_HOURS", Category: "cors", Type: SettingTypeInt, DefaultValue: "12", Label: "Preflight Max Age (hours)", Description: "How long (in hours) the browser should cache preflight request results.", Sensitive: false, RequiresRestart: true},
+	{Key: "CORS_ALLOW_CREDENTIALS", EnvVar: "CORS_ALLOW_CREDENTIALS", Category: "cors", Type: SettingTypeBool, DefaultValue: "true", Label: "Allow Credentials", Description: "Whether to allow cookies and HTTP authentication in cross-origin requests. Requires specific origins (not wildcard).", Sensitive: false, RequiresRestart: true},
 
 	// --- Log Retention ---
 	{Key: "LOG_RETENTION_CRITICAL", EnvVar: "LOG_RETENTION_CRITICAL", Category: "log_retention", Type: SettingTypeInt, DefaultValue: "365", Label: "Critical Events (days)", Description: "Retention period for critical events (login, password change, etc.).", Sensitive: false, RequiresRestart: false},

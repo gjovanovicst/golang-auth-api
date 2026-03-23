@@ -86,6 +86,13 @@ func main() {
 	viper.SetDefault("OIDC_DEFAULT_APP_ID", "00000000-0000-0000-0000-000000000001")
 	viper.SetDefault("PUBLIC_URL", "http://localhost:8080")
 	viper.SetDefault("FRONTEND_URL", "http://localhost:5173")
+	// CORS configuration defaults (all previously hardcoded values, now configurable via env or admin settings)
+	viper.SetDefault("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:8080")
+	viper.SetDefault("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS,HEAD")
+	viper.SetDefault("CORS_ALLOWED_HEADERS", "Origin,Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,Accept,Cache-Control,X-Requested-With,X-App-ID")
+	viper.SetDefault("CORS_EXPOSE_HEADERS", "Content-Length,Access-Control-Allow-Origin,Access-Control-Allow-Headers,Content-Type")
+	viper.SetDefault("CORS_MAX_AGE_HOURS", 12)
+	viper.SetDefault("CORS_ALLOW_CREDENTIALS", true)
 	viper.SetDefault("OIDC_ID_TOKEN_EXPIRATION_MINUTES", 60)
 	viper.SetDefault("OIDC_AUTH_CODE_EXPIRATION_MINUTES", 10)
 

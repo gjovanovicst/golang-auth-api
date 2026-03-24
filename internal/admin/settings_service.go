@@ -118,6 +118,7 @@ var categoryMeta = []struct {
 	{"jwt", "JWT & Tokens", "bi-shield-lock"},
 	{"admin", "Admin Session", "bi-person-lock"},
 	{"cors", "CORS", "bi-globe"},
+	{"trusted_device", "Trusted Devices", "bi-device-hdd"},
 	{"log_retention", "Log Retention", "bi-archive"},
 	{"log_cleanup", "Log Cleanup", "bi-trash"},
 	{"log_behavior", "Log Behavior", "bi-toggles"},
@@ -167,6 +168,18 @@ var settingsRegistry = []SettingDefinition{
 	{Key: "LOG_ANOMALY_GEO_CHANGE", EnvVar: "LOG_ANOMALY_GEO_CHANGE", Category: "log_behavior", Type: SettingTypeBool, DefaultValue: "false", Label: "Log Geo Change", Description: "Log when a user connects from a new geographic location (requires GeoIP).", Sensitive: false, RequiresRestart: true},
 	{Key: "LOG_ANOMALY_UNUSUAL_TIME", EnvVar: "LOG_ANOMALY_UNUSUAL_TIME", Category: "log_behavior", Type: SettingTypeBool, DefaultValue: "false", Label: "Log Unusual Time", Description: "Log when a user accesses at an unusual time of day.", Sensitive: false, RequiresRestart: true},
 	{Key: "LOG_ANOMALY_SESSION_WINDOW", EnvVar: "LOG_ANOMALY_SESSION_WINDOW", Category: "log_behavior", Type: SettingTypeDuration, DefaultValue: "720h", Label: "Anomaly Session Window", Description: "How long to remember user patterns for anomaly detection (e.g., 720h = 30 days).", Sensitive: false, RequiresRestart: true},
+
+	// --- Trusted Devices ---
+	{
+		Key: "TRUSTED_DEVICE_COOKIE_SAMESITE", EnvVar: "TRUSTED_DEVICE_COOKIE_SAMESITE",
+		Category: "trusted_device", Type: SettingTypeString, DefaultValue: "none",
+		Label: "Cookie SameSite Policy",
+		Description: `Controls the SameSite attribute of the trusted-device cookie. ` +
+			`"none" = cross-origin deployments where the Auth API and frontend are on different domains (requires HTTPS in production). ` +
+			`"lax" = same-site subdomains or same-site top-level navigations. ` +
+			`"strict" = same-origin only (Auth API and frontend share the exact same domain).`,
+		Sensitive: false, RequiresRestart: false,
+	},
 
 	// --- OAuth Redirects ---
 	{Key: "ALLOWED_REDIRECT_DOMAINS", EnvVar: "ALLOWED_REDIRECT_DOMAINS", Category: "oauth_redirect", Type: SettingTypeString, DefaultValue: "", Label: "Allowed Redirect Domains", Description: "Comma-separated list of domains allowed for OAuth redirect URIs.", Sensitive: false, RequiresRestart: false},
@@ -372,6 +385,31 @@ func (s *SettingsService) ResetSetting(key string) error {
 		return fmt.Errorf("unknown setting key: %s", key)
 	}
 	return s.repo.DeleteSetting(key)
+}
+
+// GetResolvedValue resolves a single setting by key using the standard
+// priority: env > DB > default. Returns empty string if the key is unknown.
+// This is safe to call concurrently and does not load the entire registry.
+func (s *SettingsService) GetResolvedValue(key string) string {
+	def := GetSettingDefinition(key)
+	if def == nil {
+		return ""
+	}
+	// Tier 1: OS environment variable
+	if v := os.Getenv(def.EnvVar); v != "" {
+		return v
+	}
+	// Tier 2: database override
+	dbSettings, err := s.repo.GetSettingsByCategory(def.Category)
+	if err == nil {
+		for i := range dbSettings {
+			if dbSettings[i].Key == key {
+				return dbSettings[i].Value
+			}
+		}
+	}
+	// Tier 3: hardcoded default
+	return def.DefaultValue
 }
 
 // validateSettingValue checks if a value is valid for the given type.

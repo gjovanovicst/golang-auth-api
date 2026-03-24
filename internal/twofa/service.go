@@ -807,6 +807,14 @@ func (s *Service) CreateTrustedDevice(appID, userID uuid.UUID, name, userAgent, 
 		maxDays = 30 // default
 	}
 
+	// Dedup: remove any existing device records (expired or active) for the same
+	// user + app + user-agent before inserting a fresh one.  Without this a new row
+	// would be created on every "Remember this device" login from the same browser,
+	// causing unlimited accumulation of stale rows in the trusted_devices table.
+	if err := s.TrustedDeviceRepo.DeleteByUserAppAndUserAgent(userID, appID, userAgent); err != nil {
+		return "", errors.NewAppError(errors.ErrInternal, "Failed to deduplicate trusted device")
+	}
+
 	// Generate a random 32-byte token
 	rawBytes := make([]byte, 32)
 	if _, err := rand.Read(rawBytes); err != nil {

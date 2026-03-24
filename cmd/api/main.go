@@ -95,6 +95,13 @@ func main() {
 	viper.SetDefault("CORS_ALLOW_CREDENTIALS", true)
 	viper.SetDefault("OIDC_ID_TOKEN_EXPIRATION_MINUTES", 60)
 	viper.SetDefault("OIDC_AUTH_CODE_EXPIRATION_MINUTES", 10)
+	// Trusted device cookie SameSite policy.
+	// "none"   = cross-origin deployments (Auth API and frontend on different domains — e.g. Planora).
+	//            SameSite=None requires Secure=true, which is enforced automatically.
+	// "lax"    = same-site subdomains (e.g. auth.example.com + app.example.com).
+	// "strict" = same-origin only (Auth API and frontend on the identical domain).
+	// Default is "none" to support cross-origin setups out of the box.
+	viper.SetDefault("TRUSTED_DEVICE_COOKIE_SAMESITE", "none")
 
 	// Connect to database
 	database.ConnectDatabase()
@@ -224,6 +231,11 @@ func main() {
 	settingsRepo := admin.NewSettingsRepository(database.DB)
 	settingsService := admin.NewSettingsService(settingsRepo)
 	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService, rbacService, webauthnService)
+
+	// Wire SettingsService resolver into twofa handler so the TRUSTED_DEVICE_COOKIE_SAMESITE
+	// setting is resolved via the 3-tier priority (env > DB > default), allowing the admin GUI
+	// to control it without a process restart.
+	twofaHandler.SettingResolver = settingsService.GetResolvedValue
 
 	// Wire admin lookup for passkey discoverable login
 	webauthnService.AdminLookup = accountRepo.GetByID

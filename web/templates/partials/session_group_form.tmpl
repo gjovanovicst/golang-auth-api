@@ -1,0 +1,65 @@
+{{define "session_group_form"}}
+<div class="card border-0 shadow-sm border-start border-primary border-3">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3">
+            {{if .ID}}
+            <i class="bi bi-pencil me-2"></i>Edit Session Group
+            {{else}}
+            <i class="bi bi-plus-lg me-2"></i>Create Session Group
+            {{end}}
+        </h6>
+        <form {{if .ID}}
+                hx-put="/gui/session-groups/{{.ID}}"
+              {{else}}
+                hx-post="/gui/session-groups"
+              {{end}}
+              hx-target="#session-group-form-container"
+              hx-swap="innerHTML">
+            <div class="row g-3">
+                {{if not .ID}}
+                <div class="col-md-6">
+                    <label for="sgTenantID" class="form-label small text-muted">Tenant</label>
+                    <select class="form-select" id="sgTenantID" name="tenant_id" required>
+                        <option value="">Select tenant...</option>
+                        {{range .Tenants}}
+                        <option value="{{.ID}}" {{if eq .ID.String $.TenantID}}selected{{end}}>{{.Name}}</option>
+                        {{end}}
+                    </select>
+                </div>
+                {{end}}
+                <div class="{{if .ID}}col-md-6{{else}}col-md-6{{end}}">
+                    <label for="sgName" class="form-label small text-muted">Group Name</label>
+                    <input type="text" class="form-control" id="sgName" name="name"
+                           value="{{.Name}}" placeholder="e.g. My Product Suite" required autofocus>
+                </div>
+                <div class="col-12">
+                    <label for="sgDescription" class="form-label small text-muted">Description <span class="text-muted">(optional)</span></label>
+                    <input type="text" class="form-control" id="sgDescription" name="description"
+                           value="{{.Description}}" placeholder="Brief description of this session group">
+                </div>
+                <div class="col-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="sgGlobalLogout" name="global_logout" value="on"
+                               {{if .GlobalLogout}}checked{{end}}>
+                        <label class="form-check-label" for="sgGlobalLogout">
+                            <strong>Global logout</strong>
+                            <span class="text-muted small d-block">When enabled, logging out of any app in this group will revoke sessions in all other apps of the group.</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="col-12 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>{{if .ID}}Update{{else}}Create{{end}}
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary"
+                            hx-get="/gui/session-groups/form-cancel"
+                            hx-target="#session-group-form-container"
+                            hx-swap="innerHTML">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

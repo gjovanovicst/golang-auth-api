@@ -1,0 +1,69 @@
+{{define "session_group_apps"}}
+<div class="card border-0 shadow-sm border-start border-info border-3 mb-3">
+    <div class="card-header bg-body-tertiary d-flex align-items-center justify-content-between">
+        <h6 class="fw-bold mb-0">
+            <i class="bi bi-collection me-2"></i>Apps in &ldquo;{{.GroupName}}&rdquo;
+        </h6>
+        <button type="button" class="btn-close btn-sm"
+                hx-get="/gui/session-groups/form-cancel"
+                hx-target="#session-group-apps-container"
+                hx-swap="innerHTML"
+                aria-label="Close"></button>
+    </div>
+    <div class="card-body">
+        <!-- Current members -->
+        {{if .CurrentApps}}
+        <h6 class="text-muted small fw-semibold text-uppercase mb-2">Current Members</h6>
+        <ul class="list-group list-group-flush mb-3">
+            {{range .CurrentApps}}
+            <li class="list-group-item d-flex align-items-center justify-content-between px-0">
+                <span>
+                    <i class="bi bi-app-indicator me-2 text-primary"></i>
+                    <span class="fw-semibold">{{.AppName}}</span>
+                    <small class="text-muted ms-2">{{.TenantName}}</small>
+                    <br>
+                    <small class="font-monospace text-muted">{{.AppID}}</small>
+                </span>
+                <button class="btn btn-outline-danger btn-sm"
+                        hx-delete="/gui/session-groups/{{$.GroupID}}/apps/{{.AppID}}"
+                        hx-target="#session-group-apps-container"
+                        hx-swap="innerHTML"
+                        hx-confirm="Remove this app from the session group?"
+                        title="Remove from group">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </li>
+            {{end}}
+        </ul>
+        {{else}}
+        <p class="text-muted small mb-3">No apps in this group yet.</p>
+        {{end}}
+
+        <!-- Add app -->
+        {{if .AvailableApps}}
+        <h6 class="text-muted small fw-semibold text-uppercase mb-2">Add Application</h6>
+        <form hx-post="/gui/session-groups/{{.GroupID}}/apps"
+              hx-target="#session-group-apps-container"
+              hx-swap="innerHTML"
+              class="d-flex gap-2">
+            <select class="form-select form-select-sm" name="app_id" required>
+                <option value="">Select application to add...</option>
+                {{range .AvailableApps}}
+                <option value="{{.ID}}">{{.TenantName}} / {{.Name}}</option>
+                {{end}}
+            </select>
+            <button type="submit" class="btn btn-primary btn-sm text-nowrap">
+                <i class="bi bi-plus-lg me-1"></i>Add
+            </button>
+        </form>
+        <p class="text-muted small mt-2 mb-0">
+            <i class="bi bi-info-circle me-1"></i>Only apps not already in a session group are shown.
+        </p>
+        {{else}}
+        <p class="text-muted small mb-0">
+            <i class="bi bi-info-circle me-1"></i>All available applications are already members of a session group.
+        </p>
+        {{end}}
+    </div>
+</div>
+{{end}}

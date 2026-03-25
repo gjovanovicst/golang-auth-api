@@ -6786,3 +6786,321 @@ func (h *GUIHandler) MonitoringMetrics(c *gin.Context) {
 	summary := h.HealthHandler.GetMetricsSummary()
 	c.HTML(http.StatusOK, "monitoring_metrics", summary)
 }
+
+// --- Session Group Management ---
+
+// SessionGroupPage renders the session group management page.
+// GET /gui/session-groups
+func (h *GUIHandler) SessionGroupPage(c *gin.Context) {
+	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
+		ActivePage:    "session-groups",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     getCSRFToken(c),
+	}
+	c.HTML(http.StatusOK, "session_groups", data)
+}
+
+// SessionGroupList returns the session group table HTML fragment for HTMX.
+// GET /gui/session-groups/list
+func (h *GUIHandler) SessionGroupList(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize := 10
+
+	groups, total, err := h.Repo.ListSessionGroups(page, pageSize)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to load session groups.</div>`)
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+
+	type sessionGroupListData struct {
+		Groups     []SessionGroupListItem
+		Page       int
+		TotalPages int
+		Total      int64
+	}
+
+	c.HTML(http.StatusOK, "session_group_list", sessionGroupListData{
+		Groups:     groups,
+		Page:       page,
+		TotalPages: totalPages,
+		Total:      total,
+	})
+}
+
+// SessionGroupCreateForm returns the empty create form HTML fragment for HTMX.
+// GET /gui/session-groups/new
+func (h *GUIHandler) SessionGroupCreateForm(c *gin.Context) {
+	tenants, err := h.Repo.ListAllTenants()
+	if err != nil {
+		tenants = nil
+	}
+
+	type formData struct {
+		ID           string
+		Name         string
+		Description  string
+		GlobalLogout bool
+		TenantID     string
+		Tenants      []models.Tenant
+	}
+	c.HTML(http.StatusOK, "session_group_form", formData{
+		GlobalLogout: true,
+		Tenants:      tenants,
+	})
+}
+
+// SessionGroupCreate handles creating a new session group.
+// POST /gui/session-groups
+func (h *GUIHandler) SessionGroupCreate(c *gin.Context) {
+	name := strings.TrimSpace(c.PostForm("name"))
+	if name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Session group name is required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+	description := strings.TrimSpace(c.PostForm("description"))
+	tenantIDStr := strings.TrimSpace(c.PostForm("tenant_id"))
+	globalLogout := c.PostForm("global_logout") == "on" || c.PostForm("global_logout") == "true" || c.PostForm("global_logout") == "1"
+
+	tenantUUID, err := uuid.Parse(tenantIDStr)
+	if err != nil {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Invalid tenant selected.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	sg := &models.SessionGroup{
+		TenantID:     tenantUUID,
+		Name:         name,
+		Description:  description,
+		GlobalLogout: globalLogout,
+	}
+	if err := h.Repo.CreateSessionGroup(sg); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to create session group. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "sessionGroupListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Session group created successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// SessionGroupFormCancel returns an empty response to clear the form container.
+// GET /gui/session-groups/form-cancel
+func (h *GUIHandler) SessionGroupFormCancel(c *gin.Context) {
+	c.String(http.StatusOK, "")
+}
+
+// SessionGroupEditForm returns the pre-filled edit form HTML fragment for HTMX.
+// GET /gui/session-groups/:id/edit
+func (h *GUIHandler) SessionGroupEditForm(c *gin.Context) {
+	id := c.Param("id")
+	sg, err := h.Repo.GetSessionGroupByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Session group not found.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	tenants, err := h.Repo.ListAllTenants()
+	if err != nil {
+		tenants = nil
+	}
+
+	type formData struct {
+		ID           string
+		Name         string
+		Description  string
+		GlobalLogout bool
+		TenantID     string
+		Tenants      []models.Tenant
+	}
+	c.HTML(http.StatusOK, "session_group_form", formData{
+		ID:           sg.ID.String(),
+		Name:         sg.Name,
+		Description:  sg.Description,
+		GlobalLogout: sg.GlobalLogout,
+		TenantID:     sg.TenantID.String(),
+		Tenants:      tenants,
+	})
+}
+
+// SessionGroupUpdate handles updating a session group.
+// PUT /gui/session-groups/:id
+func (h *GUIHandler) SessionGroupUpdate(c *gin.Context) {
+	id := c.Param("id")
+	name := strings.TrimSpace(c.PostForm("name"))
+	if name == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Session group name is required.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+	description := strings.TrimSpace(c.PostForm("description"))
+	globalLogout := c.PostForm("global_logout") == "on" || c.PostForm("global_logout") == "true" || c.PostForm("global_logout") == "1"
+
+	if err := h.Repo.UpdateSessionGroup(id, name, description, globalLogout); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update session group. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "sessionGroupListRefresh")
+	c.String(http.StatusOK,
+		`<div class="alert alert-success alert-dismissible fade show" role="alert">Session group updated successfully.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+}
+
+// SessionGroupDeleteConfirm returns the delete confirmation modal body for HTMX.
+// GET /gui/session-groups/:id/delete
+func (h *GUIHandler) SessionGroupDeleteConfirm(c *gin.Context) {
+	id := c.Param("id")
+	sg, err := h.Repo.GetSessionGroupByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="modal-body"><div class="alert alert-danger">Session group not found.</div></div>`)
+		return
+	}
+
+	type deleteData struct {
+		ID   string
+		Name string
+	}
+	c.HTML(http.StatusOK, "session_group_delete_confirm", deleteData{
+		ID:   sg.ID.String(),
+		Name: sg.Name,
+	})
+}
+
+// SessionGroupDelete handles deleting a session group.
+// DELETE /gui/session-groups/:id
+func (h *GUIHandler) SessionGroupDelete(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.Repo.DeleteSessionGroup(id); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Failed to delete session group.</div>`)
+		return
+	}
+
+	c.Header("HX-Trigger", "sessionGroupDeleted")
+
+	page := 1
+	pageSize := 10
+	groups, total, err := h.Repo.ListSessionGroups(page, pageSize)
+	if err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger">Session group deleted but failed to refresh list.</div>`)
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+
+	type sessionGroupListData struct {
+		Groups     []SessionGroupListItem
+		Page       int
+		TotalPages int
+		Total      int64
+	}
+
+	c.HTML(http.StatusOK, "session_group_list", sessionGroupListData{
+		Groups:     groups,
+		Page:       page,
+		TotalPages: totalPages,
+		Total:      total,
+	})
+}
+
+// SessionGroupApps returns the apps management partial for a session group.
+// GET /gui/session-groups/:id/apps
+func (h *GUIHandler) SessionGroupApps(c *gin.Context) {
+	id := c.Param("id")
+	sg, err := h.Repo.GetSessionGroupByID(id)
+	if err != nil {
+		c.String(http.StatusNotFound,
+			`<div class="alert alert-danger">Session group not found.</div>`)
+		return
+	}
+
+	currentApps, err := h.Repo.GetAppsInSessionGroupWithDetails(id)
+	if err != nil {
+		currentApps = nil
+	}
+
+	// Build set of already-added app IDs for filtering
+	addedIDs := make(map[string]bool, len(currentApps))
+	for _, a := range currentApps {
+		addedIDs[a.AppID.String()] = true
+	}
+
+	allApps, err := h.Repo.ListAllAppsWithTenantName()
+	if err != nil {
+		allApps = nil
+	}
+
+	// Filter out apps already in the group
+	availableApps := make([]AppWithTenant, 0, len(allApps))
+	for _, a := range allApps {
+		if !addedIDs[a.ID.String()] {
+			availableApps = append(availableApps, a)
+		}
+	}
+
+	type appsData struct {
+		GroupID       string
+		GroupName     string
+		CurrentApps   []SessionGroupAppDetail
+		AvailableApps []AppWithTenant
+	}
+	c.HTML(http.StatusOK, "session_group_apps", appsData{
+		GroupID:       sg.ID.String(),
+		GroupName:     sg.Name,
+		CurrentApps:   currentApps,
+		AvailableApps: availableApps,
+	})
+}
+
+// SessionGroupAddApp adds an application to a session group.
+// POST /gui/session-groups/:id/apps
+func (h *GUIHandler) SessionGroupAddApp(c *gin.Context) {
+	groupID := c.Param("id")
+	appID := strings.TrimSpace(c.PostForm("app_id"))
+	if appID == "" {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Please select an application.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	if err := h.Repo.AddAppToSessionGroup(groupID, appID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to add application. It may already belong to another session group.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	// Re-render the apps panel
+	c.Request.URL.Path = "/gui/session-groups/" + groupID + "/apps"
+	h.SessionGroupApps(c)
+}
+
+// SessionGroupRemoveApp removes an application from a session group.
+// DELETE /gui/session-groups/:id/apps/:app_id
+func (h *GUIHandler) SessionGroupRemoveApp(c *gin.Context) {
+	groupID := c.Param("id")
+	appID := c.Param("app_id")
+
+	if err := h.Repo.RemoveAppFromSessionGroup(groupID, appID); err != nil {
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to remove application.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
+		return
+	}
+
+	// Re-render the apps panel
+	c.Request.URL.Path = "/gui/session-groups/" + groupID + "/apps"
+	h.SessionGroupApps(c)
+}

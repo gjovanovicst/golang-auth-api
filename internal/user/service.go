@@ -33,6 +33,11 @@ type RoleLookupFunc func(appID, userID string) ([]string, error)
 // AssignDefaultRoleFunc is called after user registration to assign the default role.
 type AssignDefaultRoleFunc func(appID, userID string) error
 
+// GroupLogoutFunc is called (in a goroutine) after a successful logout when the
+// app belongs to an SSO session group with GlobalLogout enabled.  It is wired
+// from cmd/api/main.go via adminRepo to avoid an import cycle.
+type GroupLogoutFunc func(appID, userEmail string)
+
 type Service struct {
 	Repo              *Repository
 	EmailService      *emailpkg.Service
@@ -42,6 +47,7 @@ type Service struct {
 	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no default role is assigned on registration
 	WebhookService    *webhook.Service      // Optional: if nil, webhook dispatch is skipped
 	SMSSender         sms.Sender            // Optional: if nil, SMS 2FA auto-send is skipped
+	GroupLogoutFunc   GroupLogoutFunc       // Optional: if non-nil, called after logout for SSO group propagation
 }
 
 func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
@@ -400,6 +406,12 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 		if appErr := s.SessionService.LogoutSession(appID, userID, sessionID, accessToken); appErr != nil {
 			log.Printf("Warning: Failed to revoke session %s: %v\n", sessionID, appErr.Message)
 		}
+		// Propagate logout to SSO group peers (non-blocking, best-effort)
+		if s.GroupLogoutFunc != nil {
+			if u, err := s.Repo.GetUserByID(userID); err == nil && u != nil {
+				go s.GroupLogoutFunc(appID, u.Email)
+			}
+		}
 		return nil
 	}
 
@@ -424,6 +436,13 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 	} else {
 		// Log the error but don't fail logout completely
 		log.Printf("Warning: Failed to parse access token during logout: %v\n", err)
+	}
+
+	// Propagate logout to SSO group peers (non-blocking, best-effort)
+	if s.GroupLogoutFunc != nil {
+		if u, err := s.Repo.GetUserByID(userID); err == nil && u != nil {
+			go s.GroupLogoutFunc(appID, u.Email)
+		}
 	}
 
 	return nil

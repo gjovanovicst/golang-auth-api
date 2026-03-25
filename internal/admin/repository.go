@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gjovanovicst/auth_api/internal/sso"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
@@ -1398,4 +1399,197 @@ func (r *Repository) ImportUsers(appID string, rows []dto.UserImportRow) (dto.Us
 	}
 
 	return result, nil
+}
+
+// ============================================================
+// Session Group Operations
+// ============================================================
+
+// SessionGroupListItem holds a session group with tenant name and app count for list views.
+type SessionGroupListItem struct {
+	ID           uuid.UUID
+	TenantID     uuid.UUID
+	TenantName   string
+	Name         string
+	Description  string
+	GlobalLogout bool
+	AppCount     int64
+	CreatedAt    time.Time
+}
+
+// CreateSessionGroup inserts a new session group.
+func (r *Repository) CreateSessionGroup(sg *models.SessionGroup) error {
+	return r.DB.Create(sg).Error
+}
+
+// GetSessionGroupByID returns a session group by its UUID string.
+func (r *Repository) GetSessionGroupByID(id string) (*models.SessionGroup, error) {
+	var sg models.SessionGroup
+	if err := r.DB.First(&sg, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &sg, nil
+}
+
+// ListSessionGroups returns paginated session groups with tenant name and app count.
+func (r *Repository) ListSessionGroups(page, pageSize int) ([]SessionGroupListItem, int64, error) {
+	var total int64
+	if err := r.DB.Model(&models.SessionGroup{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var items []SessionGroupListItem
+	offset := (page - 1) * pageSize
+
+	err := r.DB.Model(&models.SessionGroup{}).
+		Select("session_groups.id, session_groups.tenant_id, tenants.name as tenant_name, session_groups.name, session_groups.description, session_groups.global_logout, session_groups.created_at, COUNT(session_group_apps.app_id) as app_count").
+		Joins("LEFT JOIN tenants ON tenants.id = session_groups.tenant_id").
+		Joins("LEFT JOIN session_group_apps ON session_group_apps.session_group_id = session_groups.id").
+		Group("session_groups.id, tenants.name").
+		Order("session_groups.created_at desc").
+		Limit(pageSize).
+		Offset(offset).
+		Scan(&items).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+// UpdateSessionGroup updates the mutable fields of a session group.
+func (r *Repository) UpdateSessionGroup(id, name, description string, globalLogout bool) error {
+	return r.DB.Model(&models.SessionGroup{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"name":          name,
+			"description":   description,
+			"global_logout": globalLogout,
+		}).Error
+}
+
+// DeleteSessionGroup deletes a session group and its app memberships (cascade via FK).
+func (r *Repository) DeleteSessionGroup(id string) error {
+	// Delete memberships first (no FK cascade defined in GORM tags)
+	if err := r.DB.Where("session_group_id = ?", id).Delete(&models.SessionGroupApp{}).Error; err != nil {
+		return err
+	}
+	return r.DB.Where("id = ?", id).Delete(&models.SessionGroup{}).Error
+}
+
+// AddAppToSessionGroup adds an application to a session group.
+// Returns an error if the app already belongs to a different group (unique index).
+func (r *Repository) AddAppToSessionGroup(groupID, appID string) error {
+	groupUUID, err := uuid.Parse(groupID)
+	if err != nil {
+		return errors.New("invalid group ID")
+	}
+	appUUID, err := uuid.Parse(appID)
+	if err != nil {
+		return errors.New("invalid app ID")
+	}
+	entry := models.SessionGroupApp{
+		SessionGroupID: groupUUID,
+		AppID:          appUUID,
+	}
+	return r.DB.Create(&entry).Error
+}
+
+// RemoveAppFromSessionGroup removes an application from a session group.
+func (r *Repository) RemoveAppFromSessionGroup(groupID, appID string) error {
+	return r.DB.Where("session_group_id = ? AND app_id = ?", groupID, appID).
+		Delete(&models.SessionGroupApp{}).Error
+}
+
+// GetSessionGroupForApp returns the session group that the given appID belongs to.
+// Returns (nil, nil) when the app is not in any group.
+func (r *Repository) GetSessionGroupForApp(appID string) (*models.SessionGroup, error) {
+	var sga models.SessionGroupApp
+	if err := r.DB.Where("app_id = ?", appID).First(&sga).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var sg models.SessionGroup
+	if err := r.DB.First(&sg, "id = ?", sga.SessionGroupID).Error; err != nil {
+		return nil, err
+	}
+	return &sg, nil
+}
+
+// GetAppsInSessionGroup returns all app IDs (as strings) that belong to the given group.
+func (r *Repository) GetAppsInSessionGroup(groupID string) ([]string, error) {
+	var entries []models.SessionGroupApp
+	if err := r.DB.Where("session_group_id = ?", groupID).Find(&entries).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.AppID.String())
+	}
+	return ids, nil
+}
+
+// GetPeersForApp returns all peer applications (excluding the requesting app) in the
+// same session group, with their app_id and frontend_url as origin.
+// Returns an empty slice if the app is not in any group or has no peers.
+func (r *Repository) GetPeersForApp(appID string) ([]sso.SSOPeerInfo, error) {
+	// Find the session group for this app
+	var sga models.SessionGroupApp
+	if err := r.DB.Where("app_id = ?", appID).First(&sga).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return []sso.SSOPeerInfo{}, nil
+		}
+		return nil, err
+	}
+
+	// Fetch all peer apps in the same group (excluding requesting app)
+	type peerRow struct {
+		AppID       string
+		FrontendURL string
+	}
+	var rows []peerRow
+	err := r.DB.Model(&models.SessionGroupApp{}).
+		Select("session_group_apps.app_id, applications.frontend_url").
+		Joins("JOIN applications ON applications.id = session_group_apps.app_id").
+		Where("session_group_apps.session_group_id = ? AND session_group_apps.app_id != ?", sga.SessionGroupID, appID).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	peers := make([]sso.SSOPeerInfo, 0, len(rows))
+	for _, row := range rows {
+		if row.FrontendURL == "" {
+			continue // skip apps without a frontend URL
+		}
+		peers = append(peers, sso.SSOPeerInfo{
+			AppID:  row.AppID,
+			Origin: row.FrontendURL,
+		})
+	}
+	return peers, nil
+}
+
+// GetAppsInSessionGroupWithDetails returns apps in a session group with their names and tenant names.
+type SessionGroupAppDetail struct {
+	AppID      uuid.UUID
+	AppName    string
+	TenantName string
+}
+
+func (r *Repository) GetAppsInSessionGroupWithDetails(groupID string) ([]SessionGroupAppDetail, error) {
+	var items []SessionGroupAppDetail
+	err := r.DB.Model(&models.SessionGroupApp{}).
+		Select("session_group_apps.app_id, applications.name as app_name, tenants.name as tenant_name").
+		Joins("JOIN applications ON applications.id = session_group_apps.app_id").
+		Joins("LEFT JOIN tenants ON tenants.id = applications.tenant_id").
+		Where("session_group_apps.session_group_id = ?", groupID).
+		Order("tenants.name asc, applications.name asc").
+		Scan(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
 }

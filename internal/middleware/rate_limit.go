@@ -438,6 +438,16 @@ func APIMagicLinkRateLimit() gin.HandlerFunc {
 	})
 }
 
+// APISSORateLimit — 5 SSO token requests per minute per IP.
+// Token issuance is JWT-protected but still rate-limited as a secondary safeguard.
+func APISSORateLimit() gin.HandlerFunc {
+	return RateLimitMiddleware(RateLimitConfig{
+		KeyPrefix:   "api:sso-token",
+		MaxAttempts: 5,
+		Window:      60 * time.Second,
+	})
+}
+
 // GUIMagicLinkRateLimit — 3 requests per 15 minutes per IP.
 // Magic links are sensitive (email-based auth), so use a tight window.
 func GUIMagicLinkRateLimit() gin.HandlerFunc {

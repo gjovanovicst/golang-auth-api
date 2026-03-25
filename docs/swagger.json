@@ -7690,6 +7690,167 @@
                 }
             }
         },
+        "/sso/exchange": {
+            "post": {
+                "description": "Consume a single-use SSO token and receive access/refresh tokens for the target app.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sso"
+                ],
+                "summary": "Exchange SSO token for app-scoped tokens",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Target application ID",
+                        "name": "X-App-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "SSO token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/sso.exchangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/sso/peers": {
+            "get": {
+                "description": "Return peer apps in the same session group (no auth required).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sso"
+                ],
+                "summary": "Get SSO peer apps",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Requesting application ID",
+                        "name": "X-App-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/sso/token": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Issue a 60-second single-use SSO token for cross-app login.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sso"
+                ],
+                "summary": "Issue SSO exchange token",
+                "parameters": [
+                    {
+                        "description": "Target application ID",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/sso.issueTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/verify-email": {
             "get": {
                 "description": "Verify user's email address",
@@ -10300,6 +10461,28 @@
                     "items": {
                         "$ref": "#/definitions/oidc.JWK"
                     }
+                }
+            }
+        },
+        "sso.exchangeRequest": {
+            "type": "object",
+            "required": [
+                "sso_token"
+            ],
+            "properties": {
+                "sso_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "sso.issueTokenRequest": {
+            "type": "object",
+            "required": [
+                "target_app_id"
+            ],
+            "properties": {
+                "target_app_id": {
+                    "type": "string"
                 }
             }
         },

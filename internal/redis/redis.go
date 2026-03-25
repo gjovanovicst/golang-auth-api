@@ -1012,3 +1012,44 @@ func DeleteMergeToken(appID, mergeToken string) error {
 	key := fmt.Sprintf("app:%s:merge_token:%s", appID, mergeToken)
 	return Rdb.Del(ctx, key).Err()
 }
+
+// ============================================================================
+// SSO (Shared Session) Token helpers
+//
+// An SSO token is a short-lived (60 s), single-use opaque token that encodes
+// the source app, the session group, and the authenticated user.  It is issued
+// by POST /sso/token and consumed exactly once by POST /sso/exchange on the
+// target application to mint a new app-scoped token pair without re-auth.
+//
+// Key layout: sso:token:{token}  →  "{groupID}|{sourceAppID}|{userID}"
+// ============================================================================
+
+const ssoTokenTTL = 60 * time.Second
+
+// SetSSOToken stores a new SSO exchange token with a 60-second TTL.
+func SetSSOToken(token, groupID, sourceAppID, userID string) error {
+	key := fmt.Sprintf("sso:token:%s", token)
+	value := groupID + "|" + sourceAppID + "|" + userID
+	return Rdb.Set(ctx, key, value, ssoTokenTTL).Err()
+}
+
+// GetSSOToken retrieves the group, source app, and user encoded in an SSO token.
+// Returns redis.Nil error when the token does not exist or has expired.
+func GetSSOToken(token string) (groupID, sourceAppID, userID string, err error) {
+	key := fmt.Sprintf("sso:token:%s", token)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err != nil {
+		return "", "", "", err
+	}
+	parts := strings.SplitN(val, "|", 3)
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("malformed SSO token value")
+	}
+	return parts[0], parts[1], parts[2], nil
+}
+
+// DeleteSSOToken removes an SSO token after it has been consumed (single-use).
+func DeleteSSOToken(token string) error {
+	key := fmt.Sprintf("sso:token:%s", token)
+	return Rdb.Del(ctx, key).Err()
+}

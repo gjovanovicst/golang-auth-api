@@ -1,0 +1,72 @@
+{{define "session_groups"}}
+{{template "base" .}}
+{{end}}
+
+{{define "title"}}Session Groups{{end}}
+
+{{define "content"}}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0 fw-bold">
+        <i class="bi bi-link-45deg me-2"></i>Session Groups
+    </h4>
+    <button class="btn btn-primary btn-sm"
+            hx-get="/gui/session-groups/new"
+            hx-target="#session-group-form-container"
+            hx-swap="innerHTML">
+        <i class="bi bi-plus-lg me-1"></i>Create Session Group
+    </button>
+</div>
+
+<p class="text-muted small mb-4">
+    Session groups allow users authenticated in one application to seamlessly access other applications in the group without re-entering credentials (SSO). Apps in a group are matched by email address.
+</p>
+
+<!-- Form container (populated by HTMX when creating/editing) -->
+<div id="session-group-form-container" class="mb-3"></div>
+
+<!-- Apps panel (populated when managing group members) -->
+<div id="session-group-apps-container" class="mb-3"></div>
+
+<!-- Session group table (loaded via HTMX) -->
+<div id="session-group-table"
+     hx-get="/gui/session-groups/list?page=1"
+     hx-trigger="load, sessionGroupListRefresh from:body"
+     hx-swap="innerHTML">
+    <!-- Loading placeholder -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 mb-0 text-muted small">Loading session groups...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="deleteSessionGroupModal" tabindex="-1" aria-labelledby="deleteSessionGroupModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-0">
+                <h5 class="modal-title" id="deleteSessionGroupModalLabel">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Session Group
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="delete-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    // Close delete modal and refresh table after successful deletion
+    document.body.addEventListener('sessionGroupDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteSessionGroupModal'));
+        if (modal) modal.hide();
+    });
+</script>
+{{end}}

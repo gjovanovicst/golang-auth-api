@@ -74,6 +74,8 @@ func MigrateDatabase() {
 		&models.OIDCClient{},         // OIDC relying-party clients (per-app)
 		&models.OIDCAuthCode{},       // OIDC single-use authorization codes
 		&models.TrustedDevice{},      // Trusted device tokens for 2FA bypass
+		&models.SessionGroup{},       // SSO session groups (cross-app shared auth)
+		&models.SessionGroupApp{},    // Join table: app membership in a session group
 	)
 
 	if err != nil {

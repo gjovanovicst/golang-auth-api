@@ -1,0 +1,111 @@
+{{define "session_group_list"}}
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        {{if .Groups}}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        <th>Tenant</th>
+                        <th>Apps</th>
+                        <th>Global Logout</th>
+                        <th>Created</th>
+                        <th class="pe-3 text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Groups}}
+                    <tr>
+                        <td class="ps-3">
+                            <span class="fw-semibold">{{.Name}}</span>
+                            {{if .Description}}
+                            <br>
+                            <small class="text-muted">{{.Description}}</small>
+                            {{end}}
+                            <br>
+                            <small class="text-muted font-monospace">{{.ID}}</small>
+                        </td>
+                        <td>
+                            <small class="text-muted">{{.TenantName}}</small>
+                        </td>
+                        <td>
+                            <span class="badge bg-info bg-opacity-10 text-info">{{.AppCount}} app{{if ne .AppCount 1}}s{{end}}</span>
+                        </td>
+                        <td>
+                            {{if .GlobalLogout}}
+                            <span class="badge bg-warning bg-opacity-10 text-warning">
+                                <i class="bi bi-arrow-repeat me-1"></i>Global
+                            </span>
+                            {{else}}
+                            <span class="badge bg-secondary bg-opacity-10 text-secondary">Local</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{formatDateTimeFull .CreatedAt}}">{{timeAgo .CreatedAt}}</small>
+                        </td>
+                        <td class="pe-3 text-end">
+                            <button class="btn btn-outline-info btn-sm me-1"
+                                    hx-get="/gui/session-groups/{{.ID}}/apps"
+                                    hx-target="#session-group-apps-container"
+                                    hx-swap="innerHTML"
+                                    title="Manage Apps">
+                                <i class="bi bi-collection"></i>
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm me-1"
+                                    hx-get="/gui/session-groups/{{.ID}}/edit"
+                                    hx-target="#session-group-form-container"
+                                    hx-swap="innerHTML"
+                                    title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm"
+                                    hx-get="/gui/session-groups/{{.ID}}/delete"
+                                    hx-target="#delete-modal-body"
+                                    hx-swap="innerHTML"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteSessionGroupModal"
+                                    title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {{if gt .TotalPages 1}}
+        <div class="card-footer bg-body-tertiary border-top d-flex align-items-center justify-content-between">
+            <small class="text-muted">
+                Showing page {{.Page}} of {{.TotalPages}} ({{.Total}} total)
+            </small>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item {{if le .Page 1}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/session-groups/list?page={{sub .Page 1}}"
+                           hx-target="#session-group-table"
+                           hx-swap="innerHTML">Previous</a>
+                    </li>
+                    <li class="page-item {{if ge .Page .TotalPages}}disabled{{end}}">
+                        <a class="page-link" href="#"
+                           hx-get="/gui/session-groups/list?page={{add .Page 1}}"
+                           hx-target="#session-group-table"
+                           hx-swap="innerHTML">Next</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+        {{end}}
+
+        {{else}}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-link-45deg fs-1"></i>
+            <p class="mt-2 mb-0">No session groups found. Create your first session group to enable cross-app SSO.</p>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}

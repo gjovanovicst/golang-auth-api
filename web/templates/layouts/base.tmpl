@@ -165,6 +165,13 @@
                         <i class="bi bi-fingerprint"></i> OIDC Clients
                     </a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link sidebar-link{{if eq .ActivePage "session-groups"}} active{{end}}" href="/gui/session-groups"
+                       data-page="session-groups"
+                       hx-get="/gui/session-groups" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
+                        <i class="bi bi-link-45deg"></i> Session Groups
+                    </a>
+                </li>
             </ul>
 
             <div class="sidebar-heading">Security</div>
@@ -390,6 +397,7 @@
                 'logs': 'Activity Logs',
                 'api-keys': 'API Keys',
                 'webhooks': 'Webhooks',
+                'session-groups': 'Session Groups',
                 'monitoring': 'System Health',
                 'settings': 'Settings',
                 'my-account': 'My Account'

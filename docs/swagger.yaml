@@ -1759,6 +1759,20 @@ definitions:
           $ref: '#/definitions/oidc.JWK'
         type: array
     type: object
+  sso.exchangeRequest:
+    properties:
+      sso_token:
+        type: string
+    required:
+    - sso_token
+    type: object
+  sso.issueTokenRequest:
+    properties:
+      target_app_id:
+        type: string
+    required:
+    - target_app_id
+    type: object
   twofa.TwoFASetupResponse:
     properties:
       qr_code_data:
@@ -6769,6 +6783,112 @@ paths:
       summary: Revoke a specific session
       tags:
       - Sessions
+  /sso/exchange:
+    post:
+      consumes:
+      - application/json
+      description: Consume a single-use SSO token and receive access/refresh tokens
+        for the target app.
+      parameters:
+      - description: Target application ID
+        in: header
+        name: X-App-ID
+        required: true
+        type: string
+      - description: SSO token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/sso.exchangeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Exchange SSO token for app-scoped tokens
+      tags:
+      - sso
+  /sso/peers:
+    get:
+      description: Return peer apps in the same session group (no auth required).
+      parameters:
+      - description: Requesting application ID
+        in: header
+        name: X-App-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get SSO peer apps
+      tags:
+      - sso
+  /sso/token:
+    post:
+      consumes:
+      - application/json
+      description: Issue a 60-second single-use SSO token for cross-app login.
+      parameters:
+      - description: Target application ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/sso.issueTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - ApiKeyAuth: []
+      summary: Issue SSO exchange token
+      tags:
+      - sso
   /verify-email:
     get:
       description: Verify user's email address

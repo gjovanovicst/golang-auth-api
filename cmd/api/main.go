@@ -25,6 +25,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/sms"
 	"github.com/gjovanovicst/auth_api/internal/social"
+	ssopkg "github.com/gjovanovicst/auth_api/internal/sso"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
 	passkey "github.com/gjovanovicst/auth_api/internal/webauthn"
@@ -231,6 +232,35 @@ func main() {
 	settingsRepo := admin.NewSettingsRepository(database.DB)
 	settingsService := admin.NewSettingsService(settingsRepo)
 	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService, rbacService, webauthnService)
+
+	// Initialize SSO Handler
+	ssoHandler := ssopkg.NewHandler(adminRepo, userRepo, sessionService, database.DB)
+	ssoHandler.LookupRoles = rbacService.GetUserRoleNames
+
+	// Wire SSO global logout: when a user logs out of one app in a session group,
+	// their sessions in all other apps of the group are revoked (only when GlobalLogout=true).
+	userService.GroupLogoutFunc = func(appID, userEmail string) {
+		group, err := adminRepo.GetSessionGroupForApp(appID)
+		if err != nil || group == nil || !group.GlobalLogout {
+			return
+		}
+		appIDs, err := adminRepo.GetAppsInSessionGroup(group.ID.String())
+		if err != nil {
+			return
+		}
+		for _, otherAppID := range appIDs {
+			if otherAppID == appID {
+				continue
+			}
+			targetUser, err := userRepo.GetUserByEmail(otherAppID, userEmail)
+			if err != nil || targetUser == nil {
+				continue
+			}
+			if appErr := sessionService.RevokeAllUserSessions(otherAppID, targetUser.ID.String()); appErr != nil {
+				log.Printf("[SSO] Warning: failed to revoke sessions for user %s in app %s: %v", userEmail, otherAppID, appErr.Message)
+			}
+		}
+	}
 
 	// Wire SettingsService resolver into twofa handler so the TRUSTED_DEVICE_COOKIE_SAMESITE
 	// setting is resolved via the 3-tier priority (env > DB > default), allowing the admin GUI
@@ -487,6 +517,20 @@ func main() {
 		protected.GET("/sessions", sessionHandler.ListSessions)
 		protected.DELETE("/sessions/:id", sessionHandler.RevokeSession)
 		protected.DELETE("/sessions", sessionHandler.RevokeAllSessions)
+	}
+
+	// SSO routes
+	// Public exchange endpoint — target app identified by X-App-ID header.
+	ssoPublic := r.Group("/sso")
+	{
+		ssoPublic.POST("/exchange", ssoHandler.Exchange)
+		ssoPublic.GET("/peers", ssoHandler.GetPeers)
+	}
+	// Protected token issuance endpoint — requires JWT auth.
+	ssoProtected := r.Group("/sso")
+	ssoProtected.Use(middleware.AuthMiddleware())
+	{
+		ssoProtected.POST("/token", middleware.APISSORateLimit(), ssoHandler.IssueToken)
 	}
 
 	// Admin routes (protected by Admin API Key)
@@ -857,6 +901,20 @@ func main() {
 			guiAuth.GET("/oidc-clients/:id/delete", guiHandler.OIDCClientDeleteConfirm)
 			guiAuth.DELETE("/oidc-clients/:id", guiHandler.OIDCClientDelete)
 			guiAuth.POST("/oidc-clients/:id/rotate-secret", guiHandler.OIDCClientRotateSecret)
+
+			// Session Group management
+			guiAuth.GET("/session-groups", guiHandler.SessionGroupPage)
+			guiAuth.GET("/session-groups/list", guiHandler.SessionGroupList)
+			guiAuth.GET("/session-groups/new", guiHandler.SessionGroupCreateForm)
+			guiAuth.POST("/session-groups", guiHandler.SessionGroupCreate)
+			guiAuth.GET("/session-groups/form-cancel", guiHandler.SessionGroupFormCancel)
+			guiAuth.GET("/session-groups/:id/edit", guiHandler.SessionGroupEditForm)
+			guiAuth.PUT("/session-groups/:id", guiHandler.SessionGroupUpdate)
+			guiAuth.GET("/session-groups/:id/delete", guiHandler.SessionGroupDeleteConfirm)
+			guiAuth.DELETE("/session-groups/:id", guiHandler.SessionGroupDelete)
+			guiAuth.GET("/session-groups/:id/apps", guiHandler.SessionGroupApps)
+			guiAuth.POST("/session-groups/:id/apps", guiHandler.SessionGroupAddApp)
+			guiAuth.DELETE("/session-groups/:id/apps/:app_id", guiHandler.SessionGroupRemoveApp)
 		}
 	}
 

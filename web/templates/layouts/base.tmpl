@@ -101,6 +101,19 @@
             border-right: 1px solid rgba(255, 255, 255, 0.08);
             box-shadow: 2px 0 12px rgba(0, 0, 0, 0.5);
         }
+        /* Dark mode: override Bootstrap's hardcoded light colours on .table-secondary
+           so inactive rows (e.g. IP Rules) don't appear as bright patches in a dark table */
+        [data-bs-theme="dark"] .table-secondary {
+            --bs-table-color: rgba(255, 255, 255, 0.45);
+            --bs-table-bg: rgba(255, 255, 255, 0.05);
+            --bs-table-border-color: rgba(255, 255, 255, 0.08);
+            --bs-table-striped-bg: rgba(255, 255, 255, 0.06);
+            --bs-table-striped-color: rgba(255, 255, 255, 0.45);
+            --bs-table-active-bg: rgba(255, 255, 255, 0.09);
+            --bs-table-active-color: rgba(255, 255, 255, 0.45);
+            --bs-table-hover-bg: rgba(255, 255, 255, 0.08);
+            --bs-table-hover-color: rgba(255, 255, 255, 0.45);
+        }
     </style>
 </head>
 <body>

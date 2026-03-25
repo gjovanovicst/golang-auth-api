@@ -5670,6 +5670,9 @@ func (h *GUIHandler) SessionRevoke(c *gin.Context) {
 			// next request will still get a 401 via the SessionExists check.
 			_ = err
 		}
+		// Revoke the user's sessions in all peer apps of the same SSO session group.
+		// Admin revocation is unconditional (privileged override, ignores GlobalLogout flag).
+		h.revokeSessionsInPeerApps(appID, userID, accessTokenTTL)
 	}
 
 	// Check if this was called from user detail page
@@ -5705,6 +5708,10 @@ func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
 		_ = err // non-fatal
 	}
 
+	// Revoke the user's sessions in all peer apps of the same SSO session group.
+	// Admin revocation is unconditional (privileged override, ignores GlobalLogout flag).
+	h.revokeSessionsInPeerApps(appID, userID, accessTokenTTL)
+
 	// Check if this was called from user detail page
 	if c.Query("from_user_detail") == "1" {
 		h.renderUserSessions(c, appID, userID)
@@ -5714,6 +5721,45 @@ func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
 	// Trigger list refresh and re-render
 	c.Header("HX-Trigger", "sessionListRefresh")
 	h.SessionList(c)
+}
+
+// revokeSessionsInPeerApps revokes all sessions (and blacklists access tokens) for
+// the user in every peer app that shares the same SSO session group as appID.
+// This is always performed unconditionally regardless of the group's GlobalLogout
+// setting — an admin explicitly revoking a session is a privileged override.
+//
+// IMPORTANT: each peer app stores the same person as a separate User row with a
+// different UUID (scoped by app_id). We resolve the correct peer-app userID by
+// looking up the user's email in each peer app's namespace.
+func (h *GUIHandler) revokeSessionsInPeerApps(appID, userID string, accessTokenTTL time.Duration) {
+	group, err := h.Repo.GetSessionGroupForApp(appID)
+	if err != nil || group == nil {
+		return // app is not in any session group
+	}
+	peerAppIDs, err := h.Repo.GetAppsInSessionGroup(group.ID.String())
+	if err != nil {
+		return
+	}
+
+	// Resolve the source user's email so we can find the same person in peer apps.
+	detail, err := h.Repo.GetUserDetailByID(userID)
+	if err != nil || detail == nil || detail.Email == "" {
+		return
+	}
+	email := detail.Email
+
+	for _, peerAppID := range peerAppIDs {
+		if peerAppID == appID {
+			continue
+		}
+		// Each peer app has its own User row for the same email — look up the peer userID.
+		peerUserID, err := h.Repo.GetUserIDByEmailAndApp(peerAppID, email)
+		if err != nil || peerUserID == "" {
+			continue // user has no account in this peer app, skip
+		}
+		_ = redis.DeleteAllUserSessions(peerAppID, peerUserID, "")
+		_ = redis.BlacklistAllUserTokens(peerAppID, peerUserID, accessTokenTTL)
+	}
 }
 
 // UserSessions returns the user sessions partial for the user detail page.

@@ -281,6 +281,30 @@ func main() {
 		oidcService := oidc.NewService(oidcRepo, rbacService.GetUserRoleNames)
 		oidcHandler = oidc.NewHandler(oidcService, oidcRepo)
 		guiHandler.OIDCService = oidcService
+		// Wire OIDC RP-initiated logout group logout: revoke peer-app JWT sessions
+		// for the logging-out user, mirroring userService.GroupLogoutFunc.
+		oidcHandler.GroupLogoutFunc = func(appID, userEmail string) {
+			group, err := adminRepo.GetSessionGroupForApp(appID)
+			if err != nil || group == nil || !group.GlobalLogout {
+				return
+			}
+			appIDs, err := adminRepo.GetAppsInSessionGroup(group.ID.String())
+			if err != nil {
+				return
+			}
+			for _, otherAppID := range appIDs {
+				if otherAppID == appID {
+					continue
+				}
+				targetUser, err := userRepo.GetUserByEmail(otherAppID, userEmail)
+				if err != nil || targetUser == nil {
+					continue
+				}
+				if appErr := sessionService.RevokeAllUserSessions(otherAppID, targetUser.ID.String()); appErr != nil {
+					log.Printf("[OIDC] Warning: failed to revoke sessions for user %s in app %s: %v", userEmail, otherAppID, appErr.Message)
+				}
+			}
+		}
 		// Fix #10: Run an initial cleanup immediately on startup so stale codes
 		// from before the last restart are purged without waiting a full hour.
 		go func() {

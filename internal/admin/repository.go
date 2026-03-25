@@ -1224,6 +1224,26 @@ func (r *Repository) DeleteWebAuthnCredential(id string) error {
 // Session Operations (Admin GUI - session management)
 // ============================================================
 
+// GetUserIDByEmailAndApp returns the user ID (as a string) for the given email
+// within the given application. Returns ("", nil) when no matching user exists.
+// Used for cross-app session revocation where the same person has separate User
+// rows per app (same email, different UUID).
+func (r *Repository) GetUserIDByEmailAndApp(appID, email string) (string, error) {
+	type row struct {
+		ID string
+	}
+	var result row
+	err := r.DB.Model(&models.User{}).
+		Select("id").
+		Where("app_id = ? AND email = ?", appID, email).
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return "", err
+	}
+	return result.ID, nil
+}
+
 // GetUserEmailsByIDs returns a map of userID -> email for the given user IDs.
 // Used for batch lookups when displaying session lists.
 func (r *Repository) GetUserEmailsByIDs(userIDs []string) (map[string]string, error) {

@@ -29,21 +29,33 @@ func parseScopes(raw string) []string {
 // the given required scope. Wildcard support: a granted scope of "resource:*"
 // covers any "resource:<action>". A granted scope of "*" covers everything.
 //
-// If no scopes are set on the context (e.g. the request was authenticated via
-// the static ADMIN_API_KEY env var), HasScope returns true so legacy keys
-// remain fully permissive.
+// Permissive cases (returns true without checking scopes):
+//   - The ApiKeyScopesKey context key is absent entirely — this means the
+//     request was authenticated via the static ADMIN_API_KEY env var, which
+//     is always fully permissive.
+//
+// Deny cases (returns false immediately):
+//   - The context value is present but the type assertion to []string fails
+//     (defensive; should not happen in normal operation).
+//   - The granted scopes slice is empty — a key issued with no scopes has no
+//     permissions. Use scope "*" to grant unrestricted access to a DB-backed key.
 func HasScope(c *gin.Context, required string) bool {
 	val, exists := c.Get(web.ApiKeyScopesKey)
 	if !exists {
-		// No scopes set — authenticated via static env key (fully permissive)
+		// No scopes key in context — authenticated via static env key (fully permissive).
 		return true
 	}
 
 	granted, ok := val.([]string)
-	if !ok || len(granted) == 0 {
-		// Empty scopes slice means the key was issued with no restrictions yet;
-		// treat as fully permissive for backward compatibility.
-		return true
+	if !ok {
+		// Type assertion failed — deny as a safe default.
+		return false
+	}
+
+	if len(granted) == 0 {
+		// Key was issued with no scopes — deny by default (least privilege).
+		// To grant unrestricted access, create the key with scope "*".
+		return false
 	}
 
 	requiredParts := strings.SplitN(required, ":", 2)

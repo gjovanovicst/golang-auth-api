@@ -7,5 +7,23 @@
     ".cursor/rules/security-patterns.mdc",
     ".cursor/rules/development-workflow.mdc",
     ".cursor/rules/commit-messages.mdc"
-  ]
+  ],
+  "mode": {
+    "build": {
+      "model": "deepseek/deepseek-chat",
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": true
+      }
+    },
+    "plan": {
+      "model": "deepseek/deepseek-reasoner",
+      "tools": {
+        "write": false,
+        "edit": false,
+        "bash": false
+      }
+    }
+  }
 }

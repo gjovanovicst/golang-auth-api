@@ -285,6 +285,13 @@ func CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent string,
 	Rdb.SAdd(ctx, appIndexKey, sessionID)
 	Rdb.Expire(ctx, appIndexKey, ttl+24*time.Hour)
 
+	// Store session metadata for expiration detection
+	metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sessionID)
+	if err := Rdb.Set(ctx, metaKey, "1", ttl).Err(); err != nil {
+		// Log but don't fail session creation
+		log.Printf("Warning: Failed to create session metadata key: %v", err)
+	}
+
 	return nil
 }
 
@@ -339,6 +346,9 @@ func DeleteSession(appID, sessionID, userID string) error {
 	// Remove from app-level session index
 	appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
 	Rdb.SRem(ctx, appIndexKey, sessionID)
+	// Delete session metadata key
+	metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sessionID)
+	Rdb.Del(ctx, metaKey)
 	return nil
 }
 
@@ -1052,4 +1062,57 @@ func GetSSOToken(token string) (groupID, sourceAppID, userID string, err error) 
 func DeleteSSOToken(token string) error {
 	key := fmt.Sprintf("sso:token:%s", token)
 	return Rdb.Del(ctx, key).Err()
+}
+
+// ============================================================================
+// Session Metadata Functions for Expiration Detection
+// ============================================================================
+
+// ParseSessionMetaKey extracts appID, userID, and sessionID from a session_meta key
+func ParseSessionMetaKey(metaKey string) (appID, userID, sessionID string, err error) {
+	// Remove the "session_meta:" prefix
+	if !strings.HasPrefix(metaKey, "session_meta:") {
+		return "", "", "", fmt.Errorf("not a session_meta key")
+	}
+
+	parts := strings.Split(metaKey[len("session_meta:"):], ":")
+	if len(parts) != 3 {
+		return "", "", "", fmt.Errorf("malformed session_meta key")
+	}
+
+	return parts[0], parts[1], parts[2], nil
+}
+
+// GetExpiredSessionMetaKeys returns all session_meta keys that have expired (TTL <= 0)
+func GetExpiredSessionMetaKeys() ([]string, error) {
+	var expiredKeys []string
+
+	// Use SCAN to find all session_meta keys
+	var cursor uint64
+	for {
+		var keys []string
+		var err error
+		keys, cursor, err = Rdb.Scan(ctx, cursor, "session_meta:*", 100).Result()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, key := range keys {
+			// Check TTL
+			ttl, err := Rdb.TTL(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			// TTL <= 0 means expired or no TTL
+			if ttl <= 0 {
+				expiredKeys = append(expiredKeys, key)
+			}
+		}
+
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return expiredKeys, nil
 }

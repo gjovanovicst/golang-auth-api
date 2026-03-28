@@ -4,6 +4,79 @@
 
 {{define "title"}}Email Templates{{end}}
 
+{{define "head"}}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<style>
+    .et-editor-container {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+    }
+    .et-editor-pane {
+        flex: 1;
+        min-width: 0;
+    }
+    .et-preview-pane {
+        flex: 0 0 42%;
+        min-width: 0;
+        display: none;
+        flex-direction: column;
+        border: 1px solid var(--bs-border-color);
+        border-radius: var(--bs-border-radius);
+        overflow: hidden;
+    }
+    .et-editor-container.split-active .et-preview-pane {
+        display: flex;
+    }
+    .et-editor-container.split-active .et-editor-pane {
+        flex: 0 0 57%;
+    }
+    .et-preview-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.4rem 0.75rem;
+        background: var(--bs-tertiary-bg);
+        border-bottom: 1px solid var(--bs-border-color);
+        font-size: 0.8rem;
+    }
+    .et-preview-body {
+        flex: 1;
+        overflow: auto;
+        background: #fff;
+    }
+    .et-preview-body iframe {
+        width: 100%;
+        min-height: 380px;
+        border: none;
+        display: block;
+    }
+    .et-preview-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 200px;
+        color: var(--bs-secondary-color);
+        font-size: 0.85rem;
+    }
+    .CodeMirror {
+        height: 400px;
+        font-family: 'Monaco', 'Menlo', 'Consolas', 'Ubuntu Mono', monospace;
+        font-size: 13px;
+        border: 1px solid var(--bs-border-color);
+        border-radius: var(--bs-border-radius);
+    }
+    .CodeMirror-scroll {
+        min-height: 100px;
+    }
+    [data-bs-theme="dark"] .CodeMirror {
+        border-color: rgba(255,255,255,0.15);
+    }
+</style>
+{{end}}
+
 {{define "content"}}
 <div class="d-flex align-items-center justify-content-between mb-4">
     <h4 class="mb-0 fw-bold">
@@ -46,7 +119,7 @@
 <!-- Form container -->
 <div id="email-template-form-container" class="mb-3"></div>
 
-<!-- Preview container -->
+<!-- Inline Preview container (below form, used by Inline Preview button) -->
 <div id="email-template-preview-container" class="mb-3"></div>
 
 <!-- Template list (loaded via HTMX) -->
@@ -100,29 +173,262 @@
 {{end}}
 
 {{define "scripts"}}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/xml/xml.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/javascript/javascript.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/css/css.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/htmlmixed/htmlmixed.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
-    // Close delete modal after successful deletion
+    // -------------------------------------------------------
+    // CodeMirror editor instance (created when form is loaded)
+    // -------------------------------------------------------
+    var htmlEditor = null;
+    var previewDebounce = null;
+    var livePreviewWindow = null;
+    var livePreviewDebounce = null;
+
+    function initHTMLEditor() {
+        var editorDiv = document.getElementById('htmlEditor');
+        var hiddenTextarea = document.getElementById('etBodyHTML');
+        if (!editorDiv || !hiddenTextarea || typeof CodeMirror === 'undefined') return;
+        
+        // Clean up previous editor instance if it exists (CodeMirror 5)
+        if (htmlEditor) {
+            try {
+                if (typeof htmlEditor.toTextArea === 'function') {
+                    htmlEditor.toTextArea();
+                } else {
+                    // Fallback: clear the editor container
+                    editorDiv.innerHTML = '';
+                }
+            } catch (err) {
+                console.warn('Error cleaning up editor:', err);
+                editorDiv.innerHTML = '';
+            }
+            htmlEditor = null;
+        }
+
+        var isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+        htmlEditor = CodeMirror(editorDiv, {
+            value: hiddenTextarea.value,
+            mode: 'htmlmixed',
+            theme: isDark ? 'dracula' : 'default',
+            lineNumbers: true,
+            lineWrapping: false,
+            matchBrackets: true,
+            autoCloseBrackets: true,
+            autoCloseTags: true,
+            indentUnit: 2,
+            tabSize: 2,
+            indentWithTabs: false,
+            extraKeys: {
+                'Ctrl-Space': 'autocomplete',
+                'Tab': function(cm) {
+                    cm.replaceSelection('  ', 'end');
+                }
+            }
+        });
+
+        // Keep hidden textarea in sync (needed for HTMX form include)
+        htmlEditor.on('change', function(cm) {
+            hiddenTextarea.value = cm.getValue();
+            
+            // Auto-refresh split preview if active
+            if (document.getElementById('editorContainer') &&
+                document.getElementById('editorContainer').classList.contains('split-active')) {
+                clearTimeout(previewDebounce);
+                previewDebounce = setTimeout(refreshSplitPreview, 600);
+            }
+            
+            // Auto-refresh live preview window if open
+            if (livePreviewWindow && !livePreviewWindow.closed) {
+                clearTimeout(livePreviewDebounce);
+                livePreviewDebounce = setTimeout(refreshLivePreviewWindow, 600);
+            }
+        });
+
+        // Refresh editor layout after it's visible
+        setTimeout(function() { if (htmlEditor) htmlEditor.refresh(); }, 100);
+    }
+
+    // -------------------------------------------------------
+    // Split view toggle
+    // -------------------------------------------------------
+    function toggleSplitView() {
+        var container = document.getElementById('editorContainer');
+        var sidebar = document.getElementById('previewSidebar');
+        var btn = document.getElementById('splitViewToggle');
+        if (!container) return;
+
+        if (container.classList.contains('split-active')) {
+            container.classList.remove('split-active');
+            if (sidebar) sidebar.style.display = 'none';
+            if (btn) { btn.innerHTML = '<i class="bi bi-layout-split me-1"></i>Split View'; btn.classList.remove('active'); }
+        } else {
+            container.classList.add('split-active');
+            if (sidebar) sidebar.style.display = 'flex';
+            if (btn) { btn.innerHTML = '<i class="bi bi-layout-split me-1"></i>Exit Split'; btn.classList.add('active'); }
+            setTimeout(function() { if (htmlEditor) htmlEditor.refresh(); }, 50);
+            refreshSplitPreview();
+        }
+    }
+
+    // -------------------------------------------------------
+    // Refresh the split-view live preview
+    // -------------------------------------------------------
+    function refreshSplitPreview() {
+        var form = document.querySelector('#email-template-form-container form');
+        if (!form) return;
+        var previewBody = document.getElementById('splitPreviewBody');
+        if (!previewBody) return;
+
+        var formData = new FormData(form);
+        // Ensure latest editor value
+        if (htmlEditor) formData.set('body_html', htmlEditor.getValue());
+
+        previewBody.innerHTML = '<div class="et-preview-placeholder"><div class="spinner-border spinner-border-sm text-primary mb-2"></div><span>Rendering...</span></div>';
+
+        fetch('/gui/email-templates/preview', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content },
+            body: formData
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            // extract iframe srcdoc value from returned HTML snippet
+            var tmp = document.createElement('div');
+            tmp.innerHTML = html;
+            var iframe = tmp.querySelector('iframe');
+            if (iframe) {
+                previewBody.innerHTML = '';
+                var newIframe = document.createElement('iframe');
+                newIframe.style.cssText = 'width:100%;min-height:380px;border:none;display:block;';
+                newIframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups');
+                previewBody.appendChild(newIframe);
+                newIframe.srcdoc = iframe.getAttribute('srcdoc');
+            } else {
+                previewBody.innerHTML = html;
+            }
+        })
+        .catch(function() {
+            previewBody.innerHTML = '<div class="et-preview-placeholder text-danger"><i class="bi bi-exclamation-triangle mb-1"></i>Preview failed</div>';
+        });
+    }
+
+    // -------------------------------------------------------
+    // Refresh live preview window (if open)
+    // -------------------------------------------------------
+    function refreshLivePreviewWindow() {
+        if (!livePreviewWindow || livePreviewWindow.closed) {
+            livePreviewWindow = null;
+            return;
+        }
+        
+        var form = document.querySelector('#email-template-form-container form');
+        if (!form) return;
+        
+        var formData = new FormData(form);
+        if (htmlEditor) formData.set('body_html', htmlEditor.getValue());
+        
+        var params = new URLSearchParams();
+        formData.forEach(function(v, k) { params.append(k, v); });
+        
+        fetch('/gui/email-templates/preview?full=1', {
+            method: 'POST',
+            headers: {
+                'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            if (livePreviewWindow && !livePreviewWindow.closed) {
+                livePreviewWindow.document.open();
+                livePreviewWindow.document.write(html);
+                livePreviewWindow.document.close();
+            }
+        })
+        .catch(function() {
+            // Silently fail - user can manually refresh if needed
+        });
+    }
+
+    // -------------------------------------------------------
+    // Open preview in new window
+    // -------------------------------------------------------
+    function openPreviewNewWindow() {
+        var form = document.querySelector('#email-template-form-container form');
+        if (!form) return;
+
+        var formData = new FormData(form);
+        if (htmlEditor) formData.set('body_html', htmlEditor.getValue());
+
+        // Convert to URLSearchParams for fetch
+        var params = new URLSearchParams();
+        formData.forEach(function(v, k) { params.append(k, v); });
+
+        fetch('/gui/email-templates/preview?full=1', {
+            method: 'POST',
+            headers: {
+                'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            var win = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
+            if (win) { 
+                win.document.open(); 
+                win.document.write(html); 
+                win.document.close(); 
+                livePreviewWindow = win; // Store reference for auto-refresh
+            }
+        })
+        .catch(function() { alert('Preview failed. Please try again.'); });
+    }
+
+    // -------------------------------------------------------
+    // Re-init editor after HTMX loads a form into the container
+    // -------------------------------------------------------
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        if (e.detail && e.detail.target && e.detail.target.id === 'email-template-form-container') {
+            setTimeout(initHTMLEditor, 50);
+            // Wire up split/new-window buttons
+            var splitBtn = document.getElementById('splitViewToggle');
+            if (splitBtn) splitBtn.addEventListener('click', toggleSplitView);
+            var newWinBtn = document.getElementById('newWindowPreview');
+            if (newWinBtn) newWinBtn.addEventListener('click', openPreviewNewWindow);
+            var closeBtn = document.getElementById('closePreview');
+            if (closeBtn) closeBtn.addEventListener('click', toggleSplitView);
+            var refreshBtn = document.getElementById('refreshSplitPreview');
+            if (refreshBtn) refreshBtn.addEventListener('click', refreshSplitPreview);
+        }
+    });
+
+    // -------------------------------------------------------
+    // Modal close events
+    // -------------------------------------------------------
     document.body.addEventListener('emailTemplateDeleted', function() {
         var modal = bootstrap.Modal.getInstance(document.getElementById('deleteEmailTemplateModal'));
         if (modal) modal.hide();
     });
-
-    // Close reset modal after successful reset
     document.body.addEventListener('emailTemplateReset', function() {
         var modal = bootstrap.Modal.getInstance(document.getElementById('resetEmailTemplateModal'));
         if (modal) modal.hide();
     });
 
-    // Scope filter change
+    // -------------------------------------------------------
+    // Scope / app filters
+    // -------------------------------------------------------
     document.getElementById('scopeFilter').addEventListener('change', function() {
         var scope = this.value;
         var appFilterContainer = document.getElementById('appFilterContainer');
         var appFilter = document.getElementById('templateAppFilter');
-
         if (scope === 'app') {
             appFilterContainer.style.display = '';
             appFilterContainer.classList.add('d-flex');
-            // Don't load until an app is selected
         } else {
             appFilterContainer.style.display = 'none';
             appFilterContainer.classList.remove('d-flex');
@@ -130,8 +436,6 @@
             htmx.ajax('GET', '/gui/email-templates/list?scope=global', {target: '#email-template-table', swap: 'innerHTML'});
         }
     });
-
-    // App filter change
     document.getElementById('templateAppFilter').addEventListener('change', function() {
         var appID = this.value;
         if (appID) {

@@ -98,16 +98,60 @@
                     </div>
                 </div>
             </div>
+
+            {{/* HTML Body — CodeMirror editor with split view */}}
             <div class="row g-3 mt-0">
                 <div class="col-12">
-                    <label for="etBodyHTML" class="form-label small text-muted">HTML Body</label>
-                    <textarea class="form-control font-monospace" id="etBodyHTML" name="body_html"
-                              rows="12" placeholder="Enter HTML template content...">{{.BodyHTML}}</textarea>
+                    <div class="d-flex align-items-center justify-content-between mb-1">
+                        <label class="form-label small text-muted mb-0">
+                            <i class="bi bi-code-slash me-1"></i>HTML Body
+                        </label>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="splitViewToggle" title="Toggle split editor / preview">
+                                <i class="bi bi-layout-split me-1"></i>Split View
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="newWindowPreview" title="Open preview in new browser window">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>New Window
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="et-editor-container" id="editorContainer">
+                        {{/* Editor pane */}}
+                        <div class="et-editor-pane">
+                            <div id="htmlEditor"></div>
+                            {{/* Hidden textarea — value kept in sync by JS; used for form submit & HTMX hx-include */}}
+                            <textarea class="d-none" id="etBodyHTML" name="body_html">{{.BodyHTML}}</textarea>
+                        </div>
+
+                        {{/* Split preview pane — shown when split view is active */}}
+                        <div class="et-preview-pane" id="previewSidebar">
+                            <div class="et-preview-header">
+                                <span><i class="bi bi-eye me-1"></i>Live Preview</span>
+                                <div class="d-flex gap-1">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" id="refreshSplitPreview" title="Refresh preview">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" id="closePreview" title="Close split view">
+                                        <i class="bi bi-x-lg"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="et-preview-body" id="splitPreviewBody">
+                                <div class="et-preview-placeholder">
+                                    <i class="bi bi-eye-slash fs-4 mb-2"></i>
+                                    <span>Preview will appear here</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
+
+            {{/* Plain text body */}}
             <div class="row g-3 mt-0">
                 <div class="col-12">
-                    <label for="etBodyText" class="form-label small text-muted">Plain Text Body (optional)</label>
+                    <label for="etBodyText" class="form-label small text-muted">Plain Text Body <span class="fw-normal">(optional)</span></label>
                     <textarea class="form-control font-monospace" id="etBodyText" name="body_text"
                               rows="4" placeholder="Enter plain text fallback...">{{.BodyText}}</textarea>
                 </div>
@@ -130,7 +174,7 @@
                         hx-include="closest form"
                         hx-target="#email-template-preview-container"
                         hx-swap="innerHTML">
-                    <i class="bi bi-eye me-1"></i>Preview
+                    <i class="bi bi-eye me-1"></i>Inline Preview
                 </button>
                 <button type="button" class="btn btn-outline-secondary"
                         hx-get="/gui/email-templates/form-cancel"

@@ -23,6 +23,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
+	sessiongroup "github.com/gjovanovicst/auth_api/internal/sessiongroup"
 	"github.com/gjovanovicst/auth_api/internal/sms"
 	"github.com/gjovanovicst/auth_api/internal/social"
 	ssopkg "github.com/gjovanovicst/auth_api/internal/sso"
@@ -237,29 +238,13 @@ func main() {
 	ssoHandler := ssopkg.NewHandler(adminRepo, userRepo, sessionService, database.DB)
 	ssoHandler.LookupRoles = rbacService.GetUserRoleNames
 
+	// Create session group revoker for shared logout/expiry logic
+	sessionGroupRevoker := sessiongroup.NewRevoker(adminRepo, userRepo, sessionService)
+
 	// Wire SSO global logout: when a user logs out of one app in a session group,
 	// their sessions in all other apps of the group are revoked (only when GlobalLogout=true).
 	userService.GroupLogoutFunc = func(appID, userEmail string) {
-		group, err := adminRepo.GetSessionGroupForApp(appID)
-		if err != nil || group == nil || !group.GlobalLogout {
-			return
-		}
-		appIDs, err := adminRepo.GetAppsInSessionGroup(group.ID.String())
-		if err != nil {
-			return
-		}
-		for _, otherAppID := range appIDs {
-			if otherAppID == appID {
-				continue
-			}
-			targetUser, err := userRepo.GetUserByEmail(otherAppID, userEmail)
-			if err != nil || targetUser == nil {
-				continue
-			}
-			if appErr := sessionService.RevokeAllUserSessions(otherAppID, targetUser.ID.String()); appErr != nil {
-				log.Printf("[SSO] Warning: failed to revoke sessions for user %s in app %s: %v", userEmail, otherAppID, appErr.Message)
-			}
-		}
+		sessionGroupRevoker.RevokeAllUserSessionsInGroup(appID, userEmail)
 	}
 
 	// Wire SettingsService resolver into twofa handler so the TRUSTED_DEVICE_COOKIE_SAMESITE
@@ -284,26 +269,7 @@ func main() {
 		// Wire OIDC RP-initiated logout group logout: revoke peer-app JWT sessions
 		// for the logging-out user, mirroring userService.GroupLogoutFunc.
 		oidcHandler.GroupLogoutFunc = func(appID, userEmail string) {
-			group, err := adminRepo.GetSessionGroupForApp(appID)
-			if err != nil || group == nil || !group.GlobalLogout {
-				return
-			}
-			appIDs, err := adminRepo.GetAppsInSessionGroup(group.ID.String())
-			if err != nil {
-				return
-			}
-			for _, otherAppID := range appIDs {
-				if otherAppID == appID {
-					continue
-				}
-				targetUser, err := userRepo.GetUserByEmail(otherAppID, userEmail)
-				if err != nil || targetUser == nil {
-					continue
-				}
-				if appErr := sessionService.RevokeAllUserSessions(otherAppID, targetUser.ID.String()); appErr != nil {
-					log.Printf("[OIDC] Warning: failed to revoke sessions for user %s in app %s: %v", userEmail, otherAppID, appErr.Message)
-				}
-			}
+			sessionGroupRevoker.RevokeAllUserSessionsInGroup(appID, userEmail)
 		}
 		// Fix #10: Run an initial cleanup immediately on startup so stale codes
 		// from before the last restart are purged without waiting a full hour.
@@ -981,6 +947,11 @@ func main() {
 
 	// Add Swagger UI endpoint
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Start session group expiry detection service
+	expiryService := sessiongroup.NewExpiryService(sessionGroupRevoker)
+	expiryService.Start()
+	defer expiryService.Stop()
 
 	// Start the server
 	port := viper.GetString("PORT")

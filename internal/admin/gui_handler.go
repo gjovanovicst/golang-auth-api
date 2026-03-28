@@ -3381,6 +3381,44 @@ func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
 		return
 	}
 
+	// Check if full standalone HTML page is requested (for new window preview)
+	full := c.Query("full")
+	if full == "1" {
+		// Return complete standalone HTML page for new window preview
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusOK, fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Preview: %s</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .preview-header { background: #f8f9fa; padding: 15px; border-bottom: 1px solid #dee2e6; margin: -20px -20px 20px -20px; }
+        .preview-subject { font-size: 1.2em; font-weight: bold; color: #495057; }
+        .preview-label { font-size: 0.9em; color: #6c757d; margin-right: 5px; }
+        .preview-content { max-width: 800px; margin: 0 auto; }
+    </style>
+</head>
+<body>
+    <div class="preview-header">
+        <div class="preview-content">
+            <span class="preview-label">Subject:</span>
+            <span class="preview-subject">%s</span>
+        </div>
+    </div>
+    <div class="preview-content">
+        %s
+    </div>
+</body>
+</html>`, renderedSubject, renderedSubject, renderedHTML))
+		return
+	}
+
+	// For split view preview: escape only quotes for srcdoc attribute
+	// HTML entities in the content should remain as-is
+	escapedHTML := strings.ReplaceAll(renderedHTML, `"`, `&quot;`)
+
 	c.String(http.StatusOK, fmt.Sprintf(`
 <div class="card border-0 shadow-sm">
     <div class="card-header bg-body-tertiary d-flex align-items-center justify-content-between">
@@ -3392,9 +3430,9 @@ func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
         </button>
     </div>
     <div class="card-body p-0">
-        <iframe srcdoc="%s" style="width:100%%;min-height:400px;border:none;" sandbox="allow-same-origin"></iframe>
+        <iframe srcdoc="%s" style="width:100%%;min-height:400px;border:none;" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
     </div>
-</div>`, renderedSubject, strings.ReplaceAll(strings.ReplaceAll(renderedHTML, `"`, `&quot;`), `<`, `&lt;`)))
+</div>`, renderedSubject, escapedHTML))
 }
 
 // ============================================================

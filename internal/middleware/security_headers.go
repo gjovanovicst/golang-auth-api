@@ -45,8 +45,8 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 			// GUI routes — allow self-hosted assets + inline styles/scripts for HTMX/Bootstrap
 			h.Set("Content-Security-Policy", strings.Join([]string{
 				"default-src 'self'",
-				"script-src 'self' 'unsafe-inline'",
-				"style-src 'self' 'unsafe-inline'",
+				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
 				"font-src 'self'",
 				"img-src 'self' data:",
 				"connect-src 'self'",
@@ -66,8 +66,8 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 			// registered OIDC client, making a CSP form-action restriction redundant here.
 			h.Set("Content-Security-Policy", strings.Join([]string{
 				"default-src 'self'",
-				"script-src 'self' 'unsafe-inline'",
-				"style-src 'self' 'unsafe-inline'",
+				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
 				"font-src 'self'",
 				"img-src 'self' data: https:",
 				"frame-ancestors 'none'",
@@ -77,8 +77,8 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 			// Swagger UI — needs inline scripts/styles and to fetch its own JSON spec
 			h.Set("Content-Security-Policy", strings.Join([]string{
 				"default-src 'self'",
-				"script-src 'self' 'unsafe-inline'",
-				"style-src 'self' 'unsafe-inline'",
+				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
 				"img-src 'self' data:",
 				"font-src 'self' data:",
 				"connect-src 'self'",

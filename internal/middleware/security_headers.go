@@ -45,9 +45,9 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 			// GUI routes — allow self-hosted assets + inline styles/scripts for HTMX/Bootstrap
 			h.Set("Content-Security-Policy", strings.Join([]string{
 				"default-src 'self'",
-				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-				"font-src 'self'",
+				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+				"font-src 'self' https://cdn.jsdelivr.net",
 				"img-src 'self' data:",
 				"connect-src 'self'",
 				"frame-ancestors 'none'",
@@ -66,9 +66,9 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 			// registered OIDC client, making a CSP form-action restriction redundant here.
 			h.Set("Content-Security-Policy", strings.Join([]string{
 				"default-src 'self'",
-				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-				"font-src 'self'",
+				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+				"font-src 'self' https://cdn.jsdelivr.net",
 				"img-src 'self' data: https:",
 				"frame-ancestors 'none'",
 				"base-uri 'self'",
@@ -77,10 +77,10 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 			// Swagger UI — needs inline scripts/styles and to fetch its own JSON spec
 			h.Set("Content-Security-Policy", strings.Join([]string{
 				"default-src 'self'",
-				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+				"script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+				"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
 				"img-src 'self' data:",
-				"font-src 'self' data:",
+				"font-src 'self' data: https://cdn.jsdelivr.net",
 				"connect-src 'self'",
 				"frame-ancestors 'none'",
 				"base-uri 'self'",

@@ -23,6 +23,16 @@ curl -s -o "web\static\js\codemirror\javascript.min.js" "%BASE_URL%/mode/javascr
 curl -s -o "web\static\js\codemirror\css.min.js" "%BASE_URL%/mode/css/css.min.js"
 curl -s -o "web\static\js\codemirror\htmlmixed.min.js" "%BASE_URL%/mode/htmlmixed/htmlmixed.min.js"
 
+REM Addon files for hinting and autocomplete
+echo Downloading addon files...
+curl -s -o "web\static\js\codemirror\show-hint.js" "%BASE_URL%/addon/hint/show-hint.js"
+curl -s -o "web\static\css\codemirror\show-hint.css" "%BASE_URL%/addon/hint/show-hint.css"
+
+REM Optional addons for enhanced editing
+curl -s -o "web\static\js\codemirror\matchbrackets.js" "%BASE_URL%/addon/edit/matchbrackets.js"
+curl -s -o "web\static\js\codemirror\closebrackets.js" "%BASE_URL%/addon/edit/closebrackets.js"
+curl -s -o "web\static\js\codemirror\closetag.js" "%BASE_URL%/addon/edit/closetag.js"
+
 echo Done! Files downloaded to:
 echo   - web\static\css\codemirror\
 echo   - web\static\js\codemirror\
@@ -32,6 +42,7 @@ echo To use local files instead of CDN, update the email_templates.tmpl file:
 echo 1. Change CSS links from CDN to:
 echo    ^<link rel="stylesheet" href="/gui/static/css/codemirror/codemirror.min.css"^>
 echo    ^<link rel="stylesheet" href="/gui/static/css/codemirror/dracula.min.css"^>
+echo    ^<link rel="stylesheet" href="/gui/static/css/codemirror/show-hint.css"^>
 echo.
 echo 2. Change JS script tags from CDN to:
 echo    ^<script src="/gui/static/js/codemirror/codemirror.min.js"^>^</script^>
@@ -39,3 +50,7 @@ echo    ^<script src="/gui/static/js/codemirror/xml.min.js"^>^</script^>
 echo    ^<script src="/gui/static/js/codemirror/javascript.min.js"^>^</script^>
 echo    ^<script src="/gui/static/js/codemirror/css.min.js"^>^</script^>
 echo    ^<script src="/gui/static/js/codemirror/htmlmixed.min.js"^>^</script^>
+echo    ^<script src="/gui/static/js/codemirror/show-hint.js"^>^</script^>
+echo    ^<script src="/gui/static/js/codemirror/matchbrackets.js"^>^</script^>
+echo    ^<script src="/gui/static/js/codemirror/closebrackets.js"^>^</script^>
+echo    ^<script src="/gui/static/js/codemirror/closetag.js"^>^</script^>

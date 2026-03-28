@@ -772,8 +772,12 @@ func main() {
 			guiAuth.GET("/email-templates/:id/delete", guiHandler.EmailTemplateDeleteConfirm)
 			guiAuth.DELETE("/email-templates/:id", guiHandler.EmailTemplateDelete)
 			guiAuth.POST("/email-templates/preview", guiHandler.EmailTemplatePreview)
+			guiAuth.POST("/email-templates/editor-window", guiHandler.EmailTemplateEditorWindow)
 			guiAuth.GET("/email-templates/:id/reset", guiHandler.EmailTemplateResetConfirm)
 			guiAuth.POST("/email-templates/:id/reset", guiHandler.EmailTemplateReset)
+
+			// Email template variables
+			guiAuth.GET("/email-variables", guiHandler.EmailVariablesList)
 
 			// Email types management
 			guiAuth.GET("/email-types", guiHandler.EmailTypesPage)

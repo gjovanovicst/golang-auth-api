@@ -3338,6 +3338,16 @@ func (h *GUIHandler) EmailTemplateReset(c *gin.Context) {
 		`<div class="alert alert-success alert-dismissible fade show" role="alert">Template has been reset to the built-in default.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 }
 
+// EmailVariablesList returns the list of well-known email template variables as JSON.
+// GET /gui/email-variables
+func (h *GUIHandler) EmailVariablesList(c *gin.Context) {
+	// Get well-known variables from the email service
+	variables := h.EmailService.GetWellKnownVariables()
+
+	// Return as JSON
+	c.JSON(http.StatusOK, variables)
+}
+
 // EmailTemplateFormCancel clears the form container.
 // Also clears the preview container via HTMX out-of-band swap.
 // GET /gui/email-templates/form-cancel
@@ -3433,6 +3443,36 @@ func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
         <iframe srcdoc="%s" style="width:100%%;min-height:400px;border:none;" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
     </div>
 </div>`, renderedSubject, escapedHTML))
+}
+
+// EmailTemplateEditorWindow renders a standalone editor window with split editor/preview.
+// POST /gui/email-templates/editor-window
+func (h *GUIHandler) EmailTemplateEditorWindow(c *gin.Context) {
+	subject := c.PostForm("subject")
+	bodyHTML := c.PostForm("body_html")
+	templateEngine := c.PostForm("template_engine")
+	if templateEngine == "" {
+		templateEngine = "go_template"
+	}
+
+	// Use the same CSRF token as the main GUI
+	csrfToken := getCSRFToken(c)
+
+	// Prepare template data for the standalone editor window
+	data := web.TemplateData{
+		Theme:         web.GetTheme(c),
+		ActivePage:    "email-templates",
+		AdminUsername: getAdminUsername(c),
+		AdminID:       getAdminID(c),
+		CSRFToken:     csrfToken,
+		Data: map[string]interface{}{
+			"Subject":        subject,
+			"BodyHTML":       bodyHTML,
+			"TemplateEngine": templateEngine,
+		},
+	}
+
+	c.HTML(http.StatusOK, "email_template_editor_window", data)
 }
 
 // ============================================================

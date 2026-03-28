@@ -7,6 +7,7 @@
 {{define "head"}}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 <style>
     .et-editor-container {
         display: flex;
@@ -16,6 +17,84 @@
     .et-editor-pane {
         flex: 1;
         min-width: 0;
+    }
+    
+    /* Template variable hint dropdown styles */
+    .template-variable-hint-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 8px;
+        min-height: 32px;
+    }
+    
+    .template-variable-hint-item .variable-name {
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-weight: 600;
+        color: var(--bs-primary);
+        min-width: 120px;
+    }
+    
+    .template-variable-hint-item .variable-description {
+        flex: 1;
+        font-size: 0.85em;
+        color: var(--bs-secondary-color);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .template-variable-hint-item .variable-source {
+        font-size: 0.7em;
+        padding: 2px 6px;
+        border-radius: 3px;
+    }
+    
+    /* Dark theme adjustments */
+    [data-bs-theme="dark"] .template-variable-hint-item .variable-name {
+        color: #6ea8fe;
+    }
+    
+    [data-bs-theme="dark"] .template-variable-hint-item .variable-description {
+        color: #adb5bd;
+    }
+    
+    /* Ensure CodeMirror hint dropdown appears above everything */
+    .CodeMirror-hints {
+        z-index: 9999 !important;
+        max-height: 300px !important;
+        overflow-y: auto !important;
+        border: 1px solid var(--bs-border-color) !important;
+        border-radius: var(--bs-border-radius) !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+        background: var(--bs-body-bg) !important;
+    }
+    
+    .CodeMirror-hint {
+        padding: 4px 8px !important;
+        color: var(--bs-body-color) !important;
+        border-bottom: 1px solid var(--bs-border-color-translucent) !important;
+    }
+    
+    .CodeMirror-hint-active {
+        background: var(--bs-primary-bg-subtle) !important;
+        color: var(--bs-primary) !important;
+    }
+    
+    /* Dark theme adjustments for hint dropdown */
+    [data-bs-theme="dark"] .CodeMirror-hints {
+        background: #1e1e1e !important;
+        border-color: #444 !important;
+    }
+    
+    [data-bs-theme="dark"] .CodeMirror-hint {
+        color: #e0e0e0 !important;
+        border-bottom-color: #444 !important;
+    }
+    
+    [data-bs-theme="dark"] .CodeMirror-hint-active {
+        background: #2a2a2a !important;
+        color: #6ea8fe !important;
     }
     .et-preview-pane {
         flex: 0 0 42%;
@@ -178,14 +257,371 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/javascript/javascript.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/css/css.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/htmlmixed/htmlmixed.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/matchbrackets.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closetag.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
     // -------------------------------------------------------
-    // CodeMirror editor instance (created when form is loaded)
+    // Template Variable Service for hint dropdown
+    // -------------------------------------------------------
+        // Define TemplateVariableService globally if it doesn't exist
+        window.TemplateVariableService = window.TemplateVariableService || class TemplateVariableService {
+        constructor() {
+            this.variables = null;
+            this.lastFetch = 0;
+            this.cacheTTL = 300000; // 5 minutes cache
+            this.variableMap = {}; // Quick lookup by name
+        }
+        
+        // Fetch variables from API
+        async fetchVariables() {
+            console.log('fetchVariables called');
+            // Return cached data if available
+            if (this.variables && Date.now() - this.lastFetch < this.cacheTTL) {
+                console.log('Returning cached variables');
+                return this.variables;
+            }
+            
+            try {
+                console.log('Fetching variables from /gui/email-variables');
+                    // Add timeout to fetch request
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+                    
+                    const response = await fetch('/gui/email-variables', {
+                        credentials: 'same-origin', // Include cookies for authentication
+                        headers: {
+                            'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                        },
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    console.log('Fetch response status:', response.status, 'Content-Type:', response.headers.get('content-type'));
+                    
+                    // Check for redirect (302) or HTML response (login page)
+                    const contentType = response.headers.get('content-type') || '';
+                    if (response.status === 302 || response.status === 401 || contentType.includes('text/html')) {
+                        console.warn('Authentication required or redirect detected. Please log in to access template variables.');
+                        // Return empty array but don't cache
+                        return [];
+                    }
+                    
+                    if (!response.ok) {
+                        console.warn('Failed to fetch template variables:', response.status, response.statusText);
+                        // Return empty array on failure but don't cache
+                        return [];
+                    }
+                    
+                    try {
+                        this.variables = await response.json();
+                    } catch (jsonError) {
+                        console.error('Failed to parse JSON response:', jsonError);
+                        // Return empty array on JSON parse error
+                        return [];
+                    }
+                    this.lastFetch = Date.now();
+                
+                // Build quick lookup map
+                this.variableMap = {};
+                this.variables.forEach(v => {
+                    this.variableMap[v.name] = v;
+                });
+                
+                console.log('Loaded ' + this.variables.length + ' template variables');
+                return this.variables;
+            } catch (error) {
+                console.error('Failed to fetch template variables:', error);
+                // Return empty array on error
+                return [];
+            }
+        }
+        
+        // Convert snake_case to PascalCase for Go templates
+        snakeToPascal(str) {
+            return str.split('_').map(word => 
+                word.charAt(0).toUpperCase() + word.slice(1)
+            ).join('');
+        }
+        
+        // Format variable based on template engine
+        formatVariable(name, engine) {
+            const variable = this.variableMap[name];
+            if (!variable) return name;
+            
+            if (engine === 'placeholder') {
+                return '{' + name + '}';
+            } else {
+                // go_template or raw_html
+                const pascalName = this.snakeToPascal(name);
+                return '\u007B\u007B.' + pascalName + '\u007D\u007D';
+            }
+        }
+        
+        // Get display text for hint dropdown
+        getDisplayText(variable, engine) {
+            const formatted = this.formatVariable(variable.name, engine);
+            if (variable.description) {
+                return formatted + ' - ' + variable.description;
+            }
+            return formatted;
+        }
+        
+        // Get CSS class based on variable source
+        getSourceClass(variable) {
+            const sourceClasses = {
+                'user': 'variable-source-user',
+                'setting': 'variable-source-setting', 
+                'explicit': 'variable-source-explicit'
+            };
+            return sourceClasses[variable.source] || 'variable-source-unknown';
+        }
+        
+        // Filter variables by prefix (case-insensitive)
+        filterByPrefix(prefix) {
+            if (!this.variables) return [];
+            
+            const lowerPrefix = prefix.toLowerCase();
+            return this.variables.filter(v => 
+                v.name.toLowerCase().includes(lowerPrefix)
+            );
+        }
+        
+        // Get variables filtered by trigger pattern and template engine
+        getVariablesByPrefix(triggerPattern, engine) {
+            console.log('getVariablesByPrefix called:', triggerPattern, engine);
+            if (!this.variables) {
+                console.log('No variables available');
+                return [];
+            }
+            
+            // Extract the actual variable name part from the trigger pattern
+            let searchText = '';
+            
+            if (engine === 'placeholder') {
+                // For placeholder: {app_ -> search for "app"
+                if (triggerPattern.startsWith('{')) {
+                    searchText = triggerPattern.substring(1);
+                }
+            } else {
+                // For go_template/raw_html: \u007B\u007B.App -> search for "app"
+                if (triggerPattern.startsWith('\u007B\u007B')) {
+                    // Remove \u007B\u007B and any leading .
+                    let cleanPattern = triggerPattern.substring(2);
+                    if (cleanPattern.startsWith('.')) {
+                        cleanPattern = cleanPattern.substring(1);
+                    }
+                    // Convert PascalCase back to snake_case for searching
+                    searchText = cleanPattern.replace(/[A-Z]/g, function(letter) { return '_' + letter.toLowerCase(); }).replace(/^_/, '');
+                }
+            }
+            
+            if (!searchText) {
+                // If no search text, return all variables
+                return this.getAllVariables().map(v => ({
+                    name: v.name,
+                    displayText: this.formatVariable(v.name, engine),
+                    description: v.description,
+                    source: v.source
+                }));
+            }
+            
+            // Filter variables by search text
+            const lowerSearch = searchText.toLowerCase();
+            const filtered = this.variables.filter(v => 
+                v.name.toLowerCase().includes(lowerSearch)
+            );
+            
+            // Format for display
+            return filtered.map(v => ({
+                name: v.name,
+                displayText: this.formatVariable(v.name, engine),
+                description: v.description,
+                source: v.source
+            }));
+        }
+        
+        // Get all variables sorted by name
+        getAllVariables() {
+            if (!this.variables) return [];
+            return [...this.variables].sort((a, b) => 
+                a.name.localeCompare(b.name)
+            );
+        }
+    }
+    
+    // -------------------------------------------------------
+    // Register CodeMirror hint helper for template variables
+    // -------------------------------------------------------
+    function registerTemplateVariableHint(templateEngine) {
+        if (typeof CodeMirror === 'undefined' || !CodeMirror.registerHelper) {
+            console.warn('CodeMirror or registerHelper not available');
+            return;
+        }
+        
+        // Store the template engine in a closure
+        const currentEngine = templateEngine;
+        
+        CodeMirror.registerHelper('hint', 'templateVariables', function(cm, options) {
+            console.log('Template variable hint helper called');
+            
+            if (!window.variableService) {
+                console.warn('TemplateVariableService not initialized');
+                return null;
+            }
+            
+            // Check if variables are loaded
+            if (!window.variableService.variables || window.variableService.variables.length === 0) {
+                console.log('Variables not loaded yet, attempting to load...');
+                // Try to load variables if not loaded yet
+                window.variableService.fetchVariables().catch(() => {
+                    // Silently fail - variables will be loaded eventually
+                });
+                return null;
+            }
+            
+            console.log('Variables loaded:', window.variableService.variables.length);
+            
+            var cursor = cm.getCursor();
+            var line = cm.getLine(cursor.line);
+            var start = cursor.ch;
+            var end = cursor.ch;
+            
+            // Find the start of the current word/trigger
+            while (start > 0 && /[\w\.\{\}]/.test(line.charAt(start - 1))) {
+                start--;
+            }
+            
+            var currentWord = line.substring(start, end);
+            var triggerPattern = null;
+            
+            // Check for trigger patterns based on template engine
+            if (currentEngine === 'placeholder') {
+                // Placeholder engine uses {var_name}
+                // Look for opening { without closing }
+                var lastOpenBrace = line.lastIndexOf('{', cursor.ch - 1);
+                var lastCloseBrace = line.lastIndexOf('}', cursor.ch - 1);
+                
+                if (lastOpenBrace > lastCloseBrace) {
+                    // We're inside a { } block
+                    triggerPattern = line.substring(lastOpenBrace, cursor.ch);
+                } else if (line.charAt(cursor.ch - 1) === '{') {
+                    // Just typed {
+                    triggerPattern = '{';
+                }
+            } else {
+                // go_template and raw_html use \u007B\u007B.VarName\u007D\u007D
+                // Look for \u007B\u007B without closing \u007D\u007D
+                var lastOpenDouble = line.lastIndexOf('\u007B\u007B', cursor.ch - 1);
+                var lastCloseDouble = line.lastIndexOf('\u007D\u007D', cursor.ch - 1);
+                
+                if (lastOpenDouble > lastCloseDouble) {
+                    // We're inside a \u007B\u007B \u007D\u007D block
+                    triggerPattern = line.substring(lastOpenDouble, cursor.ch);
+                } else if (line.substring(cursor.ch - 2, cursor.ch) === '\u007B\u007B') {
+                    // Just typed \u007B\u007B
+                    triggerPattern = '\u007B\u007B';
+                }
+            }
+            
+            console.log('Trigger pattern found:', triggerPattern, 'Engine:', currentEngine);
+            
+            if (!triggerPattern) {
+                console.log('No trigger pattern found');
+                return null; // No trigger pattern found
+            }
+            
+            // Get variables filtered by prefix
+            var variables = window.variableService.getVariablesByPrefix(triggerPattern, currentEngine);
+            console.log('Filtered variables:', variables.length);
+            
+            if (variables.length === 0) {
+                return null; // No matching variables
+            }
+            
+            // Calculate the start position for the hint
+            var from = CodeMirror.Pos(cursor.line, start);
+            var to = CodeMirror.Pos(cursor.line, end);
+            
+            // Find the complete variable expression to replace
+            if (currentEngine === 'placeholder') {
+                // For placeholder: {var_name}
+                // Check for '}' immediately after cursor (auto-inserted case)
+                if (line.charAt(end) === '}') {
+                    to = CodeMirror.Pos(cursor.line, end + 1);
+                } else if (lastOpenBrace > lastCloseBrace) {
+                    // We're inside a { } block, find the closing }
+                    var closePos = line.indexOf('}', cursor.ch);
+                    if (closePos !== -1) {
+                        to = CodeMirror.Pos(cursor.line, closePos + 1);
+                    }
+                }
+            } else {
+                // For go_template/raw_html: {{"{{"}}.VarName{{"}}"}}
+                // Check for '\u007D\u007D' (}}) immediately after cursor (auto-inserted case)
+                if (line.substring(end, end + 2) === '\u007D\u007D') {
+                    to = CodeMirror.Pos(cursor.line, end + 2);
+                } else if (lastOpenDouble > lastCloseDouble) {
+                    // We're inside a {{"{{"}} {{"}}"}} block, find the closing {{"}}"}}
+                    var closePos = line.indexOf('\u007D\u007D', cursor.ch);
+                    if (closePos !== -1) {
+                        to = CodeMirror.Pos(cursor.line, closePos + 2);
+                    }
+                }
+            }
+            
+            // Create hint list
+            var hintList = variables.map(function(variable) {
+                return {
+                    text: variable.displayText,
+                    displayText: variable.displayText,
+                    render: function(element, self, data) {
+                        var container = document.createElement('div');
+                        container.className = 'template-variable-hint-item';
+                        
+                        var nameSpan = document.createElement('span');
+                        nameSpan.className = 'variable-name';
+                        nameSpan.textContent = variable.displayText;
+                        
+                        var descSpan = document.createElement('span');
+                        descSpan.className = 'variable-description';
+                        descSpan.textContent = variable.description || '';
+                        
+                        var sourceSpan = document.createElement('span');
+                        sourceSpan.className = 'variable-source badge ' + 
+                            (variable.source === 'user' ? 'bg-info' : 
+                             variable.source === 'setting' ? 'bg-warning' : 'bg-secondary');
+                        sourceSpan.textContent = variable.source;
+                        
+                        container.appendChild(nameSpan);
+                        container.appendChild(descSpan);
+                        container.appendChild(sourceSpan);
+                        
+                        element.appendChild(container);
+                    }
+                };
+            });
+            
+            return {
+                list: hintList,
+                from: from,
+                to: to,
+                selectedHint: 0
+            };
+        });
+        
+        console.log('Template variable hint helper registered for engine:', templateEngine);
+    }
+    
+    // -------------------------------------------------------
+    // Global variables
     // -------------------------------------------------------
     var htmlEditor = null;
     var previewDebounce = null;
     var livePreviewWindow = null;
     var livePreviewDebounce = null;
+    window.variableService = null;
 
     function initHTMLEditor() {
         var editorDiv = document.getElementById('htmlEditor');
@@ -208,6 +644,28 @@
             htmlEditor = null;
         }
 
+        // Get current template engine from form
+        var templateEngineSelect = document.getElementById('etTemplateEngine');
+        var currentTemplateEngine = templateEngineSelect ? templateEngineSelect.value : 'go_template';
+        
+        // Initialize variable service if not already done
+        if (!window.variableService) {
+            window.variableService = new TemplateVariableService();
+            
+            // Register hint helper immediately (will work once variables are loaded)
+            registerTemplateVariableHint(currentTemplateEngine);
+            
+            // Load variables in background
+            window.variableService.fetchVariables().then(variables => {
+                console.log('Template variables loaded: ' + variables.length + ' variables');
+            }).catch(err => {
+                console.warn('Could not load template variables:', err);
+            });
+        } else {
+            // Re-register hint helper for current template engine
+            registerTemplateVariableHint(currentTemplateEngine);
+        }
+
         var isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
         htmlEditor = CodeMirror(editorDiv, {
             value: hiddenTextarea.value,
@@ -221,10 +679,82 @@
             indentUnit: 2,
             tabSize: 2,
             indentWithTabs: false,
+            hintOptions: {
+                hint: CodeMirror.hint.templateVariables,
+                completeSingle: false,
+                alignWithWord: true,
+                closeOnUnfocus: false
+            },
             extraKeys: {
                 'Ctrl-Space': 'autocomplete',
+                'Ctrl-I': function(cm) {
+                    cm.showHint();
+                },
                 'Tab': function(cm) {
                     cm.replaceSelection('  ', 'end');
+                },
+                'Left': function(cm) {
+                    // Keep hint open when moving left
+                    var result = cm.execCommand('goCharLeft');
+                    if (cm.state.completionActive && cm.state.completionActive.widget) {
+                        // Hint is active, trigger re-filter
+                        setTimeout(function() {
+                            cm.showHint();
+                        }, 10);
+                    }
+                    return result;
+                },
+                'Right': function(cm) {
+                    // Keep hint open when moving right
+                    var result = cm.execCommand('goCharRight');
+                    if (cm.state.completionActive && cm.state.completionActive.widget) {
+                        // Hint is active, trigger re-filter
+                        setTimeout(function() {
+                            cm.showHint();
+                        }, 10);
+                    }
+                    return result;
+                }
+            }
+        });
+
+        // Add key handler for automatic hint triggering on \u007B\u007B and {
+        htmlEditor.on('keyup', function(cm, event) {
+            // Only trigger for specific keys that could complete \u007B\u007B or {
+            if (event.key === '{' || event.key === '}' || event.key === '.' || /^[a-zA-Z0-9_]$/.test(event.key)) {
+                var cursor = cm.getCursor();
+                var line = cm.getLine(cursor.line);
+                var pos = cursor.ch;
+                
+                // Check for trigger patterns based on current template engine
+                var templateEngine = document.getElementById('etTemplateEngine')?.value || 'go_template';
+                
+                if (templateEngine === 'placeholder') {
+                    // Check if we just typed { or are inside { }
+                    if (event.key === '{') {
+                        // Just typed {, show hint
+                        setTimeout(function() {
+                            cm.showHint();
+                        }, 50);
+                    } else if (pos > 0 && line.charAt(pos - 1) === '{') {
+                        // Just typed something after {, show hint
+                        setTimeout(function() {
+                            cm.showHint();
+                        }, 50);
+                    }
+                } else {
+                    // go_template or raw_html - check for \u007B\u007B pattern
+                    if (pos >= 2 && line.substring(pos - 2, pos) === '\u007B\u007B') {
+                        // Just typed \u007B\u007B, show hint
+                        setTimeout(function() {
+                            cm.showHint();
+                        }, 50);
+                    } else if (pos > 0 && line.substring(pos - 2, pos - 1) === '\u007B' && event.key === '{') {
+                        // Typed second { to complete \u007B\u007B, show hint
+                        setTimeout(function() {
+                            cm.showHint();
+                        }, 50);
+                    }
                 }
             }
         });
@@ -390,16 +920,52 @@
     }
 
     // -------------------------------------------------------
+    // Open standalone editor window with split editor/preview
+    // -------------------------------------------------------
+    function openEditorWindow() {
+        var form = document.querySelector('#email-template-form-container form');
+        if (!form) return;
+
+        var formData = new FormData(form);
+        if (htmlEditor) formData.set('body_html', htmlEditor.getValue());
+
+        // Convert to URLSearchParams for fetch
+        var params = new URLSearchParams();
+        formData.forEach(function(v, k) { params.append(k, v); });
+
+        fetch('/gui/email-templates/editor-window', {
+            method: 'POST',
+            headers: {
+                'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            var win = window.open('', '_blank', 'width=1000,height=700,scrollbars=yes,resizable=yes,location=no,menubar=no,toolbar=no');
+            if (win) { 
+                win.document.open(); 
+                win.document.write(html); 
+                win.document.close(); 
+            }
+        })
+        .catch(function() { alert('Failed to open editor window. Please try again.'); });
+    }
+
+    // -------------------------------------------------------
     // Re-init editor after HTMX loads a form into the container
     // -------------------------------------------------------
     document.body.addEventListener('htmx:afterSwap', function(e) {
         if (e.detail && e.detail.target && e.detail.target.id === 'email-template-form-container') {
             setTimeout(initHTMLEditor, 50);
-            // Wire up split/new-window buttons
+            // Wire up split/new-window/editor-window buttons
             var splitBtn = document.getElementById('splitViewToggle');
             if (splitBtn) splitBtn.addEventListener('click', toggleSplitView);
             var newWinBtn = document.getElementById('newWindowPreview');
             if (newWinBtn) newWinBtn.addEventListener('click', openPreviewNewWindow);
+            var editorWinBtn = document.getElementById('editorWindowBtn');
+            if (editorWinBtn) editorWinBtn.addEventListener('click', openEditorWindow);
             var closeBtn = document.getElementById('closePreview');
             if (closeBtn) closeBtn.addEventListener('click', toggleSplitView);
             var refreshBtn = document.getElementById('refreshSplitPreview');
@@ -442,5 +1008,27 @@
             htmx.ajax('GET', '/gui/email-templates/list?scope=app&app_id=' + appID, {target: '#email-template-table', swap: 'innerHTML'});
         }
     });
+    
+    // -------------------------------------------------------
+    // Template engine change handler
+    // -------------------------------------------------------
+    var templateEngineSelect = document.getElementById('etTemplateEngine');
+    if (templateEngineSelect) {
+        templateEngineSelect.addEventListener('change', function() {
+            var newEngine = this.value;
+            console.log('Template engine changed to:', newEngine);
+            
+            // Re-register hint helper for new template engine
+            if (window.variableService && typeof registerTemplateVariableHint === 'function') {
+                registerTemplateVariableHint(newEngine);
+            }
+            
+            // Refresh preview if editor exists
+            if (htmlEditor) {
+                clearTimeout(previewDebounce);
+                previewDebounce = setTimeout(refreshSplitPreview, 600);
+            }
+        });
+    }
 </script>
 {{end}}

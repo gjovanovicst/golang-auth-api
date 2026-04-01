@@ -4,10 +4,9 @@
 
 {{define "title"}}Email Templates{{end}}
 
-{{define "head"}}
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+{{define "head"}}{{end}}
+
+{{define "content"}}
 <style>
     .et-editor-container {
         display: flex;
@@ -154,9 +153,6 @@
         border-color: rgba(255,255,255,0.15);
     }
 </style>
-{{end}}
-
-{{define "content"}}
 <div class="d-flex align-items-center justify-content-between mb-4">
     <h4 class="mb-0 fw-bold">
         <i class="bi bi-file-earmark-code me-2"></i>Email Templates
@@ -252,15 +248,6 @@
 {{end}}
 
 {{define "scripts"}}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/xml/xml.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/javascript/javascript.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/css/css.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/htmlmixed/htmlmixed.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/matchbrackets.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closetag.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
     // -------------------------------------------------------
     // Template Variable Service for hint dropdown
@@ -623,10 +610,81 @@
     var livePreviewDebounce = null;
     window.variableService = null;
 
+    var cmScripts = [
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/xml/xml.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/javascript/javascript.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/css/css.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/htmlmixed/htmlmixed.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/matchbrackets.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closetag.min.js'
+    ];
+
+    var cmCSSLinks = [
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css',
+        'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.css'
+    ];
+
+    function ensureCodeMirrorCSS() {
+        cmCSSLinks.forEach(function(href) {
+            if (!document.querySelector('link[href="' + href + '"]')) {
+                var link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = href;
+                link.crossOrigin = 'anonymous';
+                link.referrerPolicy = 'no-referrer';
+                document.head.appendChild(link);
+            }
+        });
+    }
+
+    function loadCodeMirrorScripts(callback) {
+        // Already loaded — call back immediately.
+        if (typeof CodeMirror !== 'undefined') {
+            ensureCodeMirrorCSS();
+            callback();
+            return;
+        }
+
+        ensureCodeMirrorCSS();
+
+        // Filter out scripts already present in the DOM.
+        var toLoad = cmScripts.filter(function(src) {
+            return !document.querySelector('script[src="' + src + '"]');
+        });
+
+        // Load each script sequentially so dependencies are respected.
+        function loadNext(i) {
+            if (i >= toLoad.length) {
+                callback();
+                return;
+            }
+            var s = document.createElement('script');
+            s.src = toLoad[i];
+            s.crossOrigin = 'anonymous';
+            s.referrerPolicy = 'no-referrer';
+            s.onload = function() { loadNext(i + 1); };
+            s.onerror = function() {
+                console.error('Failed to load CodeMirror script: ' + toLoad[i]);
+                loadNext(i + 1);
+            };
+            document.head.appendChild(s);
+        }
+        loadNext(0);
+    }
+
     function initHTMLEditor() {
         var editorDiv = document.getElementById('htmlEditor');
         var hiddenTextarea = document.getElementById('etBodyHTML');
-        if (!editorDiv || !hiddenTextarea || typeof CodeMirror === 'undefined') return;
+        if (!editorDiv || !hiddenTextarea) return;
+
+        loadCodeMirrorScripts(function() { doInitHTMLEditor(editorDiv, hiddenTextarea); });
+    }
+
+    function doInitHTMLEditor(editorDiv, hiddenTextarea) {
         
         // Clean up previous editor instance if it exists (CodeMirror 5)
         if (htmlEditor) {

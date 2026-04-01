@@ -959,7 +959,7 @@ func (s *Service) createMergeToken(appID, userID, provider, providerUserID, emai
 		RawData:        rawData,
 		AccessToken:    accessToken,
 	}
-	payloadJSON, err := json.Marshal(payload)
+	payloadJSON, err := json.Marshal(payload) // #nosec G117 -- access_token is a provider OAuth token stored transiently in Redis for the merge flow, not logged or exposed to clients
 	if err != nil {
 		return "", errors.NewAppError(errors.ErrInternal, "Failed to encode merge token payload")
 	}

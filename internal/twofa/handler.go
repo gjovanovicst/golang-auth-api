@@ -455,7 +455,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 				}
 				if plainToken, tdErr := h.Service.CreateTrustedDevice(appID, userUUIDForDevice, deviceName, userAgent, ipAddress, maxDays); tdErr == nil {
 					secureCookie, sameSite := h.trustedDeviceCookieAttrs()
-					http.SetCookie(c.Writer, &http.Cookie{
+					http.SetCookie(c.Writer, &http.Cookie{ // #nosec G124 -- Secure is set dynamically via trustedDeviceCookieAttrs(); HttpOnly is always true
 						Name:     "trusted_device",
 						Value:    plainToken,
 						Path:     "/",

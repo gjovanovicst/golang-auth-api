@@ -47,6 +47,7 @@ If the admin account has two-factor authentication enabled, a 2FA verification s
 | **Permissions** | Create and manage granular permissions (resource:action format) |
 | **User Roles** | Assign and revoke roles for users across applications |
 | **Sessions** | View all active sessions across users, revoke individual or bulk sessions |
+| **Session Groups** | Create and manage cross-application session groups; configure GlobalLogout and member apps |
 | **Activity Logs** | View and filter activity logs with inline detail and CSV export |
 | **API Keys** | Manage admin and per-app API keys with scope and expiry configuration, view per-key daily usage |
 | **Email Servers** | Configure SMTP email servers per application |
@@ -85,6 +86,19 @@ The Sessions page provides administrative oversight of all active user sessions:
 - **Revoke Session** -- Terminate a specific user session
 - **Revoke All Sessions** -- Terminate all sessions for a specific user
 - **User Sessions** -- View sessions for a specific user from the user detail panel
+
+---
+
+## Session Groups
+
+The Session Groups page allows you to create named groups of applications that share authentication state across your tenant.
+
+- **Create group** -- Define a group name, description, and assign member applications
+- **GlobalLogout** -- When enabled, logging out of (or session expiry in) any app in the group immediately revokes the user's sessions in all other apps of the group
+- **Manage member apps** -- Add or remove applications from a group at any time; each application can belong to at most one group
+- **Expiry-triggered revocation** -- Requires `REDIS_NOTIFY_KEYSPACE_EVENTS=Ex` (pre-configured in the bundled Docker Compose setup); falls back to periodic scanning when keyspace notifications are unavailable
+
+For environment variable configuration and architecture details, see [Session Group Expiry Detection](session-group-expiry.md).
 
 ---
 

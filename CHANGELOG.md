@@ -22,6 +22,80 @@ _Future enhancements planned for the `1.0.0` official release._
 
 ---
 
+## [1.0.0-alpha.7] - 2026-04-01
+
+### Added
+
+#### Session Groups
+- **Cross-application session groups** — group multiple applications under a named session group so that a single authentication event is valid across all apps in the group (similar to Google's cross-product SSO)
+- New models: `SessionGroup` and `SessionGroupApp` (`pkg/models/session_group.go`); a session group belongs to a tenant, an application can belong to at most one group
+- **`GlobalLogout` flag** — when `true`, logging out of (or expiry of a session in) any app in the group immediately revokes the user's sessions in all other apps of the group
+- New package: `internal/sessiongroup/` with two components:
+  - `revoke.go` — shared group-wide session revocation utility (used by both logout and expiry detection)
+  - `expiry.go` — real-time session expiry detection via Redis keyspace notifications (`REDIS_NOTIFY_KEYSPACE_EVENTS=Ex`) with a configurable periodic fallback scanner
+- Admin API CRUD endpoints for session group management
+- Admin GUI **Session Groups** page (create, edit, delete, manage member apps)
+- New env vars for expiry detection (see Configuration section below)
+- Docker Compose `redis` service updated with `--notify-keyspace-events Ex` for out-of-the-box real-time expiry support
+- New documentation: `docs/session-group-expiry.md`
+
+#### New environment variables — Session Groups
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_NOTIFY_KEYSPACE_EVENTS` | _(unset)_ | Set to `Ex` to enable Redis expired-key events for real-time expiry detection |
+| `SESSION_GROUP_EXPIRY_REVOCATION_ENABLED` | `true` | Enable/disable expiry-triggered group-wide session revocation |
+| `SESSION_GROUP_EXPIRY_SCAN_INTERVAL` | `5m` | Fallback periodic scan interval when keyspace notifications are not available |
+| `SESSION_GROUP_KEYSYSPACE_NOTIF_ENABLED` | `true` | Enable/disable the keyspace notification listener |
+
+#### CodeMirror Email Template Editor
+- **Rich HTML editor** in the Admin GUI email template editor, powered by CodeMirror 6
+- Syntax highlighting, line numbers, and bracket matching for HTML email templates
+- **Template variable hinting** — inline autocomplete for all available email template variables (e.g. `{{.VerifyURL}}`, `{{.UserName}}`)
+- **Popup editor window** — a dedicated full-screen editor window (`email_template_editor_window.tmpl`) for distraction-free editing
+- Download helper scripts for CodeMirror assets:
+  - `scripts/download-codemirror-assets.sh` (Linux/macOS)
+  - `scripts/download-codemirror-assets.bat` (Windows)
+
+#### OIDC Cross-App Session Revocation on Logout
+- `POST /oidc/:app_id/end_session` now triggers group-wide session revocation when the application belongs to a session group with `GlobalLogout=true`
+- Consistent behavior between standard logout (`POST /logout`) and OIDC RP-initiated logout
+
+#### CORS Configuration via Admin GUI
+- CORS allowed origins are now configurable through the Admin GUI **Settings** page, eliminating the need to restart the server for origin changes
+- Settings are resolved with the existing 3-tier precedence: environment variable → database → built-in default
+
+#### Social Users: Set Initial Password
+- Social-only users (registered exclusively via OAuth2) can now set a local password via `PUT /profile/password` without providing a current password (since none exists)
+- Enables hybrid authentication for users who originally signed up through social login
+
+#### Enhanced Email Verification for Social Login Re-registration
+- When a user attempts to re-register with an email already associated with a social account but not yet verified, the pending email verification is now re-triggered automatically
+- Improves UX for users who signed up via social login and later try the email/password flow
+
+#### Admin GUI: SMS 2FA and Trusted Device Form Data
+- SMS 2FA configuration options and trusted device management are now correctly included in Admin GUI form submissions (previously missing from `formData`)
+
+### Fixed
+
+- **Trusted devices list** — the `GET /2fa/trusted-devices` endpoint (and its admin counterpart) now filters out expired trusted devices; only active, non-expired devices are returned
+- **Change password: current password optional** — `PUT /profile/password` no longer requires the `current_password` field when the user has no local password set (social-only accounts); fixes a 422 validation error that prevented social users from ever setting a password
+- **RBAC member role: settings permissions** — the system `member` role was missing `settings:read` and `settings:write` permissions, causing 403 errors on all 2FA self-service endpoints (TOTP setup, email 2FA, SMS 2FA, backup email, passkeys, trusted devices, phone management); SQL migration `20260317_add_settings_permissions_to_member.sql` grants these permissions to the `member` role in every existing application
+
+### Security
+
+- **CWE-269: API key empty scope privilege escalation (fix, closes #13)** — `HasScope()` in `internal/middleware/scope.go` previously treated a DB-backed API key with an empty scope list as fully permissive, effectively granting admin-level access to any key with no scopes configured. The scope check now **denies by default** when the granted scope list is empty. To grant unrestricted access to a DB-backed key, the key must explicitly include the `"*"` scope. The static `ADMIN_API_KEY` environment variable remains unconditionally permissive and is unaffected by this change.
+
+  > **Action required for existing installations:** Any DB-backed API key that was intentionally created without scopes to obtain full access must be updated — add the `"*"` scope or the specific scopes it needs via the Admin GUI or API.
+
+  Credit: **tinokyo** ([@Tinocio](https://github.com/Tinocio)) — thank you for the detailed responsible disclosure including root cause analysis, proof of concept, and suggested fix.
+
+### Style
+
+- Dark mode table row styles improved for better visibility across all Admin GUI pages
+
+---
+
 ## [1.0.0-alpha.6] - 2026-03-15
 
 ### Added

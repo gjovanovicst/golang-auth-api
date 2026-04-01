@@ -199,3 +199,34 @@ SMS_TWILIO_FROM_NUMBER=+15551234567   # Your Twilio phone number
 ```
 
 If `SMS_PROVIDER` is empty or not set, SMS sending is disabled and the SMS 2FA option is unavailable.
+
+---
+
+## Session Groups
+
+Session groups link multiple applications so that a single login is valid across all apps in the group. The expiry detection service watches for Redis TTL expirations and revokes cross-app sessions automatically when `GlobalLogout=true` on the group.
+
+```bash
+# Enable Redis keyspace notifications for real-time session expiry detection.
+# Set to "Ex" for expired key events. The Docker Compose Redis service is
+# already configured with this value.
+REDIS_NOTIFY_KEYSPACE_EVENTS=Ex
+
+# Enable expiry-triggered group-wide session revocation (default: true).
+# Set to false to disable automatic cross-app revocation on session expiry
+# while keeping manual (logout-triggered) group revocation active.
+SESSION_GROUP_EXPIRY_REVOCATION_ENABLED=true
+
+# Fallback periodic scan interval used when keyspace notifications are not
+# available. Accepts Go duration strings: 5m, 10m, 1h, etc.
+SESSION_GROUP_EXPIRY_SCAN_INTERVAL=5m
+
+# Enable the keyspace notification listener (default: true when
+# REDIS_NOTIFY_KEYSPACE_EVENTS is set). Set to false to rely on the
+# periodic fallback scanner only.
+SESSION_GROUP_KEYSYSPACE_NOTIF_ENABLED=true
+```
+
+> **Redis requirement:** Real-time expiry detection requires the Redis server to be started with `--notify-keyspace-events Ex`. The bundled `docker-compose.yml` and `docker-compose.dev.yml` already include this flag. For externally managed Redis, add `notify-keyspace-events Ex` to your `redis.conf`.
+
+For architecture details and testing scenarios, see [Session Group Expiry Detection](session-group-expiry.md).

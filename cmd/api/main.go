@@ -23,8 +23,10 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
+	sessiongroup "github.com/gjovanovicst/auth_api/internal/sessiongroup"
 	"github.com/gjovanovicst/auth_api/internal/sms"
 	"github.com/gjovanovicst/auth_api/internal/social"
+	ssopkg "github.com/gjovanovicst/auth_api/internal/sso"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	"github.com/gjovanovicst/auth_api/internal/user"
 	passkey "github.com/gjovanovicst/auth_api/internal/webauthn"
@@ -86,8 +88,22 @@ func main() {
 	viper.SetDefault("OIDC_DEFAULT_APP_ID", "00000000-0000-0000-0000-000000000001")
 	viper.SetDefault("PUBLIC_URL", "http://localhost:8080")
 	viper.SetDefault("FRONTEND_URL", "http://localhost:5173")
+	// CORS configuration defaults (all previously hardcoded values, now configurable via env or admin settings)
+	viper.SetDefault("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175,http://localhost:8080")
+	viper.SetDefault("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS,HEAD")
+	viper.SetDefault("CORS_ALLOWED_HEADERS", "Origin,Content-Type,Content-Length,Accept-Encoding,X-CSRF-Token,Authorization,Accept,Cache-Control,X-Requested-With,X-App-ID")
+	viper.SetDefault("CORS_EXPOSE_HEADERS", "Content-Length,Access-Control-Allow-Origin,Access-Control-Allow-Headers,Content-Type")
+	viper.SetDefault("CORS_MAX_AGE_HOURS", 12)
+	viper.SetDefault("CORS_ALLOW_CREDENTIALS", true)
 	viper.SetDefault("OIDC_ID_TOKEN_EXPIRATION_MINUTES", 60)
 	viper.SetDefault("OIDC_AUTH_CODE_EXPIRATION_MINUTES", 10)
+	// Trusted device cookie SameSite policy.
+	// "none"   = cross-origin deployments (Auth API and frontend on different domains — e.g. Planora).
+	//            SameSite=None requires Secure=true, which is enforced automatically.
+	// "lax"    = same-site subdomains (e.g. auth.example.com + app.example.com).
+	// "strict" = same-origin only (Auth API and frontend on the identical domain).
+	// Default is "none" to support cross-origin setups out of the box.
+	viper.SetDefault("TRUSTED_DEVICE_COOKIE_SAMESITE", "none")
 
 	// Connect to database
 	database.ConnectDatabase()
@@ -218,6 +234,24 @@ func main() {
 	settingsService := admin.NewSettingsService(settingsRepo)
 	guiHandler := admin.NewGUIHandler(accountService, dashboardService, adminRepo, settingsService, emailService, rbacService, webauthnService)
 
+	// Initialize SSO Handler
+	ssoHandler := ssopkg.NewHandler(adminRepo, userRepo, sessionService, database.DB)
+	ssoHandler.LookupRoles = rbacService.GetUserRoleNames
+
+	// Create session group revoker for shared logout/expiry logic
+	sessionGroupRevoker := sessiongroup.NewRevoker(adminRepo, userRepo, sessionService)
+
+	// Wire SSO global logout: when a user logs out of one app in a session group,
+	// their sessions in all other apps of the group are revoked (only when GlobalLogout=true).
+	userService.GroupLogoutFunc = func(appID, userEmail string) {
+		sessionGroupRevoker.RevokeAllUserSessionsInGroup(appID, userEmail)
+	}
+
+	// Wire SettingsService resolver into twofa handler so the TRUSTED_DEVICE_COOKIE_SAMESITE
+	// setting is resolved via the 3-tier priority (env > DB > default), allowing the admin GUI
+	// to control it without a process restart.
+	twofaHandler.SettingResolver = settingsService.GetResolvedValue
+
 	// Wire admin lookup for passkey discoverable login
 	webauthnService.AdminLookup = accountRepo.GetByID
 
@@ -232,6 +266,11 @@ func main() {
 		oidcService := oidc.NewService(oidcRepo, rbacService.GetUserRoleNames)
 		oidcHandler = oidc.NewHandler(oidcService, oidcRepo)
 		guiHandler.OIDCService = oidcService
+		// Wire OIDC RP-initiated logout group logout: revoke peer-app JWT sessions
+		// for the logging-out user, mirroring userService.GroupLogoutFunc.
+		oidcHandler.GroupLogoutFunc = func(appID, userEmail string) {
+			sessionGroupRevoker.RevokeAllUserSessionsInGroup(appID, userEmail)
+		}
 		// Fix #10: Run an initial cleanup immediately on startup so stale codes
 		// from before the last restart are purged without waiting a full hour.
 		go func() {
@@ -383,6 +422,9 @@ func main() {
 		auth.GET("/github/login", socialHandler.GithubLogin)
 		auth.GET("/github/callback", socialHandler.GithubCallback)
 
+		// Account merge confirmation (public — requires merge_token + existing password)
+		auth.POST("/merge/confirm", socialHandler.MergeConfirm)
+
 		// Account linking callbacks (public — user ID embedded in OAuth state)
 		auth.GET("/google/link/callback", socialHandler.GoogleLinkCallback)
 		auth.GET("/facebook/link/callback", socialHandler.FacebookLinkCallback)
@@ -408,6 +450,7 @@ func main() {
 		protected.DELETE("/profile", middleware.AuthorizePermission(rbacService, "user", "delete"), userHandler.DeleteAccount)
 		protected.PUT("/profile/email", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdateEmail)
 		protected.PUT("/profile/password", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.UpdatePassword)
+		protected.POST("/profile/set-password", middleware.AuthorizePermission(rbacService, "user", "write"), userHandler.SetPassword)
 
 		// Social account management routes
 		protected.GET("/profile/social-accounts", middleware.AuthorizePermission(rbacService, "user", "read"), socialHandler.ListSocialAccounts)
@@ -464,6 +507,20 @@ func main() {
 		protected.GET("/sessions", sessionHandler.ListSessions)
 		protected.DELETE("/sessions/:id", sessionHandler.RevokeSession)
 		protected.DELETE("/sessions", sessionHandler.RevokeAllSessions)
+	}
+
+	// SSO routes
+	// Public exchange endpoint — target app identified by X-App-ID header.
+	ssoPublic := r.Group("/sso")
+	{
+		ssoPublic.POST("/exchange", ssoHandler.Exchange)
+		ssoPublic.GET("/peers", ssoHandler.GetPeers)
+	}
+	// Protected token issuance endpoint — requires JWT auth.
+	ssoProtected := r.Group("/sso")
+	ssoProtected.Use(middleware.AuthMiddleware())
+	{
+		ssoProtected.POST("/token", middleware.APISSORateLimit(), ssoHandler.IssueToken)
 	}
 
 	// Admin routes (protected by Admin API Key)
@@ -715,8 +772,12 @@ func main() {
 			guiAuth.GET("/email-templates/:id/delete", guiHandler.EmailTemplateDeleteConfirm)
 			guiAuth.DELETE("/email-templates/:id", guiHandler.EmailTemplateDelete)
 			guiAuth.POST("/email-templates/preview", guiHandler.EmailTemplatePreview)
+			guiAuth.POST("/email-templates/editor-window", guiHandler.EmailTemplateEditorWindow)
 			guiAuth.GET("/email-templates/:id/reset", guiHandler.EmailTemplateResetConfirm)
 			guiAuth.POST("/email-templates/:id/reset", guiHandler.EmailTemplateReset)
+
+			// Email template variables
+			guiAuth.GET("/email-variables", guiHandler.EmailVariablesList)
 
 			// Email types management
 			guiAuth.GET("/email-types", guiHandler.EmailTypesPage)
@@ -754,6 +815,7 @@ func main() {
 			guiAuth.GET("/user-roles/list", guiHandler.UserRoleList)
 			guiAuth.GET("/user-roles/new", guiHandler.UserRoleCreateForm)
 			guiAuth.POST("/user-roles", guiHandler.UserRoleCreate)
+			guiAuth.PUT("/user-roles", guiHandler.UserRoleUpdate)
 			guiAuth.GET("/user-roles/roles-for-app", guiHandler.UserRoleRolesForApp)
 			guiAuth.GET("/user-roles/search-users", guiHandler.UserRoleSearchUsers)
 			guiAuth.GET("/user-roles/revoke", guiHandler.UserRoleRevokeConfirm)
@@ -833,6 +895,20 @@ func main() {
 			guiAuth.GET("/oidc-clients/:id/delete", guiHandler.OIDCClientDeleteConfirm)
 			guiAuth.DELETE("/oidc-clients/:id", guiHandler.OIDCClientDelete)
 			guiAuth.POST("/oidc-clients/:id/rotate-secret", guiHandler.OIDCClientRotateSecret)
+
+			// Session Group management
+			guiAuth.GET("/session-groups", guiHandler.SessionGroupPage)
+			guiAuth.GET("/session-groups/list", guiHandler.SessionGroupList)
+			guiAuth.GET("/session-groups/new", guiHandler.SessionGroupCreateForm)
+			guiAuth.POST("/session-groups", guiHandler.SessionGroupCreate)
+			guiAuth.GET("/session-groups/form-cancel", guiHandler.SessionGroupFormCancel)
+			guiAuth.GET("/session-groups/:id/edit", guiHandler.SessionGroupEditForm)
+			guiAuth.PUT("/session-groups/:id", guiHandler.SessionGroupUpdate)
+			guiAuth.GET("/session-groups/:id/delete", guiHandler.SessionGroupDeleteConfirm)
+			guiAuth.DELETE("/session-groups/:id", guiHandler.SessionGroupDelete)
+			guiAuth.GET("/session-groups/:id/apps", guiHandler.SessionGroupApps)
+			guiAuth.POST("/session-groups/:id/apps", guiHandler.SessionGroupAddApp)
+			guiAuth.DELETE("/session-groups/:id/apps/:app_id", guiHandler.SessionGroupRemoveApp)
 		}
 	}
 
@@ -875,6 +951,11 @@ func main() {
 
 	// Add Swagger UI endpoint
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Start session group expiry detection service
+	expiryService := sessiongroup.NewExpiryService(sessionGroupRevoker)
+	expiryService.Start()
+	defer expiryService.Stop()
 
 	// Start the server
 	port := viper.GetString("PORT")

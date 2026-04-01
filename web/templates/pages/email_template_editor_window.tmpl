@@ -1,0 +1,1185 @@
+{{define "email_template_editor_window"}}
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Template Editor</title>
+    <meta name="csrf-token" content="{{.CSRFToken}}">
+    
+    <!-- Bootstrap 5 CSS (from CDN, same as main GUI) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    
+    <!-- CodeMirror 5.65.17 (same version as main editor) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/dracula.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <!-- CodeMirror addons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: var(--bs-body-bg);
+            color: var(--bs-body-color);
+        }
+        
+        /* Template variable hint dropdown styles */
+        .template-variable-hint-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            min-height: 32px;
+        }
+        
+        .template-variable-hint-item .variable-name {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-weight: 600;
+            color: var(--bs-primary);
+            min-width: 120px;
+        }
+        
+        .template-variable-hint-item .variable-description {
+            flex: 1;
+            font-size: 0.85em;
+            color: var(--bs-secondary-color);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .template-variable-hint-item .variable-source {
+            font-size: 0.7em;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        
+        /* Dark theme adjustments */
+        [data-bs-theme="dark"] .template-variable-hint-item .variable-name {
+            color: #6ea8fe;
+        }
+        
+        [data-bs-theme="dark"] .template-variable-hint-item .variable-description {
+            color: #adb5bd;
+        }
+        
+        /* Ensure CodeMirror hint dropdown appears above everything */
+        .CodeMirror-hints {
+            z-index: 9999 !important;
+            max-height: 300px !important;
+            overflow-y: auto !important;
+            border: 1px solid var(--bs-border-color) !important;
+            border-radius: var(--bs-border-radius) !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+            background: var(--bs-body-bg) !important;
+        }
+        
+        .CodeMirror-hint {
+            padding: 4px 8px !important;
+            color: var(--bs-body-color) !important;
+            border-bottom: 1px solid var(--bs-border-color-translucent) !important;
+        }
+        
+        .CodeMirror-hint-active {
+            background: var(--bs-primary-bg-subtle) !important;
+            color: var(--bs-primary) !important;
+        }
+        
+        /* Dark theme adjustments for hint dropdown */
+        [data-bs-theme="dark"] .CodeMirror-hints {
+            background: #1e1e1e !important;
+            border-color: #444 !important;
+        }
+        
+        [data-bs-theme="dark"] .CodeMirror-hint {
+            color: #e0e0e0 !important;
+            border-bottom-color: #444 !important;
+        }
+        
+        [data-bs-theme="dark"] .CodeMirror-hint-active {
+            background: #2a2a2a !important;
+            color: #6ea8fe !important;
+        }
+        .editor-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            gap: 0;
+            align-items: stretch;
+        }
+        .editor-pane {
+            flex: 0 0 60%;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--bs-border-color);
+        }
+        .preview-pane {
+            flex: 0 0 40%;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            background: #fff;
+        }
+        .pane-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 1rem;
+            background: var(--bs-tertiary-bg);
+            border-bottom: 1px solid var(--bs-border-color);
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        .pane-body {
+            flex: 1 !important;
+            overflow: hidden !important;
+            position: relative !important;
+            min-height: 0 !important; /* Critical for flex children */
+        }
+        #previewBody {
+            width: 100% !important;
+            height: 100% !important;
+            position: relative !important;
+            background: #f8f9fa; /* Light background for debugging */
+            display: block !important;
+            overflow: hidden !important;
+        }
+        #htmlEditor {
+            width: 100% !important;
+            height: 100% !important;
+            position: relative !important;
+            display: block !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+            background: transparent !important;
+        }
+        .CodeMirror {
+            height: 100% !important;
+            width: 100% !important;
+            font-family: 'Monaco', 'Menlo', 'Consolas', 'Ubuntu Mono', monospace;
+            font-size: 13px;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            border: 1px solid var(--bs-border-color) !important;
+            border-radius: 0 !important;
+        }
+        .CodeMirror-focused {
+            border-color: #86b7fe !important;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25) !important;
+            outline: 0 !important;
+        }
+        .CodeMirror-scroll {
+            min-height: 100px;
+        }
+        .preview-iframe {
+            width: 100% !important;
+            height: 100% !important;
+            border: none !important;
+            display: block !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            background: white !important; /* Ensure iframe has background */
+        }
+        [data-bs-theme="dark"] #previewBody {
+            background: #1a1a1a;
+        }
+        [data-bs-theme="dark"] .preview-iframe {
+            background: #1a1a1a;
+        }
+        .preview-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--bs-secondary-color);
+            font-size: 0.9rem;
+        }
+        .btn-toolbar {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .btn-toolbar .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.8rem;
+        }
+        [data-bs-theme="dark"] .preview-pane {
+            background: #1a1a1a;
+        }
+        [data-bs-theme="dark"] .CodeMirror {
+            border-color: rgba(255,255,255,0.15) !important;
+            background: #1a1a1a !important;
+            color: #f8f9fa !important;
+        }
+        [data-bs-theme="dark"] .CodeMirror-focused {
+            border-color: #0d6efd !important;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25) !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="editor-container">
+        <!-- Left: Code Editor -->
+        <div class="editor-pane">
+            <div class="pane-header">
+                <span><i class="bi bi-code-slash me-1"></i>HTML Editor</span>
+                <div class="btn-toolbar">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshPreviewBtn" title="Refresh preview">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-primary" id="saveAndCloseBtn" title="Save changes and close window (Ctrl+S)">
+                        <i class="bi bi-check-lg"></i> Save & Close
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="copyToMainBtn" title="Copy all changes to main form without closing (Ctrl+C)">
+                        <i class="bi bi-clipboard-check"></i> Copy to Main
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" id="cancelBtn" title="Cancel and close window (Esc)">
+                        <i class="bi bi-x-lg"></i> Cancel
+                    </button>
+                </div>
+            </div>
+            <div class="pane-body">
+                <div id="htmlEditor"></div>
+                <textarea id="hiddenBodyHTML" style="display:none;">{{.Data.BodyHTML}}</textarea>
+            </div>
+        </div>
+        
+        <!-- Right: Live Preview -->
+        <div class="preview-pane">
+            <div class="pane-header">
+                <span><i class="bi bi-eye me-1"></i>Live Preview</span>
+                <div class="btn-toolbar">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="openInNewWindowBtn" title="Open preview in separate window">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="pane-body">
+                <div id="previewBody">
+                    <div class="preview-placeholder">
+                        <div class="spinner-border spinner-border-sm text-primary mb-2"></div>
+                        <span>Loading preview...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Embedded template data as JavaScript variables -->
+    <script>
+        // Template data passed from server
+        window.templateData = {
+            subject: {{if .Data.Subject}}{{.Data.Subject | toJSON}}{{else}}""{{end}},
+            bodyHTML: {{if .Data.BodyHTML}}{{.Data.BodyHTML | toJSON}}{{else}}""{{end}},
+            templateEngine: {{if .Data.TemplateEngine}}{{.Data.TemplateEngine | toJSON}}{{else}}"go_template"{{end}},
+            csrfToken: {{if .CSRFToken}}{{.CSRFToken | toJSON}}{{else}}""{{end}}
+        };
+    </script>
+    
+    <!-- CodeMirror JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/xml/xml.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/javascript/javascript.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/css/css.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/htmlmixed/htmlmixed.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <!-- CodeMirror addons for hinting and enhanced editing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/hint/show-hint.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/matchbrackets.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closebrackets.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/edit/closetag.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    
+    <!-- Bootstrap JS (for tooltips, etc.) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    
+    <script>
+        // -------------------------------------------------------
+        // Global variables
+        // -------------------------------------------------------
+        var htmlEditor = null;
+        var previewDebounce = null;
+        var previewWindow = null;
+        var variableService = null;
+        var currentTemplateEngine = 'go_template';
+        
+        // -------------------------------------------------------
+        // Template Variable Service
+        // -------------------------------------------------------
+        // Define TemplateVariableService globally if it doesn't exist
+        window.TemplateVariableService = window.TemplateVariableService || class TemplateVariableService {
+            constructor() {
+                this.variables = null;
+                this.lastFetch = 0;
+                this.cacheTTL = 300000; // 5 minutes cache
+                this.variableMap = {}; // Quick lookup by name
+            }
+            
+            // Fetch variables from API
+            async fetchVariables() {
+                // Return cached data if available
+                if (this.variables && Date.now() - this.lastFetch < this.cacheTTL) {
+                    return this.variables;
+                }
+                
+                try {
+                    // Add timeout to fetch request
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+                    
+                    const response = await fetch('/gui/email-variables', {
+                        credentials: 'same-origin', // Include cookies for authentication
+                        headers: {
+                            'X-CSRF-Token': window.templateData?.csrfToken || ''
+                        },
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    console.log('Fetch response status:', response.status, 'Content-Type:', response.headers.get('content-type'));
+                    
+                    // Check for redirect (302) or HTML response (login page)
+                    const contentType = response.headers.get('content-type') || '';
+                    if (response.status === 302 || response.status === 401 || contentType.includes('text/html')) {
+                        console.warn('Authentication required or redirect detected. Please log in to access template variables.');
+                        // Return empty array but don't cache
+                        return [];
+                    }
+                    
+                    if (!response.ok) {
+                        console.warn('Failed to fetch template variables:', response.status, response.statusText);
+                        // Return empty array on failure but don't cache
+                        return [];
+                    }
+                    
+                    try {
+                        this.variables = await response.json();
+                    } catch (jsonError) {
+                        console.error('Failed to parse JSON response:', jsonError);
+                        // Return empty array on JSON parse error
+                        return [];
+                    }
+                    this.lastFetch = Date.now();
+                    
+                    // Build quick lookup map
+                    this.variableMap = {};
+                    this.variables.forEach(v => {
+                        this.variableMap[v.name] = v;
+                    });
+                    
+                    console.log('Loaded ' + this.variables.length + ' template variables');
+                    return this.variables;
+                } catch (error) {
+                    console.error('Failed to fetch template variables:', error);
+                    // Return empty array on error
+                    return [];
+                }
+            }
+            
+            // Convert snake_case to PascalCase for Go templates
+            snakeToPascal(str) {
+                return str.split('_').map(word => 
+                    word.charAt(0).toUpperCase() + word.slice(1)
+                ).join('');
+            }
+            
+            // Format variable based on template engine
+            formatVariable(name, engine) {
+                const variable = this.variableMap[name];
+                if (!variable) return name;
+                
+                if (engine === 'placeholder') {
+                    return '{' + name + '}';
+                } else {
+                    // go_template or raw_html
+                    const pascalName = this.snakeToPascal(name);
+                    return '\u007B\u007B.' + pascalName + '\u007D\u007D';
+                }
+            }
+            
+            // Get display text for hint dropdown
+            getDisplayText(variable, engine) {
+                const formatted = this.formatVariable(variable.name, engine);
+                if (variable.description) {
+                    return formatted + ' - ' + variable.description;
+                }
+                return formatted;
+            }
+            
+            // Get CSS class based on variable source
+            getSourceClass(variable) {
+                const sourceClasses = {
+                    'user': 'variable-source-user',
+                    'setting': 'variable-source-setting', 
+                    'explicit': 'variable-source-explicit'
+                };
+                return sourceClasses[variable.source] || 'variable-source-unknown';
+            }
+            
+            // Filter variables by prefix (case-insensitive)
+            filterByPrefix(prefix) {
+                if (!this.variables) return [];
+                
+                const lowerPrefix = prefix.toLowerCase();
+                return this.variables.filter(v => 
+                    v.name.toLowerCase().includes(lowerPrefix)
+                );
+            }
+            
+            // Get variables filtered by trigger pattern and template engine
+            getVariablesByPrefix(triggerPattern, engine) {
+                console.log('getVariablesByPrefix called:', triggerPattern, engine);
+                if (!this.variables) {
+                    console.log('No variables available');
+                    return [];
+                }
+                
+                // Extract the actual variable name part from the trigger pattern
+                let searchText = '';
+                
+                if (engine === 'placeholder') {
+                    // For placeholder: {app_ -> search for "app"
+                    if (triggerPattern.startsWith('{')) {
+                        searchText = triggerPattern.substring(1);
+                    }
+                } else {
+                    // For go_template/raw_html: \u007B\u007B.App -> search for "app"
+                    if (triggerPattern.startsWith('\u007B\u007B')) {
+                        // Remove \u007B\u007B and any leading .
+                        let cleanPattern = triggerPattern.substring(2);
+                        if (cleanPattern.startsWith('.')) {
+                            cleanPattern = cleanPattern.substring(1);
+                        }
+                        // Convert PascalCase back to snake_case for searching
+                        searchText = cleanPattern.replace(/[A-Z]/g, function(letter) { return '_' + letter.toLowerCase(); }).replace(/^_/, '');
+                    }
+                }
+                
+                if (!searchText) {
+                    // If no search text, return all variables
+                    return this.getAllVariables().map(v => ({
+                        name: v.name,
+                        displayText: this.formatVariable(v.name, engine),
+                        description: v.description,
+                        source: v.source
+                    }));
+                }
+                
+                // Filter variables by search text
+                const lowerSearch = searchText.toLowerCase();
+                const filtered = this.variables.filter(v => 
+                    v.name.toLowerCase().includes(lowerSearch)
+                );
+                
+                // Format for display
+                return filtered.map(v => ({
+                    name: v.name,
+                    displayText: this.formatVariable(v.name, engine),
+                    description: v.description,
+                    source: v.source
+                }));
+            }
+            
+            // Get all variables sorted by name
+            getAllVariables() {
+                if (!this.variables) return [];
+                return [...this.variables].sort((a, b) => 
+                    a.name.localeCompare(b.name)
+                );
+            }
+        }
+        
+        // -------------------------------------------------------
+        // Register CodeMirror hint helper for template variables
+        // -------------------------------------------------------
+        function registerTemplateVariableHint() {
+            if (typeof CodeMirror === 'undefined' || !CodeMirror.registerHelper) {
+                console.warn('CodeMirror or registerHelper not available');
+                return;
+            }
+            
+            // Store the template engine in a closure
+            const currentEngine = currentTemplateEngine;
+            
+            CodeMirror.registerHelper('hint', 'templateVariables', function(cm, options) {
+                if (!variableService) {
+                    console.warn('TemplateVariableService not initialized');
+                    return null;
+                }
+                
+                // Check if variables are loaded
+                if (!variableService.variables || variableService.variables.length === 0) {
+                    // Try to load variables if not loaded yet
+                    variableService.fetchVariables().catch(() => {
+                        // Silently fail - variables will be loaded eventually
+                    });
+                    return null;
+                }
+                
+                var cursor = cm.getCursor();
+                var line = cm.getLine(cursor.line);
+                var start = cursor.ch;
+                var end = cursor.ch;
+                
+                // Find the start of the current word/trigger
+                while (start > 0 && /[\w\.\{\}]/.test(line.charAt(start - 1))) {
+                    start--;
+                }
+                
+                var currentWord = line.substring(start, end);
+                var triggerPattern = null;
+                
+                // Check for trigger patterns based on template engine
+                if (currentEngine === 'placeholder') {
+                    // Placeholder engine uses {var_name}
+                    // Look for opening { without closing }
+                    var lastOpenBrace = line.lastIndexOf('{', cursor.ch - 1);
+                    var lastCloseBrace = line.lastIndexOf('}', cursor.ch - 1);
+                    
+                    if (lastOpenBrace > lastCloseBrace) {
+                        // We're inside a { } block
+                        triggerPattern = line.substring(lastOpenBrace, cursor.ch);
+                    } else if (line.charAt(cursor.ch - 1) === '{') {
+                        // Just typed {
+                        triggerPattern = '{';
+                    }
+                } else {
+                    // go_template and raw_html use \u007B\u007B.VarName\u007D\u007D
+                    // Look for \u007B\u007B without closing \u007D\u007D
+                    var lastOpenDouble = line.lastIndexOf('\u007B\u007B', cursor.ch - 1);
+                    var lastCloseDouble = line.lastIndexOf('\u007D\u007D', cursor.ch - 1);
+                    
+                    if (lastOpenDouble > lastCloseDouble) {
+                        // We're inside a \u007B\u007B \u007D\u007D block
+                        triggerPattern = line.substring(lastOpenDouble, cursor.ch);
+                    } else if (line.substring(cursor.ch - 2, cursor.ch) === '\u007B\u007B') {
+                        // Just typed \u007B\u007B
+                        triggerPattern = '\u007B\u007B';
+                    }
+                }
+                
+                if (!triggerPattern) {
+                    return null; // No trigger pattern found
+                }
+                
+                // Get variables filtered by prefix
+                var variables = variableService.getVariablesByPrefix(triggerPattern, currentEngine);
+                
+                if (variables.length === 0) {
+                    return null; // No matching variables
+                }
+                
+            // Calculate the start position for the hint
+            var from = CodeMirror.Pos(cursor.line, start);
+            var to = CodeMirror.Pos(cursor.line, end);
+            
+            // Find the complete variable expression to replace
+            if (currentEngine === 'placeholder') {
+                // For placeholder: {var_name}
+                // Check for '}' immediately after cursor (auto-inserted case)
+                if (line.charAt(end) === '}') {
+                    to = CodeMirror.Pos(cursor.line, end + 1);
+                } else if (lastOpenBrace > lastCloseBrace) {
+                    // We're inside a { } block, find the closing }
+                    var closePos = line.indexOf('}', cursor.ch);
+                    if (closePos !== -1) {
+                        to = CodeMirror.Pos(cursor.line, closePos + 1);
+                    }
+                }
+            } else {
+                // For go_template/raw_html: {{"{{"}}.VarName{{"}}"}}
+                // Check for '\u007D\u007D' (}}) immediately after cursor (auto-inserted case)
+                if (line.substring(end, end + 2) === '\u007D\u007D') {
+                    to = CodeMirror.Pos(cursor.line, end + 2);
+                } else if (lastOpenDouble > lastCloseDouble) {
+                    // We're inside a {{"{{"}} {{"}}"}} block, find the closing {{"}}"}}
+                    var closePos = line.indexOf('\u007D\u007D', cursor.ch);
+                    if (closePos !== -1) {
+                        to = CodeMirror.Pos(cursor.line, closePos + 2);
+                    }
+                }
+            }
+            
+            // Create hint list
+            var hintList = variables.map(function(variable) {
+                    return {
+                        text: variable.displayText,
+                        displayText: variable.displayText,
+                        render: function(element, self, data) {
+                            var container = document.createElement('div');
+                            container.className = 'template-variable-hint-item';
+                            
+                            var nameSpan = document.createElement('span');
+                            nameSpan.className = 'variable-name';
+                            nameSpan.textContent = variable.displayText;
+                            
+                            var descSpan = document.createElement('span');
+                            descSpan.className = 'variable-description';
+                            descSpan.textContent = variable.description || '';
+                            
+                            var sourceSpan = document.createElement('span');
+                            sourceSpan.className = 'variable-source badge ' + 
+                                (variable.source === 'user' ? 'bg-info' : 
+                                 variable.source === 'setting' ? 'bg-warning' : 'bg-secondary');
+                            sourceSpan.textContent = variable.source;
+                            
+                            container.appendChild(nameSpan);
+                            container.appendChild(descSpan);
+                            container.appendChild(sourceSpan);
+                            
+                            element.appendChild(container);
+                        }
+                    };
+                });
+                
+                return {
+                    list: hintList,
+                    from: from,
+                    to: to,
+                    selectedHint: 0
+                };
+            });
+            
+            console.log('Template variable hint helper registered');
+        }
+        
+        // -------------------------------------------------------
+        // Initialize CodeMirror editor
+        // -------------------------------------------------------
+        function initEditor() {
+            var editorDiv = document.getElementById('htmlEditor');
+            var hiddenTextarea = document.getElementById('hiddenBodyHTML');
+            if (!editorDiv || !hiddenTextarea || typeof CodeMirror === 'undefined') return;
+            
+            // Ensure templateData is initialized
+            if (!window.templateData) {
+                window.templateData = {
+                    subject: '',
+                    bodyHTML: hiddenTextarea.value || '',
+                    templateEngine: 'go_template',
+                    csrfToken: document.querySelector('meta[name="csrf-token"]')?.content || ''
+                };
+            }
+            
+            // Detect theme
+            var isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+            
+            htmlEditor = CodeMirror(editorDiv, {
+                value: window.templateData.bodyHTML || hiddenTextarea.value || '',
+                mode: 'htmlmixed',
+                theme: isDark ? 'dracula' : 'default',
+                lineNumbers: true,
+                lineWrapping: false,
+                matchBrackets: true,
+                autoCloseBrackets: true,
+                autoCloseTags: true,
+                indentUnit: 2,
+                tabSize: 2,
+                indentWithTabs: false,
+                hintOptions: {
+                    hint: CodeMirror.hint.templateVariables,
+                    completeSingle: false,
+                    alignWithWord: true,
+                    closeOnUnfocus: false
+                },
+                extraKeys: {
+                    'Ctrl-Space': 'autocomplete',
+                    'Ctrl-I': function(cm) {
+                        cm.showHint();
+                    },
+                    'Tab': function(cm) {
+                        cm.replaceSelection('  ', 'end');
+                    },
+                    'Left': function(cm) {
+                        // Keep hint open when moving left
+                        var result = cm.execCommand('goCharLeft');
+                        if (cm.state.completionActive && cm.state.completionActive.widget) {
+                            // Hint is active, trigger re-filter
+                            setTimeout(function() {
+                                cm.showHint();
+                            }, 10);
+                        }
+                        return result;
+                    },
+                    'Right': function(cm) {
+                        // Keep hint open when moving right
+                        var result = cm.execCommand('goCharRight');
+                        if (cm.state.completionActive && cm.state.completionActive.widget) {
+                            // Hint is active, trigger re-filter
+                            setTimeout(function() {
+                                cm.showHint();
+                            }, 10);
+                        }
+                        return result;
+                    }
+                }
+            });
+            
+            // Add key handler for automatic hint triggering on \u007B\u007B and {
+            htmlEditor.on('keyup', function(cm, event) {
+                // Only trigger for specific keys that could complete \u007B\u007B or {
+                if (event.key === '{' || event.key === '}' || event.key === '.' || /^[a-zA-Z0-9_]$/.test(event.key)) {
+                    var cursor = cm.getCursor();
+                    var line = cm.getLine(cursor.line);
+                    var pos = cursor.ch;
+                    
+                    // Check for trigger patterns based on current template engine
+                    var templateEngine = window.templateData?.templateEngine || 'go_template';
+                    
+                    if (templateEngine === 'placeholder') {
+                        // Check if we just typed { or are inside { }
+                        if (event.key === '{') {
+                            // Just typed {, show hint
+                            setTimeout(function() {
+                                cm.showHint();
+                            }, 50);
+                        } else if (pos > 0 && line.charAt(pos - 1) === '{') {
+                            // Just typed something after {, show hint
+                            setTimeout(function() {
+                                cm.showHint();
+                            }, 50);
+                        }
+                    } else {
+                        // go_template or raw_html - check for \u007B\u007B pattern
+                        if (pos >= 2 && line.substring(pos - 2, pos) === '\u007B\u007B') {
+                            // Just typed \u007B\u007B, show hint
+                            setTimeout(function() {
+                                cm.showHint();
+                            }, 50);
+                        } else if (pos > 0 && line.substring(pos - 2, pos - 1) === '\u007B' && event.key === '{') {
+                            // Typed second { to complete \u007B\u007B, show hint
+                            setTimeout(function() {
+                                cm.showHint();
+                            }, 50);
+                        }
+                    }
+                }
+            });
+            
+            // Ensure editor gets proper dimensions after initialization
+            setTimeout(function() {
+                if (htmlEditor) {
+                    htmlEditor.refresh();
+                    htmlEditor.focus();
+                }
+            }, 100);
+            
+            // Store original HTML for dirty checking
+            originalHTML = htmlEditor.getValue();
+            
+            // Track changes for dirty flag
+            htmlEditor.on('change', function(cm) {
+                window.templateData.bodyHTML = cm.getValue();
+                hasUnsavedChangesFlag = hasUnsavedChanges();
+                
+                // Update window title with unsaved changes indicator
+                updateWindowTitle();
+                
+                clearTimeout(previewDebounce);
+                previewDebounce = setTimeout(refreshPreview, 600);
+            });
+            
+            // Initial refresh after editor is ready
+            setTimeout(function() {
+                if (htmlEditor) htmlEditor.refresh();
+                refreshPreview();
+            }, 100);
+        }
+        
+        // -------------------------------------------------------
+        // Refresh the live preview
+        // -------------------------------------------------------
+        function refreshPreview() {
+            var previewBody = document.getElementById('previewBody');
+            if (!previewBody) return;
+            
+            // Ensure templateData exists
+            if (!window.templateData) return;
+            
+            var formData = new FormData();
+            formData.append('subject', window.templateData.subject || '');
+            formData.append('body_html', window.templateData.bodyHTML || '');
+            formData.append('template_engine', window.templateData.templateEngine || 'go_template');
+            
+            previewBody.innerHTML = '<div class="preview-placeholder"><div class="spinner-border spinner-border-sm text-primary mb-2"></div><span>Rendering...</span></div>';
+            
+            fetch('/gui/email-templates/preview', {
+                method: 'POST',
+                headers: { 'X-CSRF-Token': window.templateData.csrfToken },
+                body: formData
+            })
+            .then(function(r) { return r.text(); })
+            .then(function(html) {
+                // Extract iframe srcdoc from returned HTML snippet
+                var tmp = document.createElement('div');
+                tmp.innerHTML = html;
+                var iframe = tmp.querySelector('iframe');
+                if (iframe) {
+                    previewBody.innerHTML = '';
+                    var newIframe = document.createElement('iframe');
+                    newIframe.className = 'preview-iframe';
+                    newIframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups');
+                    previewBody.appendChild(newIframe);
+                    newIframe.srcdoc = iframe.getAttribute('srcdoc');
+                    
+                    // Ensure iframe gets proper dimensions after load
+                    newIframe.onload = function() {
+                        // Force a reflow to ensure dimensions are correct
+                        newIframe.style.height = '100%';
+                        newIframe.style.width = '100%';
+                        
+                        // Debug: log dimensions
+                        console.log('Iframe loaded, dimensions:', {
+                            iframe: { width: newIframe.offsetWidth, height: newIframe.offsetHeight },
+                            parent: { width: previewBody.offsetWidth, height: previewBody.offsetHeight },
+                            paneBody: previewBody.parentElement ? {
+                                width: previewBody.parentElement.offsetWidth, 
+                                height: previewBody.parentElement.offsetHeight 
+                            } : null
+                        });
+                        
+                        // Try to inject CSS into iframe to ensure content fills it
+                        try {
+                            var iframeDoc = newIframe.contentDocument || newIframe.contentWindow.document;
+                            var style = iframeDoc.createElement('style');
+                            // More aggressive CSS to ensure content fills iframe
+                            style.textContent = `
+                                html, body { 
+                                    height: 100% !important; 
+                                    width: 100% !important;
+                                    margin: 0 !important; 
+                                    padding: 0 !important; 
+                                    overflow: auto !important; 
+                                    box-sizing: border-box !important;
+                                }
+                                *, *:before, *:after {
+                                    box-sizing: inherit !important;
+                                }
+                                body { 
+                                    min-height: 100% !important;
+                                    display: block !important;
+                                }
+                                table, div, p, span, img {
+                                    max-width: 100% !important;
+                                }
+                            `;
+                            iframeDoc.head.appendChild(style);
+                            
+                            // Also ensure the iframe body has proper dimensions
+                            if (iframeDoc.body) {
+                                iframeDoc.body.style.height = '100%';
+                                iframeDoc.body.style.width = '100%';
+                                iframeDoc.body.style.margin = '0';
+                                iframeDoc.body.style.padding = '0';
+                                iframeDoc.body.style.display = 'block';
+                                iframeDoc.body.style.boxSizing = 'border-box';
+                            }
+                        } catch (e) {
+                            // Cross-origin or other error, ignore
+                        }
+                    };
+                } else {
+                    previewBody.innerHTML = html;
+                }
+            })
+            .catch(function(err) {
+                console.error('Preview failed:', err);
+                previewBody.innerHTML = '<div class="preview-placeholder text-danger"><i class="bi bi-exclamation-triangle mb-1"></i>Preview failed</div>';
+            });
+        }
+        
+        // -------------------------------------------------------
+        // Open preview in separate window
+        // -------------------------------------------------------
+        function openPreviewInNewWindow() {
+            // Ensure templateData exists
+            if (!window.templateData) return;
+            
+            var formData = new FormData();
+            formData.append('subject', window.templateData.subject || '');
+            formData.append('body_html', window.templateData.bodyHTML || '');
+            formData.append('template_engine', window.templateData.templateEngine || 'go_template');
+            
+            var params = new URLSearchParams();
+            formData.forEach(function(v, k) { params.append(k, v); });
+            
+            fetch('/gui/email-templates/preview?full=1', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-Token': window.templateData.csrfToken,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: params.toString()
+            })
+            .then(function(r) { return r.text(); })
+            .then(function(html) {
+                var win = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
+                if (win) {
+                    win.document.open();
+                    win.document.write(html);
+                    win.document.close();
+                    previewWindow = win;
+                }
+            })
+            .catch(function() {
+                alert('Failed to open preview. Please try again.');
+            });
+        }
+        
+        // -------------------------------------------------------
+        // Copy HTML to main editor window (if open)
+        // -------------------------------------------------------
+        function copyToMainEditor() {
+            if (window.opener && !window.opener.closed) {
+                try {
+                    // Update parent form fields (subject, template engine, HTML)
+                    updateParentFormFields();
+                    
+                    // Show success message
+                    alert('All changes copied to main form!');
+                    
+                    // Clear dirty flag since changes are saved to parent
+                    hasUnsavedChangesFlag = false;
+                    originalHTML = htmlEditor ? htmlEditor.getValue() : '';
+                    
+                } catch (err) {
+                    console.error('Copy failed:', err);
+                    alert('Cannot access main window. It may be from a different origin or closed.');
+                }
+            } else {
+                alert('Main window not found. Please open the Email Templates page first.');
+            }
+        }
+        
+        // -------------------------------------------------------
+        // Theme detection and switching
+        // -------------------------------------------------------
+        function detectTheme() {
+            // Check if theme is stored in localStorage
+            var savedTheme = localStorage.getItem('gui_theme');
+            if (savedTheme === 'dark' || savedTheme === 'light') {
+                document.documentElement.setAttribute('data-bs-theme', savedTheme);
+            }
+            // Also check for system preference
+            else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                document.documentElement.setAttribute('data-bs-theme', 'dark');
+            }
+        }
+        
+        // -------------------------------------------------------
+        // Save & Cancel functionality
+        // -------------------------------------------------------
+        
+        // Track unsaved changes
+        var hasUnsavedChangesFlag = false;
+        var originalHTML = '';
+        
+        // Check if there are unsaved changes
+        function hasUnsavedChanges() {
+            if (!htmlEditor) return false;
+            var currentHTML = htmlEditor.getValue();
+            return currentHTML !== originalHTML;
+        }
+        
+        // Save changes and close window
+        function saveAndClose() {
+            if (!window.opener || window.opener.closed) {
+                alert('Main window not found. Changes cannot be saved.');
+                return;
+            }
+            
+            try {
+                // Update parent form fields
+                updateParentFormFields();
+                
+                // Optional: Trigger preview refresh in parent
+                if (window.opener.refreshLivePreview) {
+                    window.opener.refreshLivePreview();
+                }
+                
+                // Show confirmation
+                alert('Changes saved successfully!');
+                
+                // Close window
+                window.close();
+            } catch (err) {
+                console.error('Save failed:', err);
+                alert('Failed to save changes. Please try again.');
+            }
+        }
+        
+        // Update all fields in parent form
+        function updateParentFormFields() {
+            if (!window.opener || window.opener.closed) return;
+            
+            var subjectInput = window.opener.document.getElementById('etSubject');
+            var engineSelect = window.opener.document.getElementById('etEngine');
+            var hiddenTextarea = window.opener.document.getElementById('etBodyHTML');
+            var editor = window.opener.htmlEditor;
+            
+            // Get current values from editor window
+            var currentHTML = htmlEditor ? htmlEditor.getValue() : '';
+            var currentSubject = window.templateData ? window.templateData.subject : '';
+            var currentEngine = window.templateData ? window.templateData.templateEngine : 'go_template';
+            
+            // Update subject field
+            if (subjectInput) {
+                subjectInput.value = currentSubject;
+                // Trigger change event for HTMX forms
+                subjectInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            
+            // Update template engine
+            if (engineSelect) {
+                engineSelect.value = currentEngine;
+                engineSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            
+            // Update HTML content (both hidden textarea and CodeMirror editor)
+            if (hiddenTextarea) {
+                hiddenTextarea.value = currentHTML;
+                hiddenTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            
+            if (editor && typeof editor.setValue === 'function') {
+                editor.setValue(currentHTML);
+            }
+        }
+        
+        // Cancel and close window
+        function cancel() {
+            if (hasUnsavedChanges()) {
+                if (!confirm('You have unsaved changes. Close anyway?')) {
+                    return;
+                }
+            }
+            window.close();
+        }
+        
+        // Update window title with unsaved changes indicator
+        function updateWindowTitle() {
+            var baseTitle = 'Editor';
+            if (window.templateData && window.templateData.subject) {
+                var subject = window.templateData.subject.substring(0, 50);
+                if (window.templateData.subject.length > 50) subject += '...';
+                baseTitle = 'Editor: ' + subject;
+            }
+            
+            if (hasUnsavedChanges()) {
+                document.title = '● ' + baseTitle;
+            } else {
+                document.title = baseTitle;
+            }
+        }
+        
+        // -------------------------------------------------------
+        // Initialize everything when page loads
+        // -------------------------------------------------------
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Editor window loaded, templateData:', window.templateData);
+            detectTheme();
+            
+            // Initialize template engine from data
+            currentTemplateEngine = window.templateData ? 
+                (window.templateData.templateEngine || 'go_template') : 'go_template';
+            
+            // Initialize variable service
+            variableService = new TemplateVariableService();
+            
+            // Register hint helper immediately (will work once variables are loaded)
+            registerTemplateVariableHint();
+            
+            // Load variables in background
+            variableService.fetchVariables().then(variables => {
+                console.log('Template variables loaded: ' + variables.length + ' variables');
+            }).catch(err => {
+                console.warn('Could not load template variables:', err);
+            });
+            
+            initEditor();
+            
+            // Wire up button events
+            document.getElementById('refreshPreviewBtn').addEventListener('click', refreshPreview);
+            document.getElementById('saveAndCloseBtn').addEventListener('click', saveAndClose);
+            document.getElementById('copyToMainBtn').addEventListener('click', copyToMainEditor);
+            document.getElementById('cancelBtn').addEventListener('click', cancel);
+            document.getElementById('openInNewWindowBtn').addEventListener('click', openPreviewInNewWindow);
+            
+            // Handle window resize
+            window.addEventListener('resize', function() {
+                if (htmlEditor) setTimeout(function() { htmlEditor.refresh(); }, 50);
+            });
+            
+            // Set window title
+            updateWindowTitle();
+            
+            // Handle window resize to ensure iframe maintains proper dimensions
+            window.addEventListener('resize', function() {
+                var iframe = document.querySelector('.preview-iframe');
+                if (iframe) {
+                    iframe.style.height = '100%';
+                    iframe.style.width = '100%';
+                }
+                // Refresh CodeMirror editor dimensions
+                if (htmlEditor) {
+                    htmlEditor.refresh();
+                }
+            });
+            
+            // Watch for theme changes
+            var observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.attributeName === 'data-bs-theme' && htmlEditor) {
+                        var isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+                        htmlEditor.setOption('theme', isDark ? 'dracula' : 'default');
+                    }
+                });
+            });
+            observer.observe(document.documentElement, { attributes: true });
+            
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Ctrl+S or Cmd+S to save and close
+                if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                    e.preventDefault();
+                    saveAndClose();
+                }
+                // Ctrl+C to copy to main without closing
+                if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+                    e.preventDefault();
+                    copyToMainEditor();
+                }
+                // Esc to cancel
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancel();
+                }
+            });
+            
+            // Warn before closing with unsaved changes
+            window.addEventListener('beforeunload', function(e) {
+                if (hasUnsavedChanges()) {
+                    e.preventDefault();
+                    e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+                    return e.returnValue;
+                }
+            });
+        });
+    </script>
+</body>
+</html>
+{{end}}

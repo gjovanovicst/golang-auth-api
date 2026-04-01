@@ -294,7 +294,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	userID, appErr := h.Service.HandleGoogleCallback(appID, token.AccessToken)
+	result, appErr := h.Service.HandleGoogleCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -302,6 +302,18 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		c.Redirect(http.StatusFound, frontendURL)
 		return
 	}
+
+	// Merge required — redirect so the frontend can prompt the user to confirm.
+	if result.RequiresMerge {
+		frontendURL := fmt.Sprintf("%s?requires_merge=true&merge_token=%s&provider=google&email=%s",
+			redirectURI,
+			url.QueryEscape(result.MergeToken),
+			url.QueryEscape(result.MergeEmail))
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	userID := result.UserID
 
 	// Fetch user to check 2FA status
 	user, err := h.Service.UserRepo.GetUserByID(userID.String())
@@ -520,7 +532,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	userID, appErr := h.Service.HandleFacebookCallback(appID, token.AccessToken)
+	result, appErr := h.Service.HandleFacebookCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -528,6 +540,18 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		c.Redirect(http.StatusFound, frontendURL)
 		return
 	}
+
+	// Merge required — redirect so the frontend can prompt the user to confirm.
+	if result.RequiresMerge {
+		frontendURL := fmt.Sprintf("%s?requires_merge=true&merge_token=%s&provider=facebook&email=%s",
+			redirectURI,
+			url.QueryEscape(result.MergeToken),
+			url.QueryEscape(result.MergeEmail))
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	userID := result.UserID
 
 	// Fetch user to check 2FA status
 	user, err := h.Service.UserRepo.GetUserByID(userID.String())
@@ -745,7 +769,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	userID, appErr := h.Service.HandleGithubCallback(appID, token.AccessToken)
+	result, appErr := h.Service.HandleGithubCallback(appID, token.AccessToken)
 	if appErr != nil {
 		// Redirect to frontend with error
 		errorMsg := url.QueryEscape(appErr.Message)
@@ -753,6 +777,18 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		c.Redirect(http.StatusFound, frontendURL)
 		return
 	}
+
+	// Merge required — redirect so the frontend can prompt the user to confirm.
+	if result.RequiresMerge {
+		frontendURL := fmt.Sprintf("%s?requires_merge=true&merge_token=%s&provider=github&email=%s",
+			redirectURI,
+			url.QueryEscape(result.MergeToken),
+			url.QueryEscape(result.MergeEmail))
+		c.Redirect(http.StatusFound, frontendURL)
+		return
+	}
+
+	userID := result.UserID
 
 	// Fetch user to check 2FA status
 	user, err := h.Service.UserRepo.GetUserByID(userID.String())
@@ -1352,4 +1388,49 @@ func (h *Handler) GithubLinkCallback(c *gin.Context) {
 
 	successURL := fmt.Sprintf("%s?linked=true&provider=github", redirectURI)
 	c.Redirect(http.StatusFound, successURL)
+}
+
+// MergeConfirm godoc
+// @Summary      Confirm account merge
+// @Description  Confirms merging a social-login provider into an existing email/password account.
+//
+//	The client must supply the merge_token received via the social callback redirect
+//	and the existing account's password to prove ownership.
+//
+// @Tags         social
+// @Accept       json
+// @Produce      json
+// @Param        request body dto.MergeAccountRequest true "Merge confirmation payload"
+// @Success      200 {object} dto.MergeAccountResponse
+// @Failure      400 {object} dto.ErrorResponse
+// @Failure      401 {object} dto.ErrorResponse
+// @Failure      500 {object} dto.ErrorResponse
+// @Router       /auth/merge/confirm [post]
+func (h *Handler) MergeConfirm(c *gin.Context) {
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	var req dto.MergeAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ipAddress, userAgent := util.GetClientInfo(c)
+
+	accessToken, refreshToken, appErr := h.Service.ConfirmMerge(appID, req.MergeToken, req.Password, ipAddress, userAgent)
+	if appErr != nil {
+		c.JSON(appErr.Code, gin.H{"error": appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MergeAccountResponse{
+		Message:      "Accounts merged successfully",
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	})
 }

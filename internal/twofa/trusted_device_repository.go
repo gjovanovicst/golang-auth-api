@@ -43,10 +43,10 @@ func (r *TrustedDeviceRepository) FindByTokenHash(tokenHash string) (*models.Tru
 	return &d, err
 }
 
-// FindByUserAndApp returns all trusted devices for a given user + app.
+// FindByUserAndApp returns all non-expired trusted devices for a given user + app.
 func (r *TrustedDeviceRepository) FindByUserAndApp(userID, appID uuid.UUID) ([]models.TrustedDevice, error) {
 	var devices []models.TrustedDevice
-	err := r.DB.Where("user_id = ? AND app_id = ?", userID, appID).
+	err := r.DB.Where("user_id = ? AND app_id = ? AND expires_at > ?", userID, appID, time.Now().UTC()).
 		Order("last_used_at DESC").
 		Find(&devices).Error
 	return devices, err
@@ -80,6 +80,14 @@ func (r *TrustedDeviceRepository) DeleteAllForUser(userID, appID uuid.UUID) erro
 		Delete(&models.TrustedDevice{}).Error
 }
 
+// DeleteByUserAppAndUserAgent removes all existing device records (expired or active)
+// for a given user + app + user-agent combination. Used for deduplication before
+// inserting a fresh trusted device row on repeated "Remember this device" logins.
+func (r *TrustedDeviceRepository) DeleteByUserAppAndUserAgent(userID, appID uuid.UUID, userAgent string) error {
+	return r.DB.Where("user_id = ? AND app_id = ? AND user_agent = ?", userID, appID, userAgent).
+		Delete(&models.TrustedDevice{}).Error
+}
+
 // DeleteExpired removes all trusted devices whose ExpiresAt is in the past.
 // This can be called periodically as a cleanup job.
 func (r *TrustedDeviceRepository) DeleteExpired() (int64, error) {
@@ -106,11 +114,11 @@ func (r *TrustedDeviceRepository) CountAllActive() (int64, error) {
 	return count, err
 }
 
-// FindAllForUser returns all trusted devices for a user across all apps.
+// FindAllForUser returns all non-expired trusted devices for a user across all apps.
 // Used by the admin panel to list and revoke devices.
 func (r *TrustedDeviceRepository) FindAllForUser(userID uuid.UUID) ([]models.TrustedDevice, error) {
 	var devices []models.TrustedDevice
-	err := r.DB.Where("user_id = ?", userID).
+	err := r.DB.Where("user_id = ? AND expires_at > ?", userID, time.Now().UTC()).
 		Order("last_used_at DESC").
 		Find(&devices).Error
 	return devices, err

@@ -711,6 +711,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 		Locale:         user.Locale,
 		TwoFAEnabled:   user.TwoFAEnabled,
 		TwoFAMethod:    user.TwoFAMethod,
+		HasPassword:    user.PasswordHash != "",
 		Roles:          userRoles,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -907,6 +908,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		ProfilePicture: user.ProfilePicture,
 		Locale:         user.Locale,
 		TwoFAEnabled:   user.TwoFAEnabled,
+		HasPassword:    user.PasswordHash != "",
 		Roles:          profileRoles,
 		CreatedAt:      user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:      user.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -1025,7 +1027,7 @@ func (h *Handler) UpdatePassword(c *gin.Context) {
 }
 
 // @Summary Delete user account
-// @Description Delete authenticated user's account permanently (requires password verification and confirmation)
+// @Description Delete authenticated user's account permanently. Password is required for password-based accounts; omit for social-only (OAuth) accounts.
 // @Tags User
 // @Security ApiKeyAuth
 // @Accept json
@@ -1076,6 +1078,60 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Account deleted successfully. We're sorry to see you go."})
+}
+
+// @Summary Set initial password for social-only users
+// @Description Set a password for a user who registered via social login and has no password yet. Returns 409 if a password is already set.
+// @Tags User
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param   request  body      dto.SetPasswordRequest  true  "New password"
+// @Success 200 {object}  dto.MessageResponse
+// @Failure 400 {object}  dto.ErrorResponse
+// @Failure 401 {object}  dto.ErrorResponse
+// @Failure 409 {object}  dto.ErrorResponse
+// @Failure 500 {object}  dto.ErrorResponse
+// @Router /profile/set-password [post]
+func (h *Handler) SetPassword(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	var req dto.SetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	validate := validator.New()
+	if err := validate.Struct(req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.Service.SetInitialPassword(appID, userID.(string), req.NewPassword); err != nil {
+		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
+		return
+	}
+
+	// Log password set activity
+	ipAddress, userAgent := util.GetClientInfo(c)
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr == nil {
+		log.LogPasswordChange(appID, userUUID, ipAddress, userAgent)
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Password set successfully."})
 }
 
 // @Summary Request a magic link login email

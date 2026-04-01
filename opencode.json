@@ -7,5 +7,29 @@
     ".cursor/rules/security-patterns.mdc",
     ".cursor/rules/development-workflow.mdc",
     ".cursor/rules/commit-messages.mdc"
-  ]
+  ],
+  "mode": {
+    "build": {
+      "model": "github-copilot/claude-sonnet-4.6",
+      "system_prompt": "You are a senior software engineer. Write clean, production-ready code. Be concise. Do not over-explain.",
+      "thinking": false,
+      "tools": {
+        "write": true,
+        "edit": true,
+        "bash": true
+      }
+    },
+    "plan": {
+      "model": "github-copilot/claude-sonnet-4.6",
+      "system_prompt": "You are a senior software architect. Think step-by-step. Analyze deeply. Do not write code. Provide structured plans and trade-offs.",
+      "thinking": true,
+      "max_tokens": 4000,
+      "temperature": 0.2,
+      "tools": {
+        "write": false,
+        "edit": false,
+        "bash": false
+      }
+    }
+  }
 }

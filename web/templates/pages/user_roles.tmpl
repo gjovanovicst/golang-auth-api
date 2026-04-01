@@ -72,5 +72,16 @@
         var modal = bootstrap.Modal.getInstance(document.getElementById('revokeRoleModal'));
         if (modal) modal.hide();
     });
+
+    // After a new role is assigned via the form, refresh the table for the selected app.
+    document.body.addEventListener('userRoleAssigned', function(evt) {
+        var appID = evt.detail && evt.detail.appID;
+        var filter = document.getElementById('user-role-app-filter');
+        if (appID && filter) {
+            // Select the matching app in the filter and trigger list reload.
+            filter.value = appID;
+        }
+        htmx.trigger(filter || document.getElementById('user-role-table'), 'change');
+    });
 </script>
 {{end}}

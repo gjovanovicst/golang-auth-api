@@ -67,7 +67,7 @@ type SessionValidator interface {
 // SetSessionCookie sets the admin session cookie with security flags.
 // Uses http.SetCookie directly to set SameSite=Strict (not supported by Gin's c.SetCookie).
 func SetSessionCookie(c *gin.Context, sessionID string, maxAge int) {
-	http.SetCookie(c.Writer, &http.Cookie{
+	http.SetCookie(c.Writer, &http.Cookie{ // #nosec G124 -- Secure is set dynamically via IsSecureCookie(c); HttpOnly and SameSite=Strict are always set
 		Name:     AdminSessionCookie,
 		Value:    sessionID,
 		Path:     "/gui",
@@ -80,7 +80,7 @@ func SetSessionCookie(c *gin.Context, sessionID string, maxAge int) {
 
 // ClearSessionCookie removes the admin session cookie.
 func ClearSessionCookie(c *gin.Context) {
-	http.SetCookie(c.Writer, &http.Cookie{
+	http.SetCookie(c.Writer, &http.Cookie{ // #nosec G124 -- Secure is set dynamically via IsSecureCookie(c); HttpOnly and SameSite=Strict are always set
 		Name:     AdminSessionCookie,
 		Value:    "",
 		Path:     "/gui",

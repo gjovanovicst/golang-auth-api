@@ -122,6 +122,7 @@ type UserResponse struct {
 	Locale         string                  `json:"locale,omitempty"`
 	TwoFAEnabled   bool                    `json:"two_fa_enabled"`
 	TwoFAMethod    string                  `json:"two_fa_method,omitempty"` // "totp" or "email"
+	HasPassword    bool                    `json:"has_password"`            // false for social-only users
 	Roles          []string                `json:"roles,omitempty"`
 	CreatedAt      string                  `json:"created_at"`
 	UpdatedAt      string                  `json:"updated_at"`
@@ -161,7 +162,7 @@ type UpdatePasswordRequest struct {
 
 // DeleteAccountRequest represents the request payload for account deletion
 type DeleteAccountRequest struct {
-	Password        string `json:"password" validate:"required,max=128" example:"password123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	Password        string `json:"password" validate:"omitempty,max=128" example:"password123"` // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
 	ConfirmDeletion bool   `json:"confirm_deletion" validate:"required,eq=true" example:"true"`
 }
 
@@ -272,4 +273,34 @@ type TrustedDeviceResponse struct {
 // TrustedDevicesListResponse wraps a slice of TrustedDeviceResponse.
 type TrustedDevicesListResponse struct {
 	Devices []TrustedDeviceResponse `json:"devices"`
+}
+
+// ============================================================================
+// Account Merge DTOs
+// ============================================================================
+
+// MergeAccountRequest is the request payload for confirming an account merge.
+// The merge_token was received as a query parameter in the social-login redirect.
+// The password is the user's existing account password, used to prove ownership
+// before linking the social provider to the existing account.
+type MergeAccountRequest struct {
+	MergeToken string `json:"merge_token" validate:"required"`                       // #nosec G101 -- DTO field, not a hardcoded credential
+	Password   string `json:"password" validate:"required,max=128" example:"s3cr3t"` // #nosec G101,G117 -- DTO field, not a hardcoded credential
+}
+
+// MergeAccountResponse is returned after a successful account merge.
+type MergeAccountResponse struct {
+	Message      string `json:"message"`
+	AccessToken  string `json:"access_token"`  // #nosec G101,G117 -- DTO field
+	RefreshToken string `json:"refresh_token"` // #nosec G101,G117 -- DTO field
+}
+
+// ============================================================================
+// Set Password DTO (for social-only users)
+// ============================================================================
+
+// SetPasswordRequest is used by social-only users (no existing password) to set
+// an initial password so they can also log in with email + password.
+type SetPasswordRequest struct {
+	NewPassword string `json:"new_password" validate:"required,min=8,max=128" example:"Sup3rS3cure!"` // #nosec G101,G117 -- DTO field
 }

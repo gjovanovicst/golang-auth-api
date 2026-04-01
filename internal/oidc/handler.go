@@ -30,6 +30,10 @@ import (
 type Handler struct {
 	Service *Service
 	Repo    *Repository
+	// GroupLogoutFunc, if set, is called on RP-initiated logout to revoke the
+	// user's sessions in all peer apps that share the same session group.
+	// Signature mirrors userService.GroupLogoutFunc: (appID, userEmail string).
+	GroupLogoutFunc func(appID, userEmail string)
 }
 
 // NewHandler constructs the OIDC Handler.
@@ -728,6 +732,9 @@ func (h *Handler) EndSession(c *gin.Context) {
 	if idTokenHint == "" {
 		idTokenHint = c.PostForm("id_token_hint")
 	}
+	// logoutUserID / logoutUserEmail are populated below from the hint or the
+	// OIDC browser session cookie so we can revoke the user's JWT sessions.
+	var logoutUserID, logoutUserEmail string
 	if idTokenHint != "" {
 		rsaKey, err := h.Service.GetOrCreateRSAKey(app.ID)
 		if err == nil {
@@ -738,10 +745,13 @@ func (h *Handler) EndSession(c *gin.Context) {
 				return
 			}
 			// Confirm the subject belongs to this application.
-			if _, err := h.Repo.GetUserByID(idClaims.Subject); err != nil {
+			user, err := h.Repo.GetUserByID(idClaims.Subject)
+			if err != nil || user == nil {
 				h.renderError(c, app, "id_token_hint refers to an unknown user")
 				return
 			}
+			logoutUserID = idClaims.Subject
+			logoutUserEmail = user.Email
 		}
 	}
 
@@ -750,7 +760,31 @@ func (h *Handler) EndSession(c *gin.Context) {
 	sessionToken, cookieErr := c.Cookie(cookieName)
 	c.SetCookie(cookieName, "", -1, "/", "", false, true)
 	if cookieErr == nil && sessionToken != "" {
+		// If we didn't get a userID from id_token_hint, resolve it from the
+		// browser session mapping before we delete it.
+		if logoutUserID == "" {
+			if uid, err := redis.GetOIDCBrowserSession(app.ID.String(), sessionToken); err == nil && uid != "" {
+				logoutUserID = uid
+				if user, err := h.Repo.GetUserByID(uid); err == nil && user != nil {
+					logoutUserEmail = user.Email
+				}
+			}
+		}
 		_ = redis.DeleteOIDCBrowserSession(app.ID.String(), sessionToken)
+	}
+
+	// Revoke JWT sessions so they disappear from the admin panel and
+	// AuthMiddleware rejects any further requests with those tokens.
+	if logoutUserID != "" {
+		appIDStr := app.ID.String()
+		accessTokenTTL := time.Duration(viper.GetInt("ACCESS_TOKEN_EXPIRATION_MINUTES")) * time.Minute
+		_ = redis.DeleteAllUserSessions(appIDStr, logoutUserID, "")
+		_ = redis.BlacklistAllUserTokens(appIDStr, logoutUserID, accessTokenTTL)
+		// Cross-app SSO logout: revoke sessions in all peer apps that share the
+		// same session group (mirrors userService.GroupLogoutFunc behaviour).
+		if h.GroupLogoutFunc != nil && logoutUserEmail != "" {
+			h.GroupLogoutFunc(appIDStr, logoutUserEmail)
+		}
 	}
 
 	if postLogoutRedirectURI != "" {

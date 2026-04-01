@@ -84,7 +84,9 @@ CROSS JOIN permissions p
 WHERE r.name = 'admin' AND r.is_system = TRUE
 ON CONFLICT DO NOTHING;
 
--- Member gets: user:read, user:write, log:read, role:read
+-- Member gets: user:read, user:write, log:read, role:read, settings:read, settings:write
+-- settings:read / settings:write are required for 2FA setup, passkey management,
+-- phone management, trusted device management, and backup email management.
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
@@ -94,6 +96,7 @@ WHERE r.name = 'member' AND r.is_system = TRUE
     (p.resource = 'user' AND p.action IN ('read', 'write'))
     OR (p.resource = 'log' AND p.action = 'read')
     OR (p.resource = 'role' AND p.action = 'read')
+    OR (p.resource = 'settings' AND p.action IN ('read', 'write'))
   )
 ON CONFLICT DO NOTHING;
 

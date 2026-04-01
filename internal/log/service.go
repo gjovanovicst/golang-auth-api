@@ -293,10 +293,13 @@ func (s *Service) processLogEntry(entry LogEntry) {
 	// Calculate expiration time
 	expiresAt := entry.Timestamp.AddDate(0, 0, retentionDays)
 
-	// Use the anomaly severity if available, otherwise use the config severity
+	// Use the anomaly severity if available, otherwise use the config severity.
+	// Anomaly detection uses an internal scale ("low", "medium", "high", "critical")
+	// which must be mapped to the DB-level values enforced by chk_activity_logs_severity
+	// ("INFORMATIONAL", "IMPORTANT", "CRITICAL") before writing.
 	logSeverity := string(cfgSeverity)
 	if entry.Severity != "" {
-		logSeverity = entry.Severity
+		logSeverity = mapAnomalySeverityToDBSeverity(entry.Severity, cfgSeverity)
 	}
 
 	activityLog := models.ActivityLog{
@@ -333,6 +336,23 @@ func (s *Service) processLogEntry(entry LogEntry) {
 	// All retries failed, log the final error
 	log.Printf("Failed to log activity after %d attempts for user %s, event %s: %v",
 		maxRetries, entry.UserID, entry.EventType, lastErr)
+}
+
+// mapAnomalySeverityToDBSeverity translates the anomaly detector's internal severity
+// scale ("low", "medium", "high", "critical") to the values accepted by the
+// chk_activity_logs_severity DB constraint ("INFORMATIONAL", "IMPORTANT", "CRITICAL").
+// If the anomaly severity is unrecognised, the event-config severity is returned.
+func mapAnomalySeverityToDBSeverity(anomalySeverity string, fallback config.EventSeverity) string {
+	switch anomalySeverity {
+	case "low":
+		return string(config.SeverityInformational)
+	case "medium", "high":
+		return string(config.SeverityImportant)
+	case "critical":
+		return string(config.SeverityCritical)
+	default:
+		return string(fallback)
+	}
 }
 
 // Shutdown gracefully shuts down the log service

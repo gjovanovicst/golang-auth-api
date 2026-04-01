@@ -4,6 +4,8 @@ import (
 	"fmt"
 	stdlog "log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +32,11 @@ type RoleLookupFunc func(appID, userID string) ([]string, error)
 // AssignDefaultRoleFunc is called to assign the default role to a user.
 type AssignDefaultRoleFunc func(appID, userID string) error
 
+// SettingResolverFunc resolves a system setting by key using the 3-tier
+// priority (env > DB > default).  Wire this with admin.SettingsService.GetResolvedValue
+// in main.go to avoid a circular import between the twofa and admin packages.
+type SettingResolverFunc func(key string) string
+
 type Handler struct {
 	Service           *Service
 	SessionService    *session.Service         // Session management for creating sessions on 2FA login completion
@@ -39,6 +46,7 @@ type Handler struct {
 	AnomalyDetector   *log.AnomalyDetector     // Anomaly detector for login monitoring (nil = disabled)
 	TrustedDeviceRepo *TrustedDeviceRepository // nil = trusted device feature disabled
 	DB                *gorm.DB                 // for loading per-app token TTL overrides
+	SettingResolver   SettingResolverFunc      // Optional: resolves system settings (env > DB > default); falls back to os.Getenv if nil
 }
 
 func NewHandler(s *Service) *Handler {
@@ -446,12 +454,8 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 					deviceName = "Unknown Device"
 				}
 				if plainToken, tdErr := h.Service.CreateTrustedDevice(appID, userUUIDForDevice, deviceName, userAgent, ipAddress, maxDays); tdErr == nil {
-					secureCookie := gin.Mode() == gin.ReleaseMode
-					sameSite := http.SameSiteLaxMode
-					if secureCookie {
-						sameSite = http.SameSiteStrictMode
-					}
-					http.SetCookie(c.Writer, &http.Cookie{
+					secureCookie, sameSite := h.trustedDeviceCookieAttrs()
+					http.SetCookie(c.Writer, &http.Cookie{ // #nosec G124 -- Secure is set dynamically via trustedDeviceCookieAttrs(); HttpOnly is always true
 						Name:     "trusted_device",
 						Value:    plainToken,
 						Path:     "/",
@@ -713,6 +717,50 @@ func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent string, rol
 		return accessToken, refreshToken, nil
 	}
 	return generateTokensForUser(appID, userID, roles, accessTTL, refreshTTL)
+}
+
+// trustedDeviceCookieAttrs returns the Secure flag and SameSite policy to use
+// for the trusted-device cookie based on the TRUSTED_DEVICE_COOKIE_SAMESITE
+// setting (default: "none").
+//
+// Resolution order (3-tier):
+//  1. SettingResolver (admin.SettingsService: env > DB > default) — used when wired in main.go
+//  2. os.Getenv("TRUSTED_DEVICE_COOKIE_SAMESITE") — fallback when SettingResolver is nil
+//  3. Hardcoded default "none"
+//
+// Policy values:
+//   - "none"   → SameSite=None, Secure=true  (required for cross-origin / cross-site deployments
+//     where the Auth API and the frontend are on different domains, e.g. Planora)
+//   - "lax"    → SameSite=Lax,  Secure=true in release mode
+//   - "strict" → SameSite=Strict, Secure=true in release mode
+//
+// In all cases Secure=true is enforced in release mode so the cookie is never
+// transmitted over plain HTTP in production. In debug/test mode Secure=false so
+// local http://localhost flows continue to work.
+func (h *Handler) trustedDeviceCookieAttrs() (secure bool, sameSite http.SameSite) {
+	secure = gin.Mode() == gin.ReleaseMode
+
+	var policy string
+	if h.SettingResolver != nil {
+		policy = h.SettingResolver("TRUSTED_DEVICE_COOKIE_SAMESITE")
+	} else {
+		policy = os.Getenv("TRUSTED_DEVICE_COOKIE_SAMESITE")
+	}
+	policy = strings.ToLower(strings.TrimSpace(policy))
+
+	switch policy {
+	case "strict":
+		sameSite = http.SameSiteStrictMode
+	case "lax":
+		sameSite = http.SameSiteLaxMode
+	default:
+		// "none" — required for cross-origin deployments (Planora ↔ Auth API on different domains).
+		// SameSite=None requires Secure=true; enforce it unconditionally so the browser accepts
+		// the attribute even in non-release builds running behind an HTTPS reverse proxy.
+		sameSite = http.SameSiteNoneMode
+		secure = true
+	}
+	return secure, sameSite
 }
 
 // clearTempSession clears the temporary 2FA session

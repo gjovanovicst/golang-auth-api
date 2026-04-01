@@ -85,14 +85,14 @@ func TestSecurityHeadersCSPGUI(t *testing.T) {
 	if !strings.Contains(csp, "default-src 'self'") {
 		t.Errorf("GUI CSP should contain default-src 'self', got %q", csp)
 	}
-	if !strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
-		t.Errorf("GUI CSP should contain script-src 'self' 'unsafe-inline', got %q", csp)
+	if !strings.Contains(csp, "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net") {
+		t.Errorf("GUI CSP should contain script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net, got %q", csp)
 	}
-	if !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
-		t.Errorf("GUI CSP should contain style-src 'self' 'unsafe-inline', got %q", csp)
+	if !strings.Contains(csp, "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net") {
+		t.Errorf("GUI CSP should contain style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net, got %q", csp)
 	}
-	if !strings.Contains(csp, "font-src 'self'") {
-		t.Errorf("GUI CSP should contain font-src 'self', got %q", csp)
+	if !strings.Contains(csp, "font-src 'self' https://cdn.jsdelivr.net") {
+		t.Errorf("GUI CSP should contain font-src 'self' https://cdn.jsdelivr.net, got %q", csp)
 	}
 }
 

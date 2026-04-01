@@ -20,6 +20,7 @@ services:
       - DB_HOST=postgres
       - DB_PORT=5432
       - REDIS_ADDR=redis:6379
+      - REDIS_NOTIFY_KEYSPACE_EVENTS=Ex
     depends_on:
       postgres:
         condition: service_healthy

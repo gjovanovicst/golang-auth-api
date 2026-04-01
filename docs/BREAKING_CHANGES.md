@@ -205,6 +205,42 @@ New fields added to the `applications` table (managed by GORM AutoMigrate):
 
 ---
 
+## API Key Empty Scope: Deny-by-Default (alpha.7)
+
+**Impact:** Breaking for existing DB-backed API keys with no scopes configured
+
+**Vulnerability:** CWE-269 — Improper Privilege Management. A DB-backed API key issued without any scopes was previously treated as fully permissive by `HasScope()`, allowing privilege escalation to admin-level access.
+
+**Fix:** `internal/middleware/scope.go` — `HasScope()` now **denies by default** when the granted scope list for a DB-backed key is empty. The static `ADMIN_API_KEY` environment variable is unaffected (always permissive).
+
+**Affected versions:** `1.0.0-alpha.6` and earlier, for any DB-backed API key created without scopes.
+
+**Action required:** Review all DB-backed API keys in the Admin GUI (`/gui/api-keys`). Any key that was created without scopes to obtain full access must be updated:
+- To grant unrestricted access, add the `"*"` scope to the key.
+- To follow least privilege, add only the specific scopes the key needs.
+
+API keys authenticated via the static `ADMIN_API_KEY` environment variable are not affected.
+
+Credit: **tinokyo** ([@Tinocio](https://github.com/Tinocio)) — responsible disclosure, root cause analysis, and proof of concept.
+
+---
+
+## RBAC Member Role: Settings Permissions (alpha.7)
+
+**Impact:** Non-breaking (additive migration — fixes missing permissions)
+
+The system `member` role was missing `settings:read` and `settings:write` permissions. This caused 403 errors for all regular users on 2FA self-service endpoints (TOTP setup, email 2FA, SMS 2FA, backup email, passkeys, trusted devices, and phone management).
+
+**Action required:** Run `make migrate-up` to apply `20260317_add_settings_permissions_to_member.sql`. This grants the missing permissions to the `member` system role in every existing application.
+
+```bash
+make migrate-up
+```
+
+No code changes are required. The migration is safe to apply to existing data.
+
+---
+
 ## Migration Strategy
 
 ### For Users

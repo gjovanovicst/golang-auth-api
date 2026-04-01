@@ -29,6 +29,7 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 1L3 7v8c0 8 5 14 13 16 8-2 13-8 13-16V7Z' fill='%23212529'/%3E%3Crect x='12' y='14' width='8' height='7' rx='1.5' fill='%23fff'/%3E%3Cpath d='M13.5 14v-2.5a2.5 2.5 0 0 1 5 0V14' fill='none' stroke='%23fff' stroke-width='1.8'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/gui/static/css/bootstrap.min.css">
     <link rel="stylesheet" href="/gui/static/css/bootstrap-icons.min.css">
+    {{block "head" .}}{{end}}
     <style>
         :root {
             --sidebar-width: 260px;
@@ -101,6 +102,19 @@
             border-right: 1px solid rgba(255, 255, 255, 0.08);
             box-shadow: 2px 0 12px rgba(0, 0, 0, 0.5);
         }
+        /* Dark mode: override Bootstrap's hardcoded light colours on .table-secondary
+           so inactive rows (e.g. IP Rules) don't appear as bright patches in a dark table */
+        [data-bs-theme="dark"] .table-secondary {
+            --bs-table-color: rgba(255, 255, 255, 0.45);
+            --bs-table-bg: rgba(255, 255, 255, 0.05);
+            --bs-table-border-color: rgba(255, 255, 255, 0.08);
+            --bs-table-striped-bg: rgba(255, 255, 255, 0.06);
+            --bs-table-striped-color: rgba(255, 255, 255, 0.45);
+            --bs-table-active-bg: rgba(255, 255, 255, 0.09);
+            --bs-table-active-color: rgba(255, 255, 255, 0.45);
+            --bs-table-hover-bg: rgba(255, 255, 255, 0.08);
+            --bs-table-hover-color: rgba(255, 255, 255, 0.45);
+        }
     </style>
 </head>
 <body>
@@ -163,6 +177,13 @@
                        data-page="oidc-clients"
                        hx-get="/gui/oidc-clients" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
                         <i class="bi bi-fingerprint"></i> OIDC Clients
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link sidebar-link{{if eq .ActivePage "session-groups"}} active{{end}}" href="/gui/session-groups"
+                       data-page="session-groups"
+                       hx-get="/gui/session-groups" hx-target="#page-content" hx-select="#page-content" hx-swap="outerHTML show:no-scroll" hx-push-url="true">
+                        <i class="bi bi-link-45deg"></i> Session Groups
                     </a>
                 </li>
             </ul>
@@ -317,8 +338,7 @@
 
         <!-- Page content wrapper (HTMX swaps this on sidebar navigation) -->
         <div id="page-content" data-active-page="{{.ActivePage}}">
-            <!-- Page-specific styles -->
-            {{block "head" .}}{{end}}
+
 
             <!-- Flash messages -->
             <div class="container-fluid p-4">
@@ -390,6 +410,7 @@
                 'logs': 'Activity Logs',
                 'api-keys': 'API Keys',
                 'webhooks': 'Webhooks',
+                'session-groups': 'Session Groups',
                 'monitoring': 'System Health',
                 'settings': 'Settings',
                 'my-account': 'My Account'

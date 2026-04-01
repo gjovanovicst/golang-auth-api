@@ -33,6 +33,11 @@ type RoleLookupFunc func(appID, userID string) ([]string, error)
 // AssignDefaultRoleFunc is called after user registration to assign the default role.
 type AssignDefaultRoleFunc func(appID, userID string) error
 
+// GroupLogoutFunc is called (in a goroutine) after a successful logout when the
+// app belongs to an SSO session group with GlobalLogout enabled.  It is wired
+// from cmd/api/main.go via adminRepo to avoid an import cycle.
+type GroupLogoutFunc func(appID, userEmail string)
+
 type Service struct {
 	Repo              *Repository
 	EmailService      *emailpkg.Service
@@ -42,6 +47,7 @@ type Service struct {
 	AssignDefaultRole AssignDefaultRoleFunc // Optional: if nil, no default role is assigned on registration
 	WebhookService    *webhook.Service      // Optional: if nil, webhook dispatch is skipped
 	SMSSender         sms.Sender            // Optional: if nil, SMS 2FA auto-send is skipped
+	GroupLogoutFunc   GroupLogoutFunc       // Optional: if non-nil, called after logout for SSO group propagation
 }
 
 func NewService(r *Repository, es *emailpkg.Service, db *gorm.DB) *Service {
@@ -400,6 +406,12 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 		if appErr := s.SessionService.LogoutSession(appID, userID, sessionID, accessToken); appErr != nil {
 			log.Printf("Warning: Failed to revoke session %s: %v\n", sessionID, appErr.Message)
 		}
+		// Propagate logout to SSO group peers (non-blocking, best-effort)
+		if s.GroupLogoutFunc != nil {
+			if u, err := s.Repo.GetUserByID(userID); err == nil && u != nil {
+				go s.GroupLogoutFunc(appID, u.Email)
+			}
+		}
 		return nil
 	}
 
@@ -424,6 +436,13 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 	} else {
 		// Log the error but don't fail logout completely
 		log.Printf("Warning: Failed to parse access token during logout: %v\n", err)
+	}
+
+	// Propagate logout to SSO group peers (non-blocking, best-effort)
+	if s.GroupLogoutFunc != nil {
+		if u, err := s.Repo.GetUserByID(userID); err == nil && u != nil {
+			go s.GroupLogoutFunc(appID, u.Email)
+		}
 	}
 
 	return nil
@@ -778,6 +797,50 @@ func (s *Service) UpdateUserPassword(appID uuid.UUID, userID string, req dto.Upd
 	return nil
 }
 
+// SetInitialPassword sets a password for a social-only user (no existing PasswordHash).
+// Returns ErrConflict if the user already has a password — callers should use
+// UpdateUserPassword instead in that case.
+func (s *Service) SetInitialPassword(appID uuid.UUID, userID string, newPassword string) *errors.AppError {
+	user, err := s.Repo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+
+	if user.PasswordHash != "" {
+		return errors.NewAppError(errors.ErrConflict, "Password already set. Use the change-password endpoint to update it.")
+	}
+
+	// Load app for password policy
+	var app models.Application
+	if dbErr := s.DB.Select(
+		"pw_min_length, pw_max_length, pw_require_upper, pw_require_lower, pw_require_digit, pw_require_symbol, pw_history_count",
+	).First(&app, "id = ?", appID).Error; dbErr != nil {
+		app = models.Application{}
+	}
+
+	if pErr := ValidatePasswordPolicy(newPassword, &app); pErr != nil {
+		return errors.NewAppError(errors.ErrBadRequest, pErr.Error())
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcryptCost)
+	if err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to hash password")
+	}
+
+	if err := s.Repo.UpdateUserPasswordWithHistory(userID, string(hashedPassword), user.PasswordHistory); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to set password")
+	}
+
+	// Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "user.password_set", map[string]interface{}{
+			"user_id": userID,
+		})
+	}
+
+	return nil
+}
+
 // DeleteUserAccount deletes the user account after verifying password
 func (s *Service) DeleteUserAccount(appID uuid.UUID, userID string, req dto.DeleteAccountRequest) *errors.AppError {
 	// Get current user to verify password
@@ -798,9 +861,18 @@ func (s *Service) DeleteUserAccount(appID uuid.UUID, userID string, req dto.Dele
 		return errors.NewAppError(errors.ErrBadRequest, "Account deletion must be confirmed")
 	}
 
-	// Revoke all tokens
-	if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
-		log.Printf("Warning: Failed to revoke all user tokens before account deletion: %v\n", err.Message)
+	// Revoke all sessions and tokens. RevokeAllUserSessions deletes the Redis
+	// session hashes and blacklists all tokens, ensuring no active sessions or
+	// tokens remain after the account is gone.
+	if s.SessionService != nil {
+		if err := s.SessionService.RevokeAllUserSessions(appID.String(), userID); err != nil {
+			log.Printf("Warning: Failed to revoke all user sessions before account deletion: %v\n", err.Message)
+		}
+	} else {
+		// Fallback if SessionService is not wired: blacklist tokens only
+		if err := s.RevokeAllUserTokens(appID.String(), userID); err != nil {
+			log.Printf("Warning: Failed to revoke all user tokens before account deletion: %v\n", err.Message)
+		}
 	}
 
 	// Delete user from database (cascade will delete related records)

@@ -20,6 +20,7 @@ A complete authentication and authorization system with multi-tenancy, social lo
 ## Features
 
 - **Multi-Tenancy** -- Serve multiple organizations and applications from a single deployment with complete data isolation
+- **Session Groups** -- Link applications into named groups with shared authentication state and configurable global logout (cross-app SSO within a tenant)
 - **Authentication** -- Registration, login, JWT access/refresh tokens, token blacklisting, password reset, email verification, resend verification
 - **WebAuthn/Passkeys** -- FIDO2 passkey registration, passkey as 2FA method, and fully passwordless login via discoverable credentials
 - **Magic Link Login** -- Passwordless authentication via email magic links for both users and admin accounts

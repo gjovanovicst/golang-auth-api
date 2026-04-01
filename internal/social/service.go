@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
@@ -15,8 +16,40 @@ import (
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
+
+// MergeTokenTTL is the duration a pending merge token is valid.
+const MergeTokenTTL = 15 * time.Minute
+
+// SocialLoginResult is the outcome of a social-login callback.
+// When RequiresMerge is true, the callback found an existing account with the
+// same email but no social link yet — the frontend should redirect the user to a
+// merge confirmation screen rather than issuing tokens immediately.
+type SocialLoginResult struct {
+	UserID        uuid.UUID // set when RequiresMerge == false
+	RequiresMerge bool
+	MergeToken    string // set when RequiresMerge == true; store in Redis
+	MergeEmail    string // the email of the existing account (for display)
+}
+
+// mergeTokenPayload is the JSON body stored under a merge token in Redis.
+type mergeTokenPayload struct {
+	UserID         string          `json:"user_id"`
+	Provider       string          `json:"provider"`
+	ProviderUserID string          `json:"provider_user_id"`
+	Email          string          `json:"email"`
+	Name           string          `json:"name,omitempty"`
+	FirstName      string          `json:"first_name,omitempty"`
+	LastName       string          `json:"last_name,omitempty"`
+	ProfilePicture string          `json:"profile_picture,omitempty"`
+	Username       string          `json:"username,omitempty"`
+	Locale         string          `json:"locale,omitempty"`
+	RawData        json.RawMessage `json:"raw_data,omitempty"`
+	AccessToken    string          `json:"access_token"` // #nosec G101 -- provider OAuth access token, not a credential
+}
 
 type Service struct {
 	UserRepo          *user.Repository
@@ -110,17 +143,17 @@ func (s *Service) CreateSessionOrTokens(appID, userID, ip, userAgent string) (ac
 	return accessToken, refreshToken, nil
 }
 
-func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string) (uuid.UUID, *errors.AppError) {
+func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string) (*SocialLoginResult, *errors.AppError) {
 	// Fetch user info from Google
 	resp, err := http.Get("https://www.googleapis.com/oauth2/v2/userinfo?access_token=" + googleAccessToken)
 	if err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to get user info from Google")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to get user info from Google")
 	}
 	defer resp.Body.Close()
 
 	userData, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to read Google user info response")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to read Google user info response")
 	}
 
 	var googleUser struct {
@@ -134,7 +167,7 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 		Locale        string `json:"locale"`
 	}
 	if err := json.Unmarshal(userData, &googleUser); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to parse Google user info")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to parse Google user info")
 	}
 
 	// Check if social account already exists
@@ -152,100 +185,75 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 		socialAccount.AccessToken = googleAccessToken
 
 		if err := s.SocialRepo.UpdateSocialAccount(socialAccount); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to update social account")
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to update social account")
 		}
 
 		// Also update user profile with latest data
-		user, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
+		foundUser, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
 		if err == nil {
 			// Check if account is active
-			if !user.IsActive {
-				return uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+			if !foundUser.IsActive {
+				return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
 			}
 
 			updated := false
-			if user.Name != googleUser.Name && googleUser.Name != "" {
-				user.Name = googleUser.Name
+			if foundUser.Name != googleUser.Name && googleUser.Name != "" {
+				foundUser.Name = googleUser.Name
 				updated = true
 			}
-			if user.FirstName != googleUser.GivenName && googleUser.GivenName != "" {
-				user.FirstName = googleUser.GivenName
+			if foundUser.FirstName != googleUser.GivenName && googleUser.GivenName != "" {
+				foundUser.FirstName = googleUser.GivenName
 				updated = true
 			}
-			if user.LastName != googleUser.FamilyName && googleUser.FamilyName != "" {
-				user.LastName = googleUser.FamilyName
+			if foundUser.LastName != googleUser.FamilyName && googleUser.FamilyName != "" {
+				foundUser.LastName = googleUser.FamilyName
 				updated = true
 			}
-			if user.ProfilePicture != googleUser.Picture && googleUser.Picture != "" {
-				user.ProfilePicture = googleUser.Picture
+			if foundUser.ProfilePicture != googleUser.Picture && googleUser.Picture != "" {
+				foundUser.ProfilePicture = googleUser.Picture
 				updated = true
 			}
-			if user.Locale != googleUser.Locale && googleUser.Locale != "" {
-				user.Locale = googleUser.Locale
+			if foundUser.Locale != googleUser.Locale && googleUser.Locale != "" {
+				foundUser.Locale = googleUser.Locale
+				updated = true
+			}
+			// Sync email verification status from Google on every login
+			if foundUser.EmailVerified != googleUser.VerifiedEmail {
+				foundUser.EmailVerified = googleUser.VerifiedEmail
 				updated = true
 			}
 			if updated {
-				if err := s.UserRepo.UpdateUser(user); err != nil {
+				if err := s.UserRepo.UpdateUser(foundUser); err != nil {
 					// Log error but don't fail authentication
 					log.Printf("Failed to update user profile: %v", err)
 				}
 			}
 		}
 
-		return socialAccount.UserID, nil
+		return &SocialLoginResult{UserID: socialAccount.UserID}, nil
 	}
 
-	// If social account not found, check if user with this email exists
-	user, err := s.UserRepo.GetUserByEmail(appID.String(), googleUser.Email)
-	if err == nil { // User with this email exists, link social account
-		// Check if account is active
-		if !user.IsActive {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+	// Social account not found — check if a user with this email already exists.
+	// If yes, we must not silently merge: issue a merge token so the frontend can
+	// prompt the user to confirm ownership before linking the social account.
+	existingUser, err := s.UserRepo.GetUserByEmail(appID.String(), googleUser.Email)
+	if err == nil {
+		if !existingUser.IsActive {
+			return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
 		}
-
-		// Update user profile with Google data if not already set
-		if user.Name == "" && googleUser.Name != "" {
-			user.Name = googleUser.Name
-		}
-		if user.FirstName == "" && googleUser.GivenName != "" {
-			user.FirstName = googleUser.GivenName
-		}
-		if user.LastName == "" && googleUser.FamilyName != "" {
-			user.LastName = googleUser.FamilyName
-		}
-		if user.ProfilePicture == "" && googleUser.Picture != "" {
-			user.ProfilePicture = googleUser.Picture
-		}
-		if user.Locale == "" && googleUser.Locale != "" {
-			user.Locale = googleUser.Locale
-		}
-		if err := s.UserRepo.UpdateUser(user); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to update user profile")
-		}
-
 		rawDataJSON, _ := json.Marshal(googleUser)
-		socialAccount := &models.SocialAccount{
-			AppID:          appID,
-			UserID:         user.ID,
-			Provider:       "google",
-			ProviderUserID: googleUser.ID,
-			Email:          googleUser.Email,
-			Name:           googleUser.Name,
-			FirstName:      googleUser.GivenName,
-			LastName:       googleUser.FamilyName,
-			ProfilePicture: googleUser.Picture,
-			Locale:         googleUser.Locale,
-			RawData:        rawDataJSON,
-			AccessToken:    googleAccessToken,
-			ExpiresAt:      nil, // Google access tokens have short expiry, might not be needed to store
+		mergeToken, mergeErr := s.createMergeToken(appID.String(), existingUser.ID.String(), "google", googleUser.ID, googleUser.Email, googleUser.Name, googleUser.GivenName, googleUser.FamilyName, googleUser.Picture, "", googleUser.Locale, rawDataJSON, googleAccessToken)
+		if mergeErr != nil {
+			return nil, mergeErr
 		}
-		if err := s.SocialRepo.CreateSocialAccount(socialAccount); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
-		}
-		return user.ID, nil
+		return &SocialLoginResult{
+			RequiresMerge: true,
+			MergeToken:    mergeToken,
+			MergeEmail:    googleUser.Email,
+		}, nil
 	}
 
-	// No existing user or social account, create new user and social account
+	// No existing user or social account — create new user and social account.
 	newUser := &models.User{
 		AppID:          appID,
 		Email:          googleUser.Email,
@@ -258,7 +266,7 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 		// PasswordHash is not set for social logins
 	}
 	if err := s.UserRepo.CreateUser(newUser); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
 	}
 
 	// Assign default 'member' role to new social user
@@ -281,23 +289,23 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 		ExpiresAt:      nil,
 	}
 	if err := s.SocialRepo.CreateSocialAccount(newSocialAccount); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
 	}
 
-	return newUser.ID, nil
+	return &SocialLoginResult{UserID: newUser.ID}, nil
 }
 
-func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken string) (uuid.UUID, *errors.AppError) {
+func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken string) (*SocialLoginResult, *errors.AppError) {
 	// Fetch user info from Facebook Graph API with extended fields
 	resp, err := http.Get("https://graph.facebook.com/v18.0/me?fields=id,name,email,first_name,last_name,picture.type(large),locale&access_token=" + facebookAccessToken)
 	if err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to get user info from Facebook")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to get user info from Facebook")
 	}
 	defer resp.Body.Close()
 
 	userData, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to read Facebook user info response")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to read Facebook user info response")
 	}
 
 	var facebookUser struct {
@@ -314,7 +322,7 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 		Locale string `json:"locale"`
 	}
 	if err := json.Unmarshal(userData, &facebookUser); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to parse Facebook user info")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to parse Facebook user info")
 	}
 
 	// Check if social account already exists
@@ -332,100 +340,74 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 		socialAccount.AccessToken = facebookAccessToken
 
 		if err := s.SocialRepo.UpdateSocialAccount(socialAccount); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to update social account")
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to update social account")
 		}
 
 		// Also update user profile with latest data
-		user, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
+		foundUser, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
 		if err == nil {
 			// Check if account is active
-			if !user.IsActive {
-				return uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+			if !foundUser.IsActive {
+				return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
 			}
 
 			updated := false
-			if user.Name != facebookUser.Name && facebookUser.Name != "" {
-				user.Name = facebookUser.Name
+			if foundUser.Name != facebookUser.Name && facebookUser.Name != "" {
+				foundUser.Name = facebookUser.Name
 				updated = true
 			}
-			if user.FirstName != facebookUser.FirstName && facebookUser.FirstName != "" {
-				user.FirstName = facebookUser.FirstName
+			if foundUser.FirstName != facebookUser.FirstName && facebookUser.FirstName != "" {
+				foundUser.FirstName = facebookUser.FirstName
 				updated = true
 			}
-			if user.LastName != facebookUser.LastName && facebookUser.LastName != "" {
-				user.LastName = facebookUser.LastName
+			if foundUser.LastName != facebookUser.LastName && facebookUser.LastName != "" {
+				foundUser.LastName = facebookUser.LastName
 				updated = true
 			}
-			if user.ProfilePicture != facebookUser.Picture.Data.URL && facebookUser.Picture.Data.URL != "" {
-				user.ProfilePicture = facebookUser.Picture.Data.URL
+			if foundUser.ProfilePicture != facebookUser.Picture.Data.URL && facebookUser.Picture.Data.URL != "" {
+				foundUser.ProfilePicture = facebookUser.Picture.Data.URL
 				updated = true
 			}
-			if user.Locale != facebookUser.Locale && facebookUser.Locale != "" {
-				user.Locale = facebookUser.Locale
+			if foundUser.Locale != facebookUser.Locale && facebookUser.Locale != "" {
+				foundUser.Locale = facebookUser.Locale
+				updated = true
+			}
+			// Facebook-sourced emails are always considered verified
+			if !foundUser.EmailVerified {
+				foundUser.EmailVerified = true
 				updated = true
 			}
 			if updated {
-				if err := s.UserRepo.UpdateUser(user); err != nil {
+				if err := s.UserRepo.UpdateUser(foundUser); err != nil {
 					// Log error but don't fail authentication
 					log.Printf("Failed to update user profile: %v", err)
 				}
 			}
 		}
 
-		return socialAccount.UserID, nil
+		return &SocialLoginResult{UserID: socialAccount.UserID}, nil
 	}
 
-	// If social account not found, check if user with this email exists
-	user, err := s.UserRepo.GetUserByEmail(appID.String(), facebookUser.Email)
-	if err == nil { // User with this email exists, link social account
-		// Check if account is active
-		if !user.IsActive {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+	// Social account not found — check if a user with this email already exists.
+	// If yes, issue a merge token instead of silently auto-linking.
+	existingUser, err := s.UserRepo.GetUserByEmail(appID.String(), facebookUser.Email)
+	if err == nil {
+		if !existingUser.IsActive {
+			return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
 		}
-
-		// Update user profile with Facebook data if not already set
-		if user.Name == "" && facebookUser.Name != "" {
-			user.Name = facebookUser.Name
-		}
-		if user.FirstName == "" && facebookUser.FirstName != "" {
-			user.FirstName = facebookUser.FirstName
-		}
-		if user.LastName == "" && facebookUser.LastName != "" {
-			user.LastName = facebookUser.LastName
-		}
-		if user.ProfilePicture == "" && facebookUser.Picture.Data.URL != "" {
-			user.ProfilePicture = facebookUser.Picture.Data.URL
-		}
-		if user.Locale == "" && facebookUser.Locale != "" {
-			user.Locale = facebookUser.Locale
-		}
-		if err := s.UserRepo.UpdateUser(user); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to update user profile")
-		}
-
 		rawDataJSON, _ := json.Marshal(facebookUser)
-		socialAccount := &models.SocialAccount{
-			AppID:          appID,
-			UserID:         user.ID,
-			Provider:       "facebook",
-			ProviderUserID: facebookUser.ID,
-			Email:          facebookUser.Email,
-			Name:           facebookUser.Name,
-			FirstName:      facebookUser.FirstName,
-			LastName:       facebookUser.LastName,
-			ProfilePicture: facebookUser.Picture.Data.URL,
-			Locale:         facebookUser.Locale,
-			RawData:        rawDataJSON,
-			AccessToken:    facebookAccessToken,
-			ExpiresAt:      nil,
+		mergeToken, mergeErr := s.createMergeToken(appID.String(), existingUser.ID.String(), "facebook", facebookUser.ID, facebookUser.Email, facebookUser.Name, facebookUser.FirstName, facebookUser.LastName, facebookUser.Picture.Data.URL, "", facebookUser.Locale, rawDataJSON, facebookAccessToken)
+		if mergeErr != nil {
+			return nil, mergeErr
 		}
-		if err := s.SocialRepo.CreateSocialAccount(socialAccount); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
-		}
-		return user.ID, nil
+		return &SocialLoginResult{
+			RequiresMerge: true,
+			MergeToken:    mergeToken,
+			MergeEmail:    facebookUser.Email,
+		}, nil
 	}
 
-	// No existing user or social account, create new user and social account
+	// No existing user or social account — create new user and social account.
 	newUser := &models.User{
 		AppID:          appID,
 		Email:          facebookUser.Email,
@@ -437,7 +419,7 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 		Locale:         facebookUser.Locale,
 	}
 	if err := s.UserRepo.CreateUser(newUser); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
 	}
 
 	// Assign default 'member' role to new social user
@@ -460,30 +442,30 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 		ExpiresAt:      nil,
 	}
 	if err := s.SocialRepo.CreateSocialAccount(newSocialAccount); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
 	}
 
-	return newUser.ID, nil
+	return &SocialLoginResult{UserID: newUser.ID}, nil
 }
 
-func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string) (uuid.UUID, *errors.AppError) {
+func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string) (*SocialLoginResult, *errors.AppError) {
 	// Fetch user info from GitHub API
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
 	if err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub request")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub request")
 	}
 	req.Header.Set("Authorization", "token "+githubAccessToken)
 	// #nosec G107,G704 -- This is a legitimate GitHub API call with a hardcoded trusted URL
 	resp, err := client.Do(req)
 	if err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to get user info from GitHub")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to get user info from GitHub")
 	}
 	defer resp.Body.Close()
 
 	userData, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to read GitHub user info response")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to read GitHub user info response")
 	}
 
 	var githubUser struct {
@@ -497,26 +479,26 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		Company   string `json:"company"`
 	}
 	if err := json.Unmarshal(userData, &githubUser); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to parse GitHub user info")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to parse GitHub user info")
 	}
 
 	// GitHub's user endpoint might not always return email if it's private. Fetch public emails separately.
 	if githubUser.Email == "" {
 		req, err := http.NewRequest("GET", "https://api.github.com/user/emails", nil)
 		if err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub emails request")
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub emails request")
 		}
 		req.Header.Set("Authorization", "token "+githubAccessToken)
 		// #nosec G107,G704 -- This is a legitimate GitHub API call with a hardcoded trusted URL
 		resp, err := client.Do(req)
 		if err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to get user emails from GitHub")
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to get user emails from GitHub")
 		}
 		defer resp.Body.Close()
 
 		emailData, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to read GitHub emails response")
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to read GitHub emails response")
 		}
 
 		var emails []struct {
@@ -525,7 +507,7 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 			Verified bool   `json:"verified"`
 		}
 		if err := json.Unmarshal(emailData, &emails); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to parse GitHub emails")
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to parse GitHub emails")
 		}
 
 		for _, email := range emails {
@@ -538,7 +520,7 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 
 	if githubUser.Email == "" {
 		// Handle case where no public or primary verified email is available
-		return uuid.UUID{}, errors.NewAppError(errors.ErrBadRequest, "No public or primary verified email found for GitHub account. Please ensure your primary email is public and verified on GitHub.")
+		return nil, errors.NewAppError(errors.ErrBadRequest, "No public or primary verified email found for GitHub account. Please ensure your primary email is public and verified on GitHub.")
 	}
 
 	// Check if social account already exists
@@ -554,77 +536,62 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		socialAccount.AccessToken = githubAccessToken
 
 		if err := s.SocialRepo.UpdateSocialAccount(socialAccount); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to update social account")
+			return nil, errors.NewAppError(errors.ErrInternal, "Failed to update social account")
 		}
 
 		// Also update user profile with latest data
-		user, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
+		foundUser, err := s.UserRepo.GetUserByID(socialAccount.UserID.String())
 		if err == nil {
 			// Check if account is active
-			if !user.IsActive {
-				return uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+			if !foundUser.IsActive {
+				return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
 			}
 
 			updated := false
-			if user.Name != githubUser.Name && githubUser.Name != "" {
-				user.Name = githubUser.Name
+			if foundUser.Name != githubUser.Name && githubUser.Name != "" {
+				foundUser.Name = githubUser.Name
 				updated = true
 			}
-			if user.ProfilePicture != githubUser.AvatarURL && githubUser.AvatarURL != "" {
-				user.ProfilePicture = githubUser.AvatarURL
+			if foundUser.ProfilePicture != githubUser.AvatarURL && githubUser.AvatarURL != "" {
+				foundUser.ProfilePicture = githubUser.AvatarURL
+				updated = true
+			}
+			// GitHub emails are pre-filtered to primary+verified, so always heal if unverified
+			if !foundUser.EmailVerified {
+				foundUser.EmailVerified = true
 				updated = true
 			}
 			if updated {
-				if err := s.UserRepo.UpdateUser(user); err != nil {
+				if err := s.UserRepo.UpdateUser(foundUser); err != nil {
 					// Log error but don't fail authentication
 					log.Printf("Failed to update user profile: %v", err)
 				}
 			}
 		}
 
-		return socialAccount.UserID, nil
+		return &SocialLoginResult{UserID: socialAccount.UserID}, nil
 	}
 
-	// If social account not found, check if user with this email exists
-	user, err := s.UserRepo.GetUserByEmail(appID.String(), githubUser.Email)
-	if err == nil { // User with this email exists, link social account
-		// Check if account is active
-		if !user.IsActive {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+	// Social account not found — check if a user with this email already exists.
+	// If yes, issue a merge token instead of silently auto-linking.
+	existingUser, err := s.UserRepo.GetUserByEmail(appID.String(), githubUser.Email)
+	if err == nil {
+		if !existingUser.IsActive {
+			return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
 		}
-
-		// Update user profile with GitHub data if not already set
-		if user.Name == "" && githubUser.Name != "" {
-			user.Name = githubUser.Name
-		}
-		if user.ProfilePicture == "" && githubUser.AvatarURL != "" {
-			user.ProfilePicture = githubUser.AvatarURL
-		}
-		if err := s.UserRepo.UpdateUser(user); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to update user profile")
-		}
-
 		rawDataJSON, _ := json.Marshal(githubUser)
-		socialAccount := &models.SocialAccount{
-			AppID:          appID,
-			UserID:         user.ID,
-			Provider:       "github",
-			ProviderUserID: strconv.FormatInt(githubUser.ID, 10),
-			Email:          githubUser.Email,
-			Name:           githubUser.Name,
-			ProfilePicture: githubUser.AvatarURL,
-			Username:       githubUser.Login,
-			RawData:        rawDataJSON,
-			AccessToken:    githubAccessToken,
-			ExpiresAt:      nil,
+		mergeToken, mergeErr := s.createMergeToken(appID.String(), existingUser.ID.String(), "github", strconv.FormatInt(githubUser.ID, 10), githubUser.Email, githubUser.Name, "", "", githubUser.AvatarURL, githubUser.Login, "", rawDataJSON, githubAccessToken)
+		if mergeErr != nil {
+			return nil, mergeErr
 		}
-		if err := s.SocialRepo.CreateSocialAccount(socialAccount); err != nil {
-			return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to link social account")
-		}
-		return user.ID, nil
+		return &SocialLoginResult{
+			RequiresMerge: true,
+			MergeToken:    mergeToken,
+			MergeEmail:    githubUser.Email,
+		}, nil
 	}
 
-	// No existing user or social account, create new user and social account
+	// No existing user or social account — create new user and social account.
 	newUser := &models.User{
 		AppID:          appID,
 		Email:          githubUser.Email,
@@ -633,7 +600,7 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		ProfilePicture: githubUser.AvatarURL,
 	}
 	if err := s.UserRepo.CreateUser(newUser); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create new user")
 	}
 
 	// Assign default 'member' role to new social user
@@ -654,10 +621,10 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		ExpiresAt:      nil,
 	}
 	if err := s.SocialRepo.CreateSocialAccount(newSocialAccount); err != nil {
-		return uuid.UUID{}, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
+		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
 	}
 
-	return newUser.ID, nil
+	return &SocialLoginResult{UserID: newUser.ID}, nil
 }
 
 // GetLinkedAccounts returns all social accounts linked to a user
@@ -973,6 +940,104 @@ func (s *Service) HandleGithubLinkCallback(appID uuid.UUID, userID string, githu
 	}
 
 	return newLinkAccount, nil
+}
+
+// createMergeToken generates a UUID merge token, marshals the social-account
+// details into JSON, stores them in Redis with a TTL, and returns the token.
+func (s *Service) createMergeToken(appID, userID, provider, providerUserID, email, name, firstName, lastName, picture, username, locale string, rawData json.RawMessage, accessToken string) (string, *errors.AppError) {
+	payload := mergeTokenPayload{
+		UserID:         userID,
+		Provider:       provider,
+		ProviderUserID: providerUserID,
+		Email:          email,
+		Name:           name,
+		FirstName:      firstName,
+		LastName:       lastName,
+		ProfilePicture: picture,
+		Username:       username,
+		Locale:         locale,
+		RawData:        rawData,
+		AccessToken:    accessToken,
+	}
+	payloadJSON, err := json.Marshal(payload) // #nosec G117 -- access_token is a provider OAuth token stored transiently in Redis for the merge flow, not logged or exposed to clients
+	if err != nil {
+		return "", errors.NewAppError(errors.ErrInternal, "Failed to encode merge token payload")
+	}
+	token := uuid.New().String()
+	if err := redis.SetMergeToken(appID, token, string(payloadJSON), MergeTokenTTL); err != nil {
+		return "", errors.NewAppError(errors.ErrInternal, "Failed to store merge token")
+	}
+	return token, nil
+}
+
+// ConfirmMerge validates the merge token, verifies the user's existing password,
+// links the social account, and returns a new session token pair.
+func (s *Service) ConfirmMerge(appID uuid.UUID, mergeToken, password, ip, userAgent string) (accessToken, refreshToken string, appErr *errors.AppError) {
+	// 1. Retrieve the pending merge payload from Redis
+	payloadStr, err := redis.GetMergeToken(appID.String(), mergeToken)
+	if err != nil {
+		return "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired merge token")
+	}
+
+	var payload mergeTokenPayload
+	if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
+		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to decode merge token payload")
+	}
+
+	// 2. Load the existing user and verify the password
+	existingUser, err := s.UserRepo.GetUserByID(payload.UserID)
+	if err != nil {
+		return "", "", errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+	if !existingUser.IsActive {
+		return "", "", errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+	}
+	if existingUser.PasswordHash == "" {
+		return "", "", errors.NewAppError(errors.ErrBadRequest, "This account has no password set. Please use a social login provider.")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(existingUser.PasswordHash), []byte(password)); err != nil {
+		return "", "", errors.NewAppError(errors.ErrUnauthorized, "Invalid password")
+	}
+
+	// 3. Create the social account link
+	parsedAppID := appID
+	parsedUserID := existingUser.ID
+	newSocialAccount := &models.SocialAccount{
+		AppID:          parsedAppID,
+		UserID:         parsedUserID,
+		Provider:       payload.Provider,
+		ProviderUserID: payload.ProviderUserID,
+		Email:          payload.Email,
+		Name:           payload.Name,
+		FirstName:      payload.FirstName,
+		LastName:       payload.LastName,
+		ProfilePicture: payload.ProfilePicture,
+		Username:       payload.Username,
+		Locale:         payload.Locale,
+		RawData:        datatypes.JSON(payload.RawData),
+		AccessToken:    payload.AccessToken,
+	}
+	if err := s.SocialRepo.CreateSocialAccount(newSocialAccount); err != nil {
+		return "", "", errors.NewAppError(errors.ErrInternal, "Failed to link social account")
+	}
+
+	// 4. Consume the merge token (best-effort; failure is non-fatal)
+	_ = redis.DeleteMergeToken(appID.String(), mergeToken)
+
+	// 5. Dispatch webhook event (non-fatal)
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "social.linked", map[string]interface{}{
+			"user_id":  payload.UserID,
+			"provider": payload.Provider,
+		})
+	}
+
+	// 6. Issue session tokens
+	at, rt, sessionErr := s.CreateSessionOrTokens(appID.String(), payload.UserID, ip, userAgent)
+	if sessionErr != nil {
+		return "", "", sessionErr
+	}
+	return at, rt, nil
 }
 
 // IsAppTwoFAEnabled reports whether 2FA is enabled at the application level.

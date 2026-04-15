@@ -891,7 +891,7 @@
                 previewBody.innerHTML = '';
                 var newIframe = document.createElement('iframe');
                 newIframe.style.cssText = 'width:100%;min-height:380px;border:none;display:block;';
-                newIframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups');
+                newIframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups');
                 previewBody.appendChild(newIframe);
                 newIframe.srcdoc = iframe.getAttribute('srcdoc');
             } else {

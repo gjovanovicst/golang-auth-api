@@ -38,16 +38,25 @@
 
         {{if .BackupEmail}}
         <div class="mt-2">
-            <button class="btn btn-outline-danger btn-sm"
+            <button class="btn btn-outline-danger btn-sm" id="remove-backup-email-btn"
                     hx-delete="/gui/my-account/backup-email"
                     hx-target="#backup-email-result"
                     hx-swap="innerHTML"
-                    hx-confirm="Remove your backup email?"
-                    hx-on::after-request="htmx.ajax('GET', '/gui/my-account/backup-email/status', {target: '#backup-email-card', swap: 'outerHTML'})">
+                    hx-confirm="Remove your backup email?">
                 <i class="bi bi-trash me-1"></i>Remove
             </button>
         </div>
         {{end}}
     </div>
 </div>
+<script>
+(function() {
+    var btn = document.getElementById('remove-backup-email-btn');
+    if (btn) {
+        btn.addEventListener('htmx:afterRequest', function() {
+            htmx.ajax('GET', '/gui/my-account/backup-email/status', {target: '#backup-email-card', swap: 'outerHTML'});
+        });
+    }
+})();
+</script>
 {{end}}

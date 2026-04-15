@@ -3,12 +3,11 @@
     <div class="card-header bg-transparent border-bottom d-flex align-items-center justify-content-between">
         <h6 class="mb-0 fw-semibold"><i class="bi bi-device-hdd me-2"></i>Trusted Devices</h6>
         {{if .Devices}}
-        <button class="btn btn-outline-danger btn-sm"
+        <button class="btn btn-outline-danger btn-sm" id="revoke-all-devices-btn"
                 hx-delete="/gui/my-account/trusted-devices/all"
                 hx-target="#trusted-devices-card"
                 hx-swap="outerHTML"
-                hx-confirm="Revoke all trusted devices? You will need to pass 2FA on your next login from each device."
-                hx-on::after-request="htmx.ajax('GET', '/gui/my-account/trusted-devices', {target: '#trusted-devices-card', swap: 'outerHTML'})">
+                hx-confirm="Revoke all trusted devices? You will need to pass 2FA on your next login from each device.">
             <i class="bi bi-x-circle me-1"></i>Revoke All
         </button>
         {{end}}
@@ -66,4 +65,14 @@
         {{end}}
     </div>
 </div>
+<script>
+(function() {
+    var btn = document.getElementById('revoke-all-devices-btn');
+    if (btn) {
+        btn.addEventListener('htmx:afterRequest', function() {
+            htmx.ajax('GET', '/gui/my-account/trusted-devices', {target: '#trusted-devices-card', swap: 'outerHTML'});
+        });
+    }
+})();
+</script>
 {{end}}

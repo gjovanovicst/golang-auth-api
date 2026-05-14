@@ -53,6 +53,8 @@ type Claims struct {
 	SessionID string   `json:"session_id,omitempty"` // Session identifier for multi-device session management
 	TokenType string   `json:"token_type,omitempty"` // "access" or "refresh"; empty for legacy tokens
 	Roles     []string `json:"roles,omitempty"`      // User's role names in the application
+	OrgID     string   `json:"org_id,omitempty"`     // Active organisation context (set by /auth/reissue after context-switch)
+	OrgRole   string   `json:"org_role,omitempty"`   // User's role within OrgID (owner|admin|member|viewer|translator)
 	jwt.RegisteredClaims
 }
 
@@ -103,6 +105,32 @@ func GenerateRefreshToken(appID, userID, sessionID string, roles []string, ttl t
 		SessionID: sessionID,
 		TokenType: TokenTypeRefresh,
 		Roles:     roles,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecret)
+}
+
+// GenerateOrgContextToken generates an access token that includes org context.
+// Called exclusively by the /auth/reissue endpoint when Centrora requests
+// a new token after a context switch.
+func GenerateOrgContextToken(appID, userID, sessionID, orgID, orgRole string, roles []string, ttl time.Duration) (string, error) {
+	loadSecret()
+	if ttl <= 0 {
+		ttl = DefaultAccessTokenTTL()
+	}
+	expirationTime := time.Now().Add(ttl)
+	claims := &Claims{
+		UserID:    userID,
+		AppID:     appID,
+		SessionID: sessionID,
+		TokenType: TokenTypeAccess,
+		Roles:     roles,
+		OrgID:     orgID,
+		OrgRole:   orgRole,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

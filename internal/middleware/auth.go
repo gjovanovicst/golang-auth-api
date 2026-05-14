@@ -80,13 +80,19 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		c.Set("userID", claims.UserID)
-		c.Set("appID", claims.AppID)
-		c.Set("roles", claims.Roles)
-		if claims.SessionID != "" {
-			c.Set("sessionID", claims.SessionID)
-		}
-		c.Next()
+	c.Set("userID", claims.UserID)
+	c.Set("appID", claims.AppID)
+	c.Set("roles", claims.Roles)
+	if claims.SessionID != "" {
+		c.Set("sessionID", claims.SessionID)
+	}
+	if claims.OrgID != "" {
+		c.Set("orgID", claims.OrgID)
+	}
+	if claims.OrgRole != "" {
+		c.Set("orgRole", claims.OrgRole)
+	}
+	c.Next()
 	}
 }
 

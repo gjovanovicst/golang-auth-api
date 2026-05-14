@@ -11,7 +11,7 @@ import (
 type User struct {
 	ID                 uuid.UUID      `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	AppID              uuid.UUID      `gorm:"type:uuid;not null;default:'00000000-0000-0000-0000-000000000001';index;uniqueIndex:idx_email_app_id" json:"app_id"`
-	Email              string         `gorm:"uniqueIndex:idx_email_app_id;not null" json:"email"`
+	Email              string         `gorm:"uniqueIndex:idx_users_email_global;uniqueIndex:idx_email_app_id;not null" json:"email"`
 	PasswordHash       string         `gorm:"" json:"-"` // Stored hashed, not exposed via JSON - not required for social logins
 	EmailVerified      bool           `gorm:"default:false" json:"email_verified"`
 	IsActive           bool           `gorm:"default:true" json:"is_active"`

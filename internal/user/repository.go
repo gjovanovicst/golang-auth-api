@@ -25,6 +25,15 @@ func (r *Repository) GetUserByEmail(appID, email string) (*models.User, error) {
 	return &user, err
 }
 
+// GetUserByEmailGlobal finds a user by email regardless of which app they originally
+// registered with. Used by the SSO exchange flow where the same user record is shared
+// across all apps in a session group.
+func (r *Repository) GetUserByEmailGlobal(email string) (*models.User, error) {
+	var user models.User
+	err := r.DB.Where("email = ?", email).First(&user).Error
+	return &user, err
+}
+
 func (r *Repository) GetUserByID(id string) (*models.User, error) {
 	var user models.User
 	err := r.DB.Preload("SocialAccounts").Where("id = ?", id).First(&user).Error
@@ -127,6 +136,19 @@ func (r *Repository) UpdateUserEmail(userID, newEmail string) error {
 		"email":          newEmail,
 		"email_verified": false,
 	}).Error
+}
+
+// FindByEmail looks up a user by email address globally (across all apps).
+// Since email is globally unique (idx_users_email_global), exactly one result
+// is possible. The appID parameter is accepted for interface compatibility but
+// is not used in the query — the global unique constraint guarantees uniqueness.
+func (r *Repository) FindByEmail(email string) (*models.User, error) {
+	var user models.User
+	err := r.DB.Where("email = ?", email).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
 // ClearLockout clears the lockout fields for a user (auto-unlock on expired lockout).

@@ -174,6 +174,67 @@ func TestGenerateTokenWithEmptyUserID(t *testing.T) {
 	}
 }
 
+func TestGenerateOrgContextToken(t *testing.T) {
+	appID := "00000000-0000-0000-0000-000000000001"
+	userID := "test-user-id"
+	sessionID := "test-session-id"
+	orgID := "org-uuid-1234"
+	orgRole := "admin"
+	roles := []string{"member"}
+
+	token, err := GenerateOrgContextToken(appID, userID, sessionID, orgID, orgRole, roles, 0)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if token == "" {
+		t.Fatal("Expected token to be generated, got empty string")
+	}
+
+	claims, err := ParseToken(token)
+	if err != nil {
+		t.Fatalf("Expected token to be parseable, got error: %v", err)
+	}
+
+	if claims.UserID != userID {
+		t.Fatalf("Expected user ID %s, got %s", userID, claims.UserID)
+	}
+	if claims.AppID != appID {
+		t.Fatalf("Expected app ID %s, got %s", appID, claims.AppID)
+	}
+	if claims.OrgID != orgID {
+		t.Fatalf("Expected org ID %s, got %s", orgID, claims.OrgID)
+	}
+	if claims.OrgRole != orgRole {
+		t.Fatalf("Expected org role %s, got %s", orgRole, claims.OrgRole)
+	}
+	if claims.TokenType != TokenTypeAccess {
+		t.Fatalf("Expected token type %s, got %s", TokenTypeAccess, claims.TokenType)
+	}
+}
+
+func TestGenerateOrgContextToken_OrgClaimsAbsentInStandardTokens(t *testing.T) {
+	appID := "00000000-0000-0000-0000-000000000001"
+	userID := "test-user-id"
+
+	token, err := GenerateAccessToken(appID, userID, "", nil, 0)
+	if err != nil {
+		t.Fatalf("Failed to generate access token: %v", err)
+	}
+
+	claims, err := ParseToken(token)
+	if err != nil {
+		t.Fatalf("Failed to parse access token: %v", err)
+	}
+
+	// Standard access tokens must NOT carry org context
+	if claims.OrgID != "" {
+		t.Fatalf("Expected empty OrgID in standard access token, got %s", claims.OrgID)
+	}
+	if claims.OrgRole != "" {
+		t.Fatalf("Expected empty OrgRole in standard access token, got %s", claims.OrgRole)
+	}
+}
+
 func TestTokenTypeDifferentiation(t *testing.T) {
 	appID := "00000000-0000-0000-0000-000000000001"
 	userID := "test-user-id"

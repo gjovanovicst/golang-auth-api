@@ -233,13 +233,36 @@ func (s *Service) HandleGoogleCallback(appID uuid.UUID, googleAccessToken string
 		return &SocialLoginResult{UserID: socialAccount.UserID}, nil
 	}
 
-	// Social account not found — check if a user with this email already exists.
-	// If yes, we must not silently merge: issue a merge token so the frontend can
-	// prompt the user to confirm ownership before linking the social account.
-	existingUser, err := s.UserRepo.GetUserByEmail(appID.String(), googleUser.Email)
+	// Social account not found — check if a user with this email already exists globally.
+	// Users are stored once per person (shared across apps); per-app lookup would miss
+	// users who registered on a peer app in the same session group.
+	existingUser, err := s.UserRepo.GetUserByEmailGlobal(googleUser.Email)
 	if err == nil {
 		if !existingUser.IsActive {
 			return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+		}
+		// If user has no password (social-only account), we can directly link the new
+		// social account — Google has already proven identity.
+		if existingUser.PasswordHash == "" {
+			rawDataJSON, _ := json.Marshal(googleUser)
+			newSocialAccount := &models.SocialAccount{
+				AppID:          appID,
+				UserID:         existingUser.ID,
+				Provider:       "google",
+				ProviderUserID: googleUser.ID,
+				Email:          googleUser.Email,
+				Name:           googleUser.Name,
+				FirstName:      googleUser.GivenName,
+				LastName:       googleUser.FamilyName,
+				ProfilePicture: googleUser.Picture,
+				Locale:         googleUser.Locale,
+				RawData:        rawDataJSON,
+				AccessToken:    googleAccessToken,
+			}
+			if err := s.SocialRepo.CreateSocialAccount(newSocialAccount); err != nil {
+				return nil, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
+			}
+			return &SocialLoginResult{UserID: existingUser.ID}, nil
 		}
 		rawDataJSON, _ := json.Marshal(googleUser)
 		mergeToken, mergeErr := s.createMergeToken(appID.String(), existingUser.ID.String(), "google", googleUser.ID, googleUser.Email, googleUser.Name, googleUser.GivenName, googleUser.FamilyName, googleUser.Picture, "", googleUser.Locale, rawDataJSON, googleAccessToken)
@@ -388,12 +411,32 @@ func (s *Service) HandleFacebookCallback(appID uuid.UUID, facebookAccessToken st
 		return &SocialLoginResult{UserID: socialAccount.UserID}, nil
 	}
 
-	// Social account not found — check if a user with this email already exists.
-	// If yes, issue a merge token instead of silently auto-linking.
-	existingUser, err := s.UserRepo.GetUserByEmail(appID.String(), facebookUser.Email)
+	// Social account not found — check if a user with this email already exists globally.
+	existingUser, err := s.UserRepo.GetUserByEmailGlobal(facebookUser.Email)
 	if err == nil {
 		if !existingUser.IsActive {
 			return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+		}
+		if existingUser.PasswordHash == "" {
+			rawDataJSON, _ := json.Marshal(facebookUser)
+			newSocialAccount := &models.SocialAccount{
+				AppID:          appID,
+				UserID:         existingUser.ID,
+				Provider:       "facebook",
+				ProviderUserID: facebookUser.ID,
+				Email:          facebookUser.Email,
+				Name:           facebookUser.Name,
+				FirstName:      facebookUser.FirstName,
+				LastName:       facebookUser.LastName,
+				ProfilePicture: facebookUser.Picture.Data.URL,
+				Locale:         facebookUser.Locale,
+				RawData:        rawDataJSON,
+				AccessToken:    facebookAccessToken,
+			}
+			if err := s.SocialRepo.CreateSocialAccount(newSocialAccount); err != nil {
+				return nil, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
+			}
+			return &SocialLoginResult{UserID: existingUser.ID}, nil
 		}
 		rawDataJSON, _ := json.Marshal(facebookUser)
 		mergeToken, mergeErr := s.createMergeToken(appID.String(), existingUser.ID.String(), "facebook", facebookUser.ID, facebookUser.Email, facebookUser.Name, facebookUser.FirstName, facebookUser.LastName, facebookUser.Picture.Data.URL, "", facebookUser.Locale, rawDataJSON, facebookAccessToken)
@@ -456,12 +499,18 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub request")
 	}
 	req.Header.Set("Authorization", "token "+githubAccessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	// #nosec G107,G704 -- This is a legitimate GitHub API call with a hardcoded trusted URL
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to get user info from GitHub")
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.NewAppError(errors.ErrInternal, "GitHub API returned unexpected status fetching user info")
+	}
 
 	userData, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -489,12 +538,18 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 			return nil, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub emails request")
 		}
 		req.Header.Set("Authorization", "token "+githubAccessToken)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		// #nosec G107,G704 -- This is a legitimate GitHub API call with a hardcoded trusted URL
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, errors.NewAppError(errors.ErrInternal, "Failed to get user emails from GitHub")
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, errors.NewAppError(errors.ErrInternal, "GitHub API returned unexpected status fetching emails")
+		}
 
 		emailData, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -572,12 +627,30 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		return &SocialLoginResult{UserID: socialAccount.UserID}, nil
 	}
 
-	// Social account not found — check if a user with this email already exists.
-	// If yes, issue a merge token instead of silently auto-linking.
-	existingUser, err := s.UserRepo.GetUserByEmail(appID.String(), githubUser.Email)
+	// Social account not found — check if a user with this email already exists globally.
+	existingUser, err := s.UserRepo.GetUserByEmailGlobal(githubUser.Email)
 	if err == nil {
 		if !existingUser.IsActive {
 			return nil, errors.NewAppError(errors.ErrForbidden, "Account is deactivated. Please contact your administrator.")
+		}
+		if existingUser.PasswordHash == "" {
+			rawDataJSON, _ := json.Marshal(githubUser)
+			newSocialAccount := &models.SocialAccount{
+				AppID:          appID,
+				UserID:         existingUser.ID,
+				Provider:       "github",
+				ProviderUserID: strconv.FormatInt(githubUser.ID, 10),
+				Email:          githubUser.Email,
+				Name:           githubUser.Name,
+				ProfilePicture: githubUser.AvatarURL,
+				Username:       githubUser.Login,
+				RawData:        rawDataJSON,
+				AccessToken:    githubAccessToken,
+			}
+			if err := s.SocialRepo.CreateSocialAccount(newSocialAccount); err != nil {
+				return nil, errors.NewAppError(errors.ErrInternal, "Failed to create social account")
+			}
+			return &SocialLoginResult{UserID: existingUser.ID}, nil
 		}
 		rawDataJSON, _ := json.Marshal(githubUser)
 		mergeToken, mergeErr := s.createMergeToken(appID.String(), existingUser.ID.String(), "github", strconv.FormatInt(githubUser.ID, 10), githubUser.Email, githubUser.Name, "", "", githubUser.AvatarURL, githubUser.Login, "", rawDataJSON, githubAccessToken)
@@ -592,11 +665,15 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 	}
 
 	// No existing user or social account — create new user and social account.
+	displayName := githubUser.Name
+	if displayName == "" {
+		displayName = githubUser.Login // Fall back to GitHub username when display name is not set
+	}
 	newUser := &models.User{
 		AppID:          appID,
 		Email:          githubUser.Email,
 		EmailVerified:  true, // Assuming email from GitHub is verified if primary and verified
-		Name:           githubUser.Name,
+		Name:           displayName,
 		ProfilePicture: githubUser.AvatarURL,
 	}
 	if err := s.UserRepo.CreateUser(newUser); err != nil {
@@ -613,7 +690,7 @@ func (s *Service) HandleGithubCallback(appID uuid.UUID, githubAccessToken string
 		Provider:       "github",
 		ProviderUserID: strconv.FormatInt(githubUser.ID, 10),
 		Email:          githubUser.Email,
-		Name:           githubUser.Name,
+		Name:           displayName,
 		ProfilePicture: githubUser.AvatarURL,
 		Username:       githubUser.Login,
 		RawData:        rawDataJSON,
@@ -842,12 +919,18 @@ func (s *Service) HandleGithubLinkCallback(appID uuid.UUID, userID string, githu
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub request")
 	}
 	req.Header.Set("Authorization", "token "+githubAccessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	// #nosec G107,G704 -- This is a legitimate GitHub API call with a hardcoded trusted URL
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to get user info from GitHub")
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.NewAppError(errors.ErrInternal, "GitHub API returned unexpected status fetching user info")
+	}
 
 	userData, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -872,12 +955,18 @@ func (s *Service) HandleGithubLinkCallback(appID uuid.UUID, userID string, githu
 			return nil, errors.NewAppError(errors.ErrInternal, "Failed to create GitHub emails request")
 		}
 		emailReq.Header.Set("Authorization", "token "+githubAccessToken)
+		emailReq.Header.Set("Accept", "application/vnd.github+json")
+		emailReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		// #nosec G107,G704 -- This is a legitimate GitHub API call with a hardcoded trusted URL
 		emailResp, err := client.Do(emailReq)
 		if err != nil {
 			return nil, errors.NewAppError(errors.ErrInternal, "Failed to get user emails from GitHub")
 		}
 		defer emailResp.Body.Close()
+
+		if emailResp.StatusCode != http.StatusOK {
+			return nil, errors.NewAppError(errors.ErrInternal, "GitHub API returned unexpected status fetching emails")
+		}
 
 		emailData, err := io.ReadAll(emailResp.Body)
 		if err != nil {
@@ -899,6 +988,10 @@ func (s *Service) HandleGithubLinkCallback(appID uuid.UUID, userID string, githu
 				break
 			}
 		}
+	}
+
+	if githubUser.Email == "" {
+		return nil, errors.NewAppError(errors.ErrBadRequest, "No public or primary verified email found for GitHub account. Please ensure your primary email is public and verified on GitHub.")
 	}
 
 	providerUserID := strconv.FormatInt(githubUser.ID, 10)

@@ -211,8 +211,10 @@ func (h *Handler) Exchange(c *gin.Context) {
 		return
 	}
 
-	// Find the user in the target app by email.
-	targetUser, err := h.UserRepo.GetUserByEmail(targetAppID, sourceUser.Email)
+	// Find the user by email globally — a single user record is shared across all
+	// apps in the session group (identified by a stable UUID). Per-app access is
+	// controlled by user_apps rows rather than separate user records.
+	targetUser, err := h.UserRepo.GetUserByEmailGlobal(sourceUser.Email)
 	if err != nil || targetUser == nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error":       "user_not_found_in_target_app",

@@ -43,8 +43,19 @@ func IsAllowedRedirectURI(redirectURI string) bool {
 		return false
 	}
 
-	// Get allowed domains from environment
-	allowedDomains := viper.GetStringSlice("ALLOWED_REDIRECT_DOMAINS")
+	// Get allowed domains from environment.
+	// Viper's GetStringSlice does not split comma-separated env var strings when loaded
+	// via godotenv + AutomaticEnv, so we normalise the result manually.
+	rawDomains := viper.GetStringSlice("ALLOWED_REDIRECT_DOMAINS")
+	var allowedDomains []string
+	for _, entry := range rawDomains {
+		for _, part := range strings.Split(entry, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				allowedDomains = append(allowedDomains, part)
+			}
+		}
+	}
 	if len(allowedDomains) == 0 {
 		// Default allowed domains for development
 		allowedDomains = []string{
@@ -55,6 +66,8 @@ func IsAllowedRedirectURI(redirectURI string) bool {
 			"localhost:8080",
 			"127.0.0.1:3000",
 			"127.0.0.1:5173",
+			"127.0.0.1:5174",
+			"127.0.0.1:5175",
 			"127.0.0.1:8080",
 		}
 	}

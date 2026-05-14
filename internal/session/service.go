@@ -88,12 +88,25 @@ func (s *Service) RefreshSession(oldRefreshToken string, accessTTL, refreshTTL t
 		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Refresh token revoked or invalid")
 	}
 
-	// Generate new token pair (same session ID)
-	newAccessToken, tokenErr := jwt.GenerateAccessToken(claims.AppID, claims.UserID, claims.SessionID, claims.Roles, accessTTL)
+	// Generate new token pair (same session ID).
+	// If the session has an active org context (stored by /auth/reissue after a
+	// context-switch) re-embed org_id / org_role so the user does not silently
+	// lose their active org scope when the access token is silently rotated.
+	var (
+		newAccessToken string
+		tokenErr       error
+	)
+	sessionOrgID, sessionOrgRole, _ := redis.GetSessionOrgContext(claims.AppID, claims.SessionID)
+	if sessionOrgID != "" && sessionOrgRole != "" {
+		newAccessToken, tokenErr = jwt.GenerateOrgContextToken(claims.AppID, claims.UserID, claims.SessionID, sessionOrgID, sessionOrgRole, claims.Roles, accessTTL)
+	} else {
+		newAccessToken, tokenErr = jwt.GenerateAccessToken(claims.AppID, claims.UserID, claims.SessionID, claims.Roles, accessTTL)
+	}
 	if tokenErr != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new access token")
 	}
-	newRefreshToken, tokenErr := jwt.GenerateRefreshToken(claims.AppID, claims.UserID, claims.SessionID, claims.Roles, refreshTTL)
+	var newRefreshToken string
+	newRefreshToken, tokenErr = jwt.GenerateRefreshToken(claims.AppID, claims.UserID, claims.SessionID, claims.Roles, refreshTTL)
 	if tokenErr != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate new refresh token")
 	}

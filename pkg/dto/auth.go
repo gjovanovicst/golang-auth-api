@@ -304,3 +304,39 @@ type MergeAccountResponse struct {
 type SetPasswordRequest struct {
 	NewPassword string `json:"new_password" validate:"required,min=8,max=128" example:"Sup3rS3cure!"` // #nosec G101,G117 -- DTO field
 }
+
+// ============================================================================
+// Token Reissue DTOs (internal — called by Centrora after context-switch)
+// ============================================================================
+
+// ReissueTokenRequest is the request body for POST /app/:id/auth/reissue.
+// This endpoint is internal-only and must never be exposed publicly.
+type ReissueTokenRequest struct {
+	UserID         string   `json:"user_id" validate:"required,uuid4"`
+	SessionID      string   `json:"session_id" validate:"omitempty,uuid4"`
+	OrgID          string   `json:"org_id" validate:"required,uuid4"`
+	OrgRole        string   `json:"org_role" validate:"required,oneof=owner admin member viewer translator"`
+	Roles          []string `json:"roles"`
+	OriginalAppID  string   `json:"original_app_id" validate:"omitempty,uuid4"` // app_id from the original token; if set, the reissued JWT will carry this app_id so Redis session lookup succeeds
+}
+
+// ReissueTokenResponse is the response from POST /app/:id/auth/reissue.
+type ReissueTokenResponse struct {
+	AccessToken string `json:"access_token"` // #nosec G101,G117 -- DTO field, not a hardcoded credential
+	ExpiresIn   int64  `json:"expires_in"`   // seconds until expiry
+}
+
+// ============================================================================
+// User Lookup DTO (internal — used by Centrora invite flow)
+// ============================================================================
+
+// UserLookupResponse is the response from GET /app/:id/users/by-email.
+// Returns only the fields needed for the invite flow — no sensitive data exposed.
+type UserLookupResponse struct {
+	ID         string `json:"id"`
+	Email      string `json:"email"`
+	Name       string `json:"name"`
+	GivenName  string `json:"given_name"`
+	FamilyName string `json:"family_name"`
+	Picture    string `json:"picture"`
+}

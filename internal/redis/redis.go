@@ -412,6 +412,40 @@ func DeleteAllUserSessions(appID, userID, exceptSessionID string) error {
 	return nil
 }
 
+// SetSessionOrgContext stores the active org_id and org_role in the session hash.
+// Called by the /auth/reissue handler after a context-switch so that subsequent
+// token refreshes can re-embed the same org context.
+func SetSessionOrgContext(appID, sessionID, orgID, orgRole string) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HSet(ctx, key, map[string]interface{}{
+		"org_id":   orgID,
+		"org_role": orgRole,
+	}).Err()
+}
+
+// GetSessionOrgContext reads the org_id and org_role stored in the session hash.
+// Returns empty strings when no org context has been set.
+func GetSessionOrgContext(appID, sessionID string) (orgID, orgRole string, err error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	vals, err := Rdb.HMGet(ctx, key, "org_id", "org_role").Result()
+	if err != nil {
+		return "", "", err
+	}
+	if vals[0] != nil {
+		orgID, _ = vals[0].(string)
+	}
+	if vals[1] != nil {
+		orgRole, _ = vals[1].(string)
+	}
+	return orgID, orgRole, nil
+}
+
+// ClearSessionOrgContext removes org context from the session hash (e.g. on explicit context-clear).
+func ClearSessionOrgContext(appID, sessionID string) error {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HDel(ctx, key, "org_id", "org_role").Err()
+}
+
 // SessionExists checks whether a session hash key exists in Redis.
 func SessionExists(appID, sessionID string) (bool, error) {
 	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)

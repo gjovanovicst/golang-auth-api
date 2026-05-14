@@ -205,6 +205,15 @@ func (h *Handler) Register(c *gin.Context) {
 
 	userID, err := h.Service.RegisterUser(appID, req.Email, req.Password)
 	if err != nil {
+		if err.Code == http.StatusConflict {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": gin.H{
+					"code":    "EMAIL_ALREADY_REGISTERED",
+					"message": "An account with this email address already exists",
+				},
+			})
+			return
+		}
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
@@ -811,11 +820,19 @@ func (h *Handler) ValidateToken(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	// Include org context claims if present (set by AuthMiddleware when token carries org_id/org_role)
+	resp := gin.H{
 		"valid":  true,
 		"userID": user.ID,
 		"email":  user.Email,
-	})
+	}
+	if orgID, exists := c.Get("orgID"); exists && orgID != "" {
+		resp["org_id"] = orgID
+	}
+	if orgRole, exists := c.Get("orgRole"); exists && orgRole != "" {
+		resp["org_role"] = orgRole
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // @Summary Update user profile

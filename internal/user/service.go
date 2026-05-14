@@ -99,10 +99,11 @@ type LoginResult struct {
 }
 
 func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UUID, *errors.AppError) {
-	// Check if user already exists
-	_, err := s.Repo.GetUserByEmail(appID.String(), email)
+	// Check if user already exists globally — users are stored once per person
+	// across all apps, so a registration on any peer app must block re-registration.
+	_, err := s.Repo.GetUserByEmailGlobal(email)
 	if err == nil { // User found, meaning email is already registered
-		return uuid.UUID{}, errors.NewAppError(errors.ErrConflict, "Email already registered")
+		return uuid.UUID{}, errors.NewAppError(errors.ErrConflict, "EMAIL_ALREADY_REGISTERED")
 	}
 
 	// Load app for password policy

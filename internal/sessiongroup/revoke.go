@@ -43,13 +43,18 @@ func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail string) {
 		return
 	}
 
+	// Look up the user once by email globally — user records are shared across
+	// all apps in the session group (one UUID per person, access controlled by
+	// user_apps rows). Per-app GetUserByEmail would miss users who only joined
+	// via SSO exchange (they have no separate per-app user row).
+	targetUser, err := r.UserRepo.GetUserByEmailGlobal(userEmail)
+	if err != nil || targetUser == nil {
+		log.Printf("[SessionGroup] Warning: user %s not found globally, cannot revoke peer sessions", userEmail)
+		return
+	}
+
 	for _, otherAppID := range appIDs {
 		if otherAppID == appID {
-			continue
-		}
-
-		targetUser, err := r.UserRepo.GetUserByEmail(otherAppID, userEmail)
-		if err != nil || targetUser == nil {
 			continue
 		}
 

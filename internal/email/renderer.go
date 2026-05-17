@@ -123,14 +123,23 @@ func (r *Renderer) renderRawHTML(tmpl *models.EmailTemplate, vars map[string]str
 
 // buildTemplateData converts a map[string]string with snake_case keys to a
 // map[string]interface{} with PascalCase keys for Go template compatibility.
+// Keys ending in "_url" are stored with the PascalCase key ending in "URL"
+// (not "Url") and wrapped as template.URL so html/template does not sanitize
+// them. The original snake_case key is also stored for flexibility.
 func (r *Renderer) buildTemplateData(vars map[string]string) map[string]interface{} {
 	data := make(map[string]interface{})
 	for k, v := range vars {
-		// Convert snake_case to PascalCase for Go template
 		pascalKey := snakeToPascal(k)
-		data[pascalKey] = v
-		// Also keep the original key for flexibility
-		data[k] = v
+		if strings.HasSuffix(k, "_url") {
+			// Ensure key ends in "URL" (not "Url") and wrap as template.URL
+			// so html/template context-aware escaping allows it in href attrs.
+			urlKey := strings.TrimSuffix(pascalKey, "Url") + "URL"
+			data[urlKey] = template.URL(v)
+			data[k] = template.URL(v)
+		} else {
+			data[pascalKey] = v
+			data[k] = v
+		}
 	}
 	return data
 }

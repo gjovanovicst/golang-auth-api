@@ -29,6 +29,7 @@ type Handler struct {
 	AnomalyDetector       *log.AnomalyDetector      // Anomaly detector for login monitoring (nil = disabled)
 	BruteForceService     *bruteforce.Service       // Brute-force protection service (lockout, delays, CAPTCHA)
 	ValidateTrustedDevice TrustedDeviceValidateFunc // Optional: skip 2FA when a valid trusted-device cookie is present
+	PublishLoginFunc      func(appID, userID string) // Optional: called in a goroutine after successful login to propagate SSO
 }
 
 func NewHandler(s *Service) *Handler {
@@ -384,19 +385,22 @@ func (h *Handler) Login(c *gin.Context) {
 				tdUserID == loginResult.UserID && tdAppID == appID {
 				// Trusted device is valid — bypass 2FA by creating a fresh session
 				accessToken, refreshToken, sessionErr := h.Service.CreateSessionForUser(appID, loginResult.UserID, ipAddress, userAgent)
-				if sessionErr == nil {
-					details := map[string]interface{}{
-						"requires_2fa":   false,
-						"trusted_device": true,
-					}
-					h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
-					health.IncLoginSuccess(appID.String())
-					c.JSON(http.StatusOK, dto.LoginResponse{
-						AccessToken:  accessToken,
-						RefreshToken: refreshToken,
-					})
-					return
+			if sessionErr == nil {
+				details := map[string]interface{}{
+					"requires_2fa":   false,
+					"trusted_device": true,
 				}
+				h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
+				health.IncLoginSuccess(appID.String())
+				if h.PublishLoginFunc != nil {
+					go h.PublishLoginFunc(appID.String(), loginResult.UserID.String())
+				}
+				c.JSON(http.StatusOK, dto.LoginResponse{
+					AccessToken:  accessToken,
+					RefreshToken: refreshToken,
+				})
+				return
+			}
 			}
 		}
 	}
@@ -428,6 +432,9 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 	h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
 	health.IncLoginSuccess(appID.String())
+	if h.PublishLoginFunc != nil {
+		go h.PublishLoginFunc(appID.String(), loginResult.UserID.String())
+	}
 
 	// Standard login response
 	c.JSON(http.StatusOK, dto.LoginResponse{
@@ -811,8 +818,8 @@ func (h *Handler) ValidateToken(c *gin.Context) {
 		return
 	}
 
-	// Get user basic info
-	user, err := h.Service.Repo.GetUserByID(userID.(string))
+	// Get user basic info — no association preload needed for token validation
+	user, err := h.Service.Repo.GetUserByIDBasic(userID.(string))
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{
 			Error: "User not found",

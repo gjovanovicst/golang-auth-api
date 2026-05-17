@@ -537,6 +537,7 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		SMS2FAEnabled        bool
 		TrustedDeviceEnabled bool
 		TrustedDeviceMaxDays int
+		GlobalLoginEnabled   bool
 		Tenants              []models.Tenant
 		IsEdit               bool
 		// Brute-force overrides (nil = use global default)
@@ -620,6 +621,7 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	if v, err := strconv.Atoi(c.PostForm("trusted_device_max_days")); err == nil && v > 0 {
 		trustedDeviceMaxDays = v
 	}
+	globalLoginEnabled := c.PostForm("global_login_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -653,6 +655,7 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 		SMS2FAEnabled:        sms2FAEnabled,
 		TrustedDeviceEnabled: trustedDeviceEnabled,
 		TrustedDeviceMaxDays: trustedDeviceMaxDays,
+		GlobalLoginEnabled:   globalLoginEnabled,
 	}
 
 	// Brute-force lockout overrides
@@ -785,6 +788,7 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		SMS2FAEnabled        bool
 		TrustedDeviceEnabled bool
 		TrustedDeviceMaxDays int
+		GlobalLoginEnabled   bool
 		Tenants              []models.Tenant
 		IsEdit               bool
 		// Brute-force overrides
@@ -843,6 +847,7 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		SMS2FAEnabled:        app.SMS2FAEnabled,
 		TrustedDeviceEnabled: app.TrustedDeviceEnabled,
 		TrustedDeviceMaxDays: app.TrustedDeviceMaxDays,
+		GlobalLoginEnabled:   app.GlobalLoginEnabled,
 		Tenants:              tenants,
 		IsEdit:               true,
 		// Login Page Branding
@@ -960,6 +965,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	if v, err := strconv.Atoi(c.PostForm("trusted_device_max_days")); err == nil && v > 0 {
 		trustedDeviceMaxDays = v
 	}
+	globalLoginEnabled := c.PostForm("global_login_enabled") == "on"
 
 	if name == "" {
 		c.String(http.StatusBadRequest,
@@ -1059,7 +1065,7 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 		custom.RefreshTokenTTLHours = v
 	}
 
-	if err := h.Repo.UpdateApp(id, name, description, frontendURL, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, bf, custom); err != nil {
+	if err := h.Repo.UpdateApp(id, name, description, frontendURL, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, globalLoginEnabled, bf, custom); err != nil {
 		c.String(http.StatusInternalServerError,
 			`<div class="alert alert-danger alert-dismissible fade show" role="alert">Failed to update application. Please try again.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`)
 		return

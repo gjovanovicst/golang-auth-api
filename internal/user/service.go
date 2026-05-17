@@ -172,7 +172,23 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 }
 
 func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent string) (*LoginResult, *errors.AppError) {
-	user, err := s.Repo.GetUserByEmail(appID.String(), email)
+	// Load application flags first — global_login_enabled must be known before
+	// the user lookup. All other flags are loaded here too to avoid a second query.
+	// Fail-open: if the query fails we treat all flags as safe defaults.
+	var app models.Application
+	appLoaded := s.DB.Select(
+		"global_login_enabled, two_fa_enabled, two_fa_required, pw_max_age_days, access_token_ttl_minutes, refresh_token_ttl_hours",
+	).First(&app, "id = ?", appID).Error == nil
+
+	// Resolve the user: when GlobalLoginEnabled is set, look up by email across all
+	// apps on the platform (single identity). Otherwise scope the lookup to this app.
+	var user *models.User
+	var err error
+	if appLoaded && app.GlobalLoginEnabled {
+		user, err = s.Repo.GetUserByEmailGlobal(email)
+	} else {
+		user, err = s.Repo.GetUserByEmail(appID.String(), email)
+	}
 	if err != nil { // User not found
 		return nil, errors.NewAppError(errors.ErrUnauthorized, "Invalid credentials")
 	}
@@ -208,14 +224,6 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 	if !user.EmailVerified {
 		return nil, errors.NewAppError(errors.ErrForbidden, "Email not verified. Please check your inbox.")
 	}
-
-	// Load application flags once — used for 2FA gate, forced-setup check,
-	// password expiry check, and TTL resolution.
-	// Fail-open: if the query fails we treat all flags as safe defaults.
-	var app models.Application
-	appLoaded := s.DB.Select(
-		"two_fa_enabled, two_fa_required, pw_max_age_days, access_token_ttl_minutes, refresh_token_ttl_hours",
-	).First(&app, "id = ?", appID).Error == nil
 
 	// Check if the user's password has expired (before issuing any session).
 	if appLoaded && IsPasswordExpired(user, app.PwMaxAgeDays) {
@@ -409,7 +417,7 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 		}
 		// Propagate logout to SSO group peers (non-blocking, best-effort)
 		if s.GroupLogoutFunc != nil {
-			if u, err := s.Repo.GetUserByID(userID); err == nil && u != nil {
+			if u, err := s.Repo.GetUserByIDBasic(userID); err == nil && u != nil {
 				go s.GroupLogoutFunc(appID, u.Email)
 			}
 		}
@@ -441,7 +449,7 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 
 	// Propagate logout to SSO group peers (non-blocking, best-effort)
 	if s.GroupLogoutFunc != nil {
-		if u, err := s.Repo.GetUserByID(userID); err == nil && u != nil {
+		if u, err := s.Repo.GetUserByIDBasic(userID); err == nil && u != nil {
 			go s.GroupLogoutFunc(appID, u.Email)
 		}
 	}
@@ -487,7 +495,9 @@ func (s *Service) CreateSessionForUser(appID, userID uuid.UUID, ip, userAgent st
 }
 
 func (s *Service) RequestPasswordReset(appID uuid.UUID, email string) *errors.AppError {
-	user, err := s.Repo.GetUserByEmail(appID.String(), email)
+	// Use global lookup so a user registered via any app can reset their password
+	// from any other app's login screen (one identity across all apps).
+	user, err := s.Repo.GetUserByEmailGlobal(email)
 	if err != nil {
 		// For security, always return a generic success message even if email not found
 		return nil
@@ -549,7 +559,9 @@ func (s *Service) VerifyEmail(appID uuid.UUID, token string) (uuid.UUID, *errors
 // ResendVerificationEmail resends the email verification link for a user.
 // Returns nil even if the user is not found or already verified (to prevent email enumeration).
 func (s *Service) ResendVerificationEmail(appID uuid.UUID, email string) *errors.AppError {
-	user, err := s.Repo.GetUserByEmail(appID.String(), email)
+	// Use global lookup — a user registered on any app should be able to resend
+	// their verification email regardless of which app's screen they are on.
+	user, err := s.Repo.GetUserByEmailGlobal(email)
 	if err != nil {
 		// User not found — return nil to prevent email enumeration
 		return nil
@@ -906,7 +918,9 @@ func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppErr
 		return errors.NewAppError(errors.ErrBadRequest, "Magic link login is not enabled for this application")
 	}
 
-	user, err := s.Repo.GetUserByEmail(appID.String(), email)
+	// Use global lookup so a user registered via any app can request a magic link
+	// from any other app's login screen (one identity across all apps).
+	user, err := s.Repo.GetUserByEmailGlobal(email)
 	if err != nil {
 		// User not found — return nil to prevent email enumeration
 		return nil

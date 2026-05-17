@@ -47,6 +47,7 @@ type Handler struct {
 	TrustedDeviceRepo *TrustedDeviceRepository // nil = trusted device feature disabled
 	DB                *gorm.DB                 // for loading per-app token TTL overrides
 	SettingResolver   SettingResolverFunc      // Optional: resolves system settings (env > DB > default); falls back to os.Getenv if nil
+	PublishLoginFunc  func(appID, userID string) // Optional: called in a goroutine after successful 2FA login to propagate SSO
 }
 
 func NewHandler(s *Service) *Handler {
@@ -480,6 +481,9 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	}
 
 	health.IncLoginSuccess(appID.String())
+	if h.PublishLoginFunc != nil {
+		go h.PublishLoginFunc(appID.String(), userID)
+	}
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,

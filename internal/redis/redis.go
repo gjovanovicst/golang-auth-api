@@ -12,18 +12,43 @@ import (
 )
 
 var Rdb *redis.Client
+
+// pubsubRdb is a dedicated Redis client used exclusively for pub/sub subscriptions.
+// go-redis pub/sub connections are NOT returned to the shared pool — they hold
+// their connection for the entire subscription lifetime.  Using a separate client
+// prevents SSE subscribers from exhausting the command pool used by every other
+// auth operation (session lookups, token blacklisting, etc.).
+var pubsubRdb *redis.Client
+
 var ctx = context.Background()
 
 func ConnectRedis() {
-	Rdb = redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr:     viper.GetString("REDIS_ADDR"),
 		Password: viper.GetString("REDIS_PASSWORD"),
 		DB:       viper.GetInt("REDIS_DB"),
-	})
+		// Generous pool for the command client: handles all non-SSE operations.
+		PoolSize:    20,
+		MinIdleConns: 5,
+	}
+	Rdb = redis.NewClient(opts)
 
 	_, err := Rdb.Ping(ctx).Result()
 	if err != nil {
 		log.Fatalf("Could not connect to Redis: %v", err)
+	}
+
+	// Separate client for pub/sub only — pool size = max expected concurrent SSE
+	// connections across all apps.  Each subscriber holds exactly one connection.
+	pubsubRdb = redis.NewClient(&redis.Options{
+		Addr:     viper.GetString("REDIS_ADDR"),
+		Password: viper.GetString("REDIS_PASSWORD"),
+		DB:       viper.GetInt("REDIS_DB"),
+		PoolSize: 50, // allow up to 50 simultaneous SSE connections
+	})
+
+	if _, err := pubsubRdb.Ping(ctx).Result(); err != nil {
+		log.Fatalf("Could not connect to Redis (pubsub client): %v", err)
 	}
 
 	log.Println("Connected to Redis!")
@@ -1096,6 +1121,81 @@ func GetSSOToken(token string) (groupID, sourceAppID, userID string, err error) 
 func DeleteSSOToken(token string) error {
 	key := fmt.Sprintf("sso:token:%s", token)
 	return Rdb.Del(ctx, key).Err()
+}
+
+// ============================================================================
+// SSO Pub/Sub Functions
+// ============================================================================
+
+// ssoEventChannel returns the Redis pub/sub channel name for an SSO session group.
+func ssoEventChannel(groupID string) string {
+	return fmt.Sprintf("sso_events:%s", groupID)
+}
+
+// PublishSSOEvent publishes a JSON-encoded payload to the SSO pub/sub channel
+// for the given session group. The payload must be a valid JSON string.
+func PublishSSOEvent(groupID, payload string) error {
+	return Rdb.Publish(ctx, ssoEventChannel(groupID), payload).Err()
+}
+
+// StorePendingLoginEvent stores a per-app peer_login payload in Redis so that
+// a client that was disconnected when the event was published can receive it on
+// reconnect.  The entry expires after 90 seconds — long enough to survive a
+// proxy-forced reconnect cycle but short enough not to replay stale logins.
+func StorePendingLoginEvent(appID, payload string) error {
+	key := fmt.Sprintf("sso:pending_login:%s", appID)
+	return Rdb.Set(ctx, key, payload, 90*time.Second).Err()
+}
+
+// PopPendingLoginEvent returns and deletes the pending login payload for the
+// given appID, or ("", nil) if there is none.
+func PopPendingLoginEvent(appID string) (string, error) {
+	key := fmt.Sprintf("sso:pending_login:%s", appID)
+	val, err := Rdb.GetDel(ctx, key).Result()
+	if err != nil {
+		if err.Error() == "redis: nil" {
+			return "", nil
+		}
+		return "", err
+	}
+	return val, nil
+}
+
+// StorePendingLogoutEvent stores a per-app peer_logout signal in Redis so that
+// a client reconnecting after missing the pub/sub broadcast still gets logged
+// out.  TTL is 90 seconds — same reasoning as pending login.
+func StorePendingLogoutEvent(appID string) error {
+	key := fmt.Sprintf("sso:pending_logout:%s", appID)
+	payload := `{"type":"peer_logout"}`
+	return Rdb.Set(ctx, key, payload, 90*time.Second).Err()
+}
+
+// PopPendingLogoutEvent returns and deletes the pending logout signal for the
+// given appID, or ("", nil) if there is none.
+func PopPendingLogoutEvent(appID string) (string, error) {
+	key := fmt.Sprintf("sso:pending_logout:%s", appID)
+	val, err := Rdb.GetDel(ctx, key).Result()
+	if err != nil {
+		if err.Error() == "redis: nil" {
+			return "", nil
+		}
+		return "", err
+	}
+	return val, nil
+}
+
+// SubscribeSSOEvents subscribes to the SSO event channel for a session group
+// and returns the *redis.PubSub handle. Callers are responsible for closing it.
+// Uses the dedicated pubsub client so subscriptions never contend with the
+// command pool used by session lookups, token ops, etc.
+func SubscribeSSOEvents(groupID string) *redis.PubSub {
+	return pubsubRdb.Subscribe(ctx, ssoEventChannel(groupID))
+}
+
+// PSubscribeKeyExpiry subscribes to Redis keyspace expiry notifications using the
+// dedicated pubsub client so it never contends with the command pool.
+func PSubscribeKeyExpiry(subCtx context.Context, pattern string) *redis.PubSub {
+	return pubsubRdb.PSubscribe(subCtx, pattern)
 }
 
 // ============================================================================

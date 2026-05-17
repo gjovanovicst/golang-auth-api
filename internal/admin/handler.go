@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/email"
 	"github.com/gjovanovicst/auth_api/internal/geoip"
+	redisclient "github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	userimport "github.com/gjovanovicst/auth_api/internal/user"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
@@ -237,6 +238,15 @@ func (h *Handler) GetAppLoginConfig(c *gin.Context) {
 		return
 	}
 
+	// Serve from Redis cache when available — this endpoint is called on every
+	// page load by all four frontends and executes 4 DB queries each time.
+	cacheKey := "app_config:" + appIDStr
+	if cached, err := redisclient.Rdb.Get(c.Request.Context(), cacheKey).Result(); err == nil {
+		c.Header("Content-Type", "application/json")
+		c.String(http.StatusOK, cached)
+		return
+	}
+
 	app, err := h.Repo.GetAppByID(appIDStr)
 	if err != nil {
 		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "Application not found"})
@@ -264,7 +274,7 @@ func (h *Handler) GetAppLoginConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.AppLoginConfigResponse{
+	resp := dto.AppLoginConfigResponse{
 		AppID:                  appIDStr,
 		EnabledSocialProviders: providers,
 		OIDCEnabled:            app.OIDCEnabled,
@@ -289,7 +299,14 @@ func (h *Handler) GetAppLoginConfig(c *gin.Context) {
 		PwRequireLower:  app.PwRequireLower,
 		PwRequireDigit:  app.PwRequireDigit,
 		PwRequireSymbol: app.PwRequireSymbol,
-	})
+	}
+
+	// Cache the response for 60 seconds to avoid DB saturation on burst reloads.
+	if b, err := json.Marshal(resp); err == nil {
+		_ = redisclient.Rdb.Set(c.Request.Context(), cacheKey, string(b), 60*time.Second).Err()
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 // UpsertOAuthConfig creates or updates OAuth configuration for an app

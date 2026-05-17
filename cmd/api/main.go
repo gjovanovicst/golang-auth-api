@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -241,12 +242,33 @@ func main() {
 
 	// Create session group revoker for shared logout/expiry logic
 	sessionGroupRevoker := sessiongroup.NewRevoker(adminRepo, userRepo, sessionService)
+	// Wire SSO peer_logout events for expiry-triggered group revocations (e.g. Redis
+	// keyspace notification fires when a session_meta key expires in one app).
+	sessionGroupRevoker.GroupLogoutFunc = func(appID, userEmail string) {
+		go ssoHandler.PublishLogoutToGroup(appID, userEmail)
+	}
 
 	// Wire SSO global logout: when a user logs out of one app in a session group,
 	// their sessions in all other apps of the group are revoked (only when GlobalLogout=true).
+	// The SSE peer_logout notification is also suppressed when GlobalLogout is disabled so
+	// that frontends of peer apps do not auto-logout the user.
 	userService.GroupLogoutFunc = func(appID, userEmail string) {
+		shouldRevoke, _ := sessionGroupRevoker.ShouldRevokeGroupSessions(appID)
+		if !shouldRevoke {
+			return
+		}
 		sessionGroupRevoker.RevokeAllUserSessionsInGroup(appID, userEmail)
+		go ssoHandler.PublishLogoutToGroup(appID, userEmail)
 	}
+
+	// Wire SSO login propagation: after a successful login in any handler, publish
+	// SSO exchange tokens to peer apps via Redis pub/sub → SSE.
+	publishLogin := func(appID, userID string) {
+		ssoHandler.PublishLoginToGroup(appID, userID)
+	}
+	userHandler.PublishLoginFunc = publishLogin
+	socialHandler.PublishLoginFunc = publishLogin
+	twofaHandler.PublishLoginFunc = publishLogin
 
 	// Wire SettingsService resolver into twofa handler so the TRUSTED_DEVICE_COOKIE_SAMESITE
 	// setting is resolved via the 3-tier priority (env > DB > default), allowing the admin GUI
@@ -269,8 +291,14 @@ func main() {
 		guiHandler.OIDCService = oidcService
 		// Wire OIDC RP-initiated logout group logout: revoke peer-app JWT sessions
 		// for the logging-out user, mirroring userService.GroupLogoutFunc.
+		// SSE peer_logout is only published when GlobalLogout is enabled.
 		oidcHandler.GroupLogoutFunc = func(appID, userEmail string) {
+			shouldRevoke, _ := sessionGroupRevoker.ShouldRevokeGroupSessions(appID)
+			if !shouldRevoke {
+				return
+			}
 			sessionGroupRevoker.RevokeAllUserSessionsInGroup(appID, userEmail)
+			go ssoHandler.PublishLogoutToGroup(appID, userEmail)
 		}
 		// Fix #10: Run an initial cleanup immediately on startup so stale codes
 		// from before the last restart are purged without waiting a full hour.
@@ -516,6 +544,9 @@ func main() {
 	{
 		ssoPublic.POST("/exchange", ssoHandler.Exchange)
 		ssoPublic.GET("/peers", ssoHandler.GetPeers)
+		// SSE stream: app_id passed as query param because native EventSource
+		// does not support custom request headers.
+		ssoPublic.GET("/events", ssoHandler.StreamEvents)
 	}
 	// Protected token issuance endpoint — requires JWT auth.
 	ssoProtected := r.Group("/sso")
@@ -970,7 +1001,16 @@ func main() {
 	// Start the server
 	port := viper.GetString("PORT")
 	log.Printf("Server starting on port %s", port)
-	if err := r.Run(fmt.Sprintf(":%s", port)); err != nil {
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%s", port),
+		Handler: r,
+		// Prevent slow-loris on non-SSE endpoints.  SSE connections are long-lived
+		// but they complete the header handshake quickly, so ReadHeaderTimeout is safe.
+		ReadHeaderTimeout: 10 * time.Second,
+		// No WriteTimeout: SSE streams must stay open indefinitely.
+		IdleTimeout: 120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }

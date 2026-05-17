@@ -19,6 +19,10 @@ type Revoker struct {
 	AdminRepo      AdminRepositoryInterface
 	UserRepo       *user.Repository
 	SessionService *session.Service
+	// GroupLogoutFunc, if set, is called after all peer sessions are revoked so
+	// the SSE layer can push a peer_logout event to all connected clients.
+	// Signature matches sso.Handler.PublishLogoutToGroup.
+	GroupLogoutFunc func(sourceAppID, userEmail string)
 }
 
 // NewRevoker creates a new session group revoker
@@ -66,13 +70,18 @@ func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail string) {
 				userEmail, otherAppID, group.Name)
 		}
 	}
+
+	// Notify all SSE-connected clients that they should log out.
+	if r.GroupLogoutFunc != nil {
+		r.GroupLogoutFunc(appID, userEmail)
+	}
 }
 
 // RevokeAllUserSessionsInGroupByUserID revokes all sessions for a user across all apps in the same session group
 // using the user ID instead of email. This is useful when you have the user ID but not the email.
 func (r *Revoker) RevokeAllUserSessionsInGroupByUserID(appID, userID string) {
-	// First get the user to get their email
-	userObj, err := r.UserRepo.GetUserByID(userID)
+	// First get the user to get their email — basic fetch, no social account preload needed
+	userObj, err := r.UserRepo.GetUserByIDBasic(userID)
 	if err != nil || userObj == nil {
 		return
 	}
@@ -91,5 +100,5 @@ func (r *Revoker) ShouldRevokeGroupSessions(appID string) (bool, *models.Session
 
 // GetUserByID gets a user by ID (implements ExpiryHandlerInterface)
 func (r *Revoker) GetUserByID(userID string) (*models.User, error) {
-	return r.UserRepo.GetUserByID(userID)
+	return r.UserRepo.GetUserByIDBasic(userID)
 }

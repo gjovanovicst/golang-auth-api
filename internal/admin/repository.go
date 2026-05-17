@@ -302,7 +302,7 @@ type AppCustomizationSettings struct {
 	VerifyEmailPath   string
 }
 
-func (r *Repository) UpdateApp(id string, name string, description string, frontendURL string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, bf BruteForceAppSettings, custom AppCustomizationSettings) error {
+func (r *Repository) UpdateApp(id string, name string, description string, frontendURL string, twoFAIssuerName string, twoFAEnabled bool, twoFARequired bool, passkey2FAEnabled bool, passkeyLoginEnabled bool, magicLinkEnabled bool, oidcEnabled bool, globalLoginEnabled bool, bf BruteForceAppSettings, custom AppCustomizationSettings) error {
 	updates := map[string]interface{}{
 		"name":                  name,
 		"description":           description,
@@ -314,6 +314,7 @@ func (r *Repository) UpdateApp(id string, name string, description string, front
 		"passkey_login_enabled": passkeyLoginEnabled,
 		"magic_link_enabled":    magicLinkEnabled,
 		"oidc_enabled":          oidcEnabled,
+		"global_login_enabled":  globalLoginEnabled,
 		// Brute-force lockout overrides
 		"bf_lockout_enabled":   bf.LockoutEnabled,
 		"bf_lockout_threshold": bf.LockoutThreshold,

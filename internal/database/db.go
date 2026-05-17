@@ -43,6 +43,17 @@ func ConnectDatabase() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
+	// Configure connection pool to prevent exhausting Postgres max_connections.
+	// SSE connections each do a DB query at connect time; without limits a burst
+	// of reconnects can starve other requests.
+	sqlDB, err := DB.DB()
+	if err != nil {
+		log.Fatalf("Failed to get underlying sql.DB: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(25)              // max simultaneous connections to Postgres
+	sqlDB.SetMaxIdleConns(10)              // keep up to 10 idle connections warm
+	sqlDB.SetConnMaxLifetime(5 * time.Minute) // recycle connections every 5 min
+
 	log.Println("Database connected successfully!")
 }
 

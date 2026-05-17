@@ -14,6 +14,14 @@ const (
 	TypeNewDeviceLogin     = "new_device_login"
 	TypeSuspiciousActivity = "suspicious_activity"
 	TypeApiKeyExpiringSoon = "api_key_expiring_soon" // #nosec G101 -- email type code string, not a credential
+
+	// Centrora invitation email type codes (sent via the Centrora outbox → auth-api pipeline).
+	TypeCentroraInvitation        = "centrora_invitation"         // org-scope invitation
+	TypeCentroraProjectInvitation = "centrora_project_invitation" // project-scope invitation
+	TypeCentroraEnvInvitation     = "centrora_env_invitation"     // environment-scope invitation
+
+	// Permissio invitation email type code (sent via the Permissio → Centrora → auth-api pipeline).
+	TypePermissioInvitation = "permissio_invitation" // org-scope invitation sent through Permissio
 )
 
 // Template variable names used across email types
@@ -45,6 +53,15 @@ const (
 	VarApiKeyExpiresAt   = "api_key_expires_at" // #nosec G101 -- template variable name string, not a credential
 	VarDaysUntilExpiry   = "days_until_expiry"
 	VarBackupEmail       = "backup_email"
+
+	// Centrora invitation variables
+	VarInviterName      = "inviter_name"
+	VarOrganizationName = "organization_name"
+	VarProjectName      = "project_name"
+	VarEnvName          = "env_name"
+	VarRole             = "role"
+	VarAcceptURL        = "accept_url"
+	VarExpiresAt        = "expires_at"
 )
 
 // WellKnownVariables is the registry of all variables the system can auto-resolve.
@@ -89,6 +106,15 @@ var WellKnownVariables = []models.EmailTypeVariable{
 
 	// Backup email verification
 	{Name: VarBackupEmail, Description: "Backup email address being verified", Source: models.VarSourceExplicit},
+
+	// Centrora invitation variables
+	{Name: VarInviterName, Description: "Display name of the person who sent the invitation", Source: models.VarSourceExplicit},
+	{Name: VarOrganizationName, Description: "Name of the organization the user is being invited to", Source: models.VarSourceExplicit},
+	{Name: VarProjectName, Description: "Name of the project the user is being invited to", Source: models.VarSourceExplicit},
+	{Name: VarEnvName, Description: "Name of the environment the user is being invited to", Source: models.VarSourceExplicit},
+	{Name: VarRole, Description: "Role assigned to the invited user (e.g. admin, editor, viewer)", Source: models.VarSourceExplicit},
+	{Name: VarAcceptURL, Description: "URL the invitee must visit to accept the invitation", Source: models.VarSourceExplicit},
+	{Name: VarExpiresAt, Description: "Formatted expiry date/time of the invitation", Source: models.VarSourceExplicit},
 }
 
 // SMTPConfig holds the resolved SMTP configuration for sending emails.

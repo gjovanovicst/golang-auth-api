@@ -31,6 +31,20 @@ services:
       - default
       - shared-api-network
 
+  # Mailpit — local SMTP catch-all + web UI for email testing.
+  # SMTP:   localhost:1025  (host) / mailpit:1025  (inside Docker)
+  # Web UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+    restart: unless-stopped
+    networks:
+      - default
+      - shared-api-network
+
 volumes:
   go_modules:
 

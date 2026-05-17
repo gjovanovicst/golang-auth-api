@@ -1,8 +1,11 @@
 package sso
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,6 +48,41 @@ type Handler struct {
 	LookupRoles    RoleLookupFunc
 	// DB is used for reading per-app token TTL overrides.
 	DB *gorm.DB
+}
+
+// groupIDCache caches appID → groupID lookups so every SSE reconnect does not
+// issue a DB query.  Entries are valid for 5 minutes; the TTL is short enough
+// that a reconfigured session group is picked up quickly.
+type groupIDEntry struct {
+	groupID  string // empty string means "app not in any group"
+	cachedAt time.Time
+}
+
+var (
+	groupIDCacheMu sync.RWMutex
+	groupIDCache   = map[string]groupIDEntry{}
+	groupIDCacheTTL = 5 * time.Minute
+)
+
+func cachedGroupID(appID string, repo AdminRepository) (string, error) {
+	groupIDCacheMu.RLock()
+	entry, ok := groupIDCache[appID]
+	groupIDCacheMu.RUnlock()
+	if ok && time.Since(entry.cachedAt) < groupIDCacheTTL {
+		return entry.groupID, nil
+	}
+	group, err := repo.GetSessionGroupForApp(appID)
+	if err != nil {
+		return "", err
+	}
+	groupID := ""
+	if group != nil {
+		groupID = group.ID.String()
+	}
+	groupIDCacheMu.Lock()
+	groupIDCache[appID] = groupIDEntry{groupID: groupID, cachedAt: time.Now()}
+	groupIDCacheMu.Unlock()
+	return groupID, nil
 }
 
 // NewHandler creates a new SSO Handler.
@@ -314,4 +352,189 @@ func resolveTokenTTLs(app *models.Application) (accessTTL, refreshTTL time.Durat
 		refreshTTL = time.Duration(app.RefreshTokenTTLHours) * time.Hour
 	}
 	return accessTTL, refreshTTL
+}
+
+// ============================================================================
+// SSE Event Streaming
+// ============================================================================
+
+// ssoEvent is the shape published to Redis and forwarded to SSE clients.
+type ssoEvent struct {
+	Type      string `json:"type"`       // "peer_login" | "peer_logout" | "ping"
+	SSOToken  string `json:"sso_token,omitempty"`
+	TargetApp string `json:"target_app,omitempty"`
+}
+
+// PublishLoginToGroup issues individual SSO exchange tokens for every peer app
+// of sourceAppID and publishes a peer_login event to the Redis pub/sub channel
+// for the session group.  It is safe to call in a goroutine.
+func (h *Handler) PublishLoginToGroup(sourceAppID, userID string) {
+	groupID, err := cachedGroupID(sourceAppID, h.AdminRepo)
+	if err != nil || groupID == "" {
+		return
+	}
+
+	peers, err := h.AdminRepo.GetPeersForApp(sourceAppID)
+	if err != nil {
+		log.Printf("[SSO] PublishLoginToGroup: failed to get peers for app %s: %v", sourceAppID, err)
+		return
+	}
+
+	for _, peer := range peers {
+		token := uuid.New().String()
+		if err := redis.SetSSOToken(token, groupID, sourceAppID, userID); err != nil {
+			log.Printf("[SSO] PublishLoginToGroup: failed to set SSO token for peer %s: %v", peer.AppID, err)
+			continue
+		}
+		evt := ssoEvent{
+			Type:      "peer_login",
+			SSOToken:  token,
+			TargetApp: peer.AppID,
+		}
+		payload, _ := json.Marshal(evt)
+		// Store for reconnecting clients BEFORE publishing so there is no window
+		// where a client reconnects, misses the pub/sub message, and finds no pending entry.
+		if err := redis.StorePendingLoginEvent(peer.AppID, string(payload)); err != nil {
+			log.Printf("[SSO] PublishLoginToGroup: failed to store pending login for peer %s: %v", peer.AppID, err)
+		}
+		if err := redis.PublishSSOEvent(groupID, string(payload)); err != nil {
+			log.Printf("[SSO] PublishLoginToGroup: failed to publish event for peer %s: %v", peer.AppID, err)
+		}
+	}
+}
+
+// PublishLogoutToGroup publishes a peer_logout event so all peer-app SSE
+// clients can clear their tokens and redirect to the login page.
+func (h *Handler) PublishLogoutToGroup(sourceAppID, userEmail string) {
+	groupID, err := cachedGroupID(sourceAppID, h.AdminRepo)
+	if err != nil || groupID == "" {
+		return
+	}
+
+	// Store a pending logout per peer app BEFORE publishing so that clients
+	// which reconnect after the pub/sub message has already been delivered
+	// still receive the logout signal on their next SSE connect.
+	peers, err := h.AdminRepo.GetPeersForApp(sourceAppID)
+	if err != nil {
+		log.Printf("[SSO] PublishLogoutToGroup: failed to get peers for app %s: %v", sourceAppID, err)
+	} else {
+		for _, peer := range peers {
+			if err := redis.StorePendingLogoutEvent(peer.AppID); err != nil {
+				log.Printf("[SSO] PublishLogoutToGroup: failed to store pending logout for peer %s: %v", peer.AppID, err)
+			}
+		}
+	}
+
+	evt := ssoEvent{Type: "peer_logout"}
+	payload, _ := json.Marshal(evt)
+	if err := redis.PublishSSOEvent(groupID, string(payload)); err != nil {
+		log.Printf("[SSO] PublishLogoutToGroup: failed to publish logout event: %v", err)
+	}
+}
+
+// StreamEvents opens a Server-Sent Events stream for the app identified by the
+// app_id query parameter (set by AppIDMiddleware).  The client receives
+// peer_login and peer_logout events published by other apps in the same session
+// group, as well as periodic ping frames to keep the connection alive.
+//
+// @Summary SSO Server-Sent Events stream
+// @Description Subscribe to cross-app SSO login/logout events via SSE.
+// @Tags sso
+// @Produce text/event-stream
+// @Param app_id query string true "Requesting application ID"
+// @Success 200
+// @Router /sso/events [get]
+func (h *Handler) StreamEvents(c *gin.Context) {
+	appIDRaw, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "app_id is required"})
+		return
+	}
+	appIDUUID, ok := appIDRaw.(uuid.UUID)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "app_id is required"})
+		return
+	}
+	appID := appIDUUID.String()
+
+	groupID, err := cachedGroupID(appID, h.AdminRepo)
+	if err != nil || groupID == "" {
+		// App not in a session group — return empty stream that closes immediately.
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("X-Accel-Buffering", "no")
+		c.Status(http.StatusOK)
+		return
+	}
+
+	pubsub := redis.SubscribeSSOEvents(groupID)
+	defer pubsub.Close()
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	redisCh := pubsub.Channel()
+	pingTicker := time.NewTicker(15 * time.Second)
+	defer pingTicker.Stop()
+
+	flusher, canFlush := c.Writer.(http.Flusher)
+	clientGone := c.Request.Context().Done()
+
+	writeAndFlush := func(data string) bool {
+		if _, err := fmt.Fprintf(c.Writer, "data: %s\n\n", data); err != nil {
+			return false
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		return true
+	}
+
+	// Replay any pending login event that was published while this client was
+	// disconnected (e.g. killed by a proxy idle timeout between events).
+	if pending, err := redis.PopPendingLoginEvent(appID); err == nil && pending != "" {
+		writeAndFlush(pending)
+	}
+
+	// Replay any pending logout event — takes priority over a stale login so
+	// check after login to let login write first, but logout will overwrite the
+	// client state correctly on the frontend.
+	if pending, err := redis.PopPendingLogoutEvent(appID); err == nil && pending != "" {
+		writeAndFlush(pending)
+	}
+	for {
+		select {
+		case <-clientGone:
+			return
+
+		case <-pingTicker.C:
+			// SSE comment line — keeps the connection alive without dispatching
+			// a message event on the client. Browsers reset their idle-close
+			// timer on any received bytes, so this prevents ~30s disconnects.
+			if _, err := fmt.Fprintf(c.Writer, ": ping\n\n"); err != nil {
+				return
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+
+		case msg, ok := <-redisCh:
+			if !ok {
+				return
+			}
+			// Only forward events that target this app or have no target.
+			var evt ssoEvent
+			if err := json.Unmarshal([]byte(msg.Payload), &evt); err != nil {
+				continue
+			}
+			if evt.TargetApp != "" && evt.TargetApp != appID {
+				continue
+			}
+			if !writeAndFlush(msg.Payload) {
+				return
+			}
+		}
+	}
 }

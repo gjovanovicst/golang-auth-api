@@ -28,6 +28,7 @@ type Handler struct {
 	AnomalyDetector       *log.AnomalyDetector                                 // Anomaly detector for login monitoring (nil = disabled)
 	TwoFAService          *twofa.Service                                       // Optional: if set, auto-sends SMS 2FA code on social login with SMS 2FA
 	ValidateTrustedDevice func(plainToken string) (uuid.UUID, uuid.UUID, bool) // Optional: if set, trusted device bypass is checked before requiring 2FA
+	PublishLoginFunc      func(appID, userID string)                           // Optional: called in a goroutine after successful login to propagate SSO
 }
 
 func NewHandler(s *Service) *Handler {
@@ -346,14 +347,17 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 						c.Redirect(http.StatusFound, frontendURL)
 						return
 					}
-					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "google")
-					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=google",
-						redirectURI,
-						url.QueryEscape(accessToken),
-						url.QueryEscape(refreshToken))
-					health.IncLoginSuccess(appID.String())
-					c.Redirect(http.StatusFound, frontendURL)
-					return
+				h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "google")
+				frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=google",
+					redirectURI,
+					url.QueryEscape(accessToken),
+					url.QueryEscape(refreshToken))
+				health.IncLoginSuccess(appID.String())
+				if h.PublishLoginFunc != nil {
+					go h.PublishLoginFunc(appID.String(), userID.String())
+				}
+				c.Redirect(http.StatusFound, frontendURL)
+				return
 				}
 			}
 		}
@@ -409,6 +413,9 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		url.QueryEscape(refreshToken))
 
 	health.IncLoginSuccess(appID.String())
+	if h.PublishLoginFunc != nil {
+		go h.PublishLoginFunc(appID.String(), userID.String())
+	}
 	c.Redirect(http.StatusFound, frontendURL)
 }
 
@@ -583,14 +590,17 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 						c.Redirect(http.StatusFound, frontendURL)
 						return
 					}
-					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "facebook")
-					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=facebook",
-						redirectURI,
-						url.QueryEscape(accessToken),
-						url.QueryEscape(refreshToken))
-					health.IncLoginSuccess(appID.String())
-					c.Redirect(http.StatusFound, frontendURL)
-					return
+				h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "facebook")
+				frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=facebook",
+					redirectURI,
+					url.QueryEscape(accessToken),
+					url.QueryEscape(refreshToken))
+				health.IncLoginSuccess(appID.String())
+				if h.PublishLoginFunc != nil {
+					go h.PublishLoginFunc(appID.String(), userID.String())
+				}
+				c.Redirect(http.StatusFound, frontendURL)
+				return
 				}
 			}
 		}
@@ -646,6 +656,9 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		url.QueryEscape(refreshToken))
 
 	health.IncLoginSuccess(appID.String())
+	if h.PublishLoginFunc != nil {
+		go h.PublishLoginFunc(appID.String(), userID.String())
+	}
 	c.Redirect(http.StatusFound, frontendURL)
 }
 
@@ -819,14 +832,17 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 						c.Redirect(http.StatusFound, frontendURL)
 						return
 					}
-					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "github")
-					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=github",
-						redirectURI,
-						url.QueryEscape(accessToken),
-						url.QueryEscape(refreshToken))
-					health.IncLoginSuccess(appID.String())
-					c.Redirect(http.StatusFound, frontendURL)
-					return
+				h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "github")
+				frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=github",
+					redirectURI,
+					url.QueryEscape(accessToken),
+					url.QueryEscape(refreshToken))
+				health.IncLoginSuccess(appID.String())
+				if h.PublishLoginFunc != nil {
+					go h.PublishLoginFunc(appID.String(), userID.String())
+				}
+				c.Redirect(http.StatusFound, frontendURL)
+				return
 				}
 			}
 		}
@@ -885,6 +901,9 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		url.QueryEscape(refreshToken))
 
 	health.IncLoginSuccess(appID.String())
+	if h.PublishLoginFunc != nil {
+		go h.PublishLoginFunc(appID.String(), userID.String())
+	}
 	c.Redirect(http.StatusFound, frontendURL)
 }
 

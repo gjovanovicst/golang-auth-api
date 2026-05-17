@@ -27,6 +27,9 @@ type Application struct {
 	// Trusted device management — allows users to skip 2FA for a configurable number of days
 	TrustedDeviceEnabled bool `gorm:"default:false" json:"trusted_device_enabled"` // Allow users to mark devices as trusted (skips 2FA)
 	TrustedDeviceMaxDays int  `gorm:"default:30" json:"trusted_device_max_days"`   // How many days a device is trusted (default 30)
+	// Global login — when enabled, users can authenticate to this app using credentials
+	// registered in any app on the platform (single identity across all apps).
+	GlobalLoginEnabled bool `gorm:"default:false" json:"global_login_enabled"`
 
 	// Brute-Force Protection — per-app overrides (NULL = use global default from .env)
 	BfLockoutEnabled   *bool   `gorm:"default:null" json:"bf_lockout_enabled,omitempty"`                     // Override account lockout master switch

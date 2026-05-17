@@ -40,6 +40,15 @@ func (r *Repository) GetUserByID(id string) (*models.User, error) {
 	return &user, err
 }
 
+// GetUserByIDBasic fetches a user row without preloading associations.
+// Use this in hot paths (auth/validate, logout, session checks) where social
+// accounts are not needed — it issues one query instead of two.
+func (r *Repository) GetUserByIDBasic(id string) (*models.User, error) {
+	var user models.User
+	err := r.DB.Where("id = ?", id).First(&user).Error
+	return &user, err
+}
+
 func (r *Repository) UpdateUser(user *models.User) error {
 	return r.DB.Save(user).Error
 }

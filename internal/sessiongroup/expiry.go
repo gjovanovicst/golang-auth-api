@@ -129,7 +129,7 @@ func (s *ExpiryService) Stop() {
 
 // listenForKeyExpirations subscribes to Redis keyspace notifications for expired keys
 func (s *ExpiryService) listenForKeyExpirations() {
-	pubsub := redis.Rdb.PSubscribe(s.ctx, "__keyevent@0__:expired")
+	pubsub := redis.PSubscribeKeyExpiry(s.ctx, "__keyevent@0__:expired")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()

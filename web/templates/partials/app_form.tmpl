@@ -215,7 +215,7 @@
                     </div>
 
                     <!-- SMS 2FA & Trusted Devices -->
-                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
+                    <div class="border rounded p-3 mb-3 bg-body-secondary bg-opacity-50">
                         <h6 class="fw-semibold mb-3"><i class="bi bi-phone me-2"></i>SMS 2FA &amp; Trusted Devices</h6>
                         <div class="row g-3">
                             <div class="col-md-4 d-flex align-items-center">
@@ -244,6 +244,23 @@
                                 <input type="number" class="form-control" id="appTrustedDeviceMaxDays" name="trusted_device_max_days"
                                        value="{{if .TrustedDeviceMaxDays}}{{.TrustedDeviceMaxDays}}{{else}}30{{end}}" min="1" max="365">
                                 <div class="form-text">How long a device remains trusted before requiring 2FA again.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Global Login -->
+                    <div class="border rounded p-3 bg-body-secondary bg-opacity-50">
+                        <h6 class="fw-semibold mb-3"><i class="bi bi-globe me-2"></i>Global Login</h6>
+                        <div class="row g-3">
+                            <div class="col-md-12 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="appGlobalLoginEnabled"
+                                           name="global_login_enabled" {{if .GlobalLoginEnabled}}checked{{end}}>
+                                    <label class="form-check-label" for="appGlobalLoginEnabled">
+                                        <span class="small text-muted">Enable Global Login</span>
+                                    </label>
+                                    <div class="form-text">When enabled, users can log in to this app using credentials registered in any app on the platform (single identity across all apps).</div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -547,18 +564,19 @@
     var savedTab = sessionStorage.getItem(tabStorageKey);
     if (savedTab) {
         var tabEl = document.querySelector('[data-bs-target="' + savedTab + '"]');
-        // Only switch tabs if the target is not already the active tab.
-        // Calling bootstrap.Tab.show() on an already-active tab triggers its
-        // hide/show transition which temporarily removes the 'show' class from
-        // the active pane — causing blank General tab content when clicking
-        // Edit on a second application while staying on the General tab.
         if (tabEl && !tabEl.classList.contains('active')) {
-            // Defer one tick so HTMX's DOM swap fully settles before Bootstrap
-            // re-evaluates the active pane — prevents blank content on first load.
-            setTimeout(function() {
-                var tab = new bootstrap.Tab(tabEl);
-                tab.show();
-            }, 0);
+            // Directly swap active/show classes without Bootstrap's fade transition.
+            // Using bootstrap.Tab.show() inside HTMX-swapped content can leave the
+            // new pane without the 'show' class because the fade transition on the
+            // outgoing pane races with the DOM settlement, resulting in blank tabs.
+            var currentPane = document.querySelector('.tab-pane.show.active');
+            var targetPane  = document.querySelector(savedTab);
+            var currentBtn  = document.querySelector('#appFormTabs .nav-link.active');
+            if (currentPane) { currentPane.classList.remove('show', 'active'); }
+            if (targetPane)  { targetPane.classList.add('show', 'active'); }
+            if (currentBtn)  { currentBtn.classList.remove('active'); currentBtn.setAttribute('aria-selected', 'false'); }
+            tabEl.classList.add('active');
+            tabEl.setAttribute('aria-selected', 'true');
         }
     }
     var tabButtons = document.querySelectorAll('#appFormTabs [data-bs-toggle="tab"]');

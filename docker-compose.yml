@@ -64,8 +64,8 @@ services:
     image: axllent/mailpit:latest
     container_name: mailpit
     ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # Web UI
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
     restart: unless-stopped
     networks:
       - default
@@ -100,5 +100,6 @@ volumes:
   redis_data:
 
 networks:
+  default: {}
   shared-api-network:
     external: true

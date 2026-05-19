@@ -1,18 +1,87 @@
-version: "3.8"
+name: auth-dev
 
 services:
-  # Override auth-api for development with hot reload
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: auth_db
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+      - shared-api-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: auth_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --notify-keyspace-events Ex
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+      - shared-api-network
+
+  # Redis Commander - Web UI for Redis Management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis_commander
+    hostname: redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+      - HTTP_USER=admin
+      - HTTP_PASSWORD=admin
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - default
+
+  # Mailpit — local SMTP catch-all + web UI for email testing.
+  # SMTP:   localhost:1025  (host) / mailpit:1025  (inside Docker)
+  # Web UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: mailpit
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+    restart: unless-stopped
+    networks:
+      - default
+      - shared-api-network
+
+  # Go Auth API — Development with Air hot reload
+  # Image is built explicitly by dev.sh via: podman build -f Dockerfile.dev
   auth-api:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
+    image: localhost/auth-dev_auth-api:latest
     container_name: auth_api_dev
     ports:
       - "8080:8080"
     volumes:
       - .:/app
-      - /app/tmp # Exclude air tmp directory
-      - go_modules:/go/pkg/mod # Cache Go modules
+      - /app/tmp # exclude Air's tmp directory from the host mount
+      - go_modules:/go/pkg/mod # cache Go modules across rebuilds
     working_dir: /app
     env_file:
       - .env
@@ -31,23 +100,12 @@ services:
       - default
       - shared-api-network
 
-  # Mailpit — local SMTP catch-all + web UI for email testing.
-  # SMTP:   localhost:1025  (host) / mailpit:1025  (inside Docker)
-  # Web UI: http://localhost:8025
-  mailpit:
-    image: axllent/mailpit:latest
-    container_name: mailpit
-    ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # Web UI
-    restart: unless-stopped
-    networks:
-      - default
-      - shared-api-network
-
 volumes:
+  postgres_data:
+  redis_data:
   go_modules:
 
 networks:
+  default: {}
   shared-api-network:
     external: true

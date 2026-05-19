@@ -14,6 +14,13 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     export $(grep -v '^#' "$PROJECT_ROOT/.env" | xargs)
 fi
 
+# Detect container runtime (prefer podman, fall back to docker)
+if command -v podman &> /dev/null; then
+  CONTAINER_CMD="podman"
+else
+  CONTAINER_CMD="docker"
+fi
+
 # Default values if not set in .env
 DB_USER=${DB_USER:-postgres}
 DB_PASSWORD=${DB_PASSWORD:-root}
@@ -28,13 +35,13 @@ echo "Creating backup of $DB_NAME..."
 echo "Target file: $BACKUP_FILE"
 
 # Check if container is running
-if ! docker ps | grep -q "$CONTAINER_NAME"; then
+if ! $CONTAINER_CMD ps | grep -q "$CONTAINER_NAME"; then
     echo "Error: $CONTAINER_NAME container is not running."
     exit 1
 fi
 
 # Execute pg_dump inside the container
-docker exec -e PGPASSWORD="$DB_PASSWORD" -t "$CONTAINER_NAME" pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_FILE"
+$CONTAINER_CMD exec -e PGPASSWORD="$DB_PASSWORD" -t "$CONTAINER_NAME" pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_FILE"
 
 if [ $? -eq 0 ]; then
     echo "Backup created successfully!"

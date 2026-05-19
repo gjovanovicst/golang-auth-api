@@ -5,9 +5,9 @@
 --   - two_fa_enabled: Master switch to enable/disable 2FA feature per application
 --   - two_fa_required: Force all users of this application to set up 2FA
 
-ALTER TABLE applications ADD COLUMN two_fa_issuer_name TEXT NOT NULL DEFAULT '';
-ALTER TABLE applications ADD COLUMN two_fa_enabled BOOLEAN NOT NULL DEFAULT TRUE;
-ALTER TABLE applications ADD COLUMN two_fa_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS two_fa_issuer_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS two_fa_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS two_fa_required BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Record Migration
 INSERT INTO schema_migrations (version, name, applied_at, success)

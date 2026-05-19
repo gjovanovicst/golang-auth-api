@@ -1,4 +1,8 @@
-# Auth API Makefile
+# Detect container runtime with connectivity check (prefer podman, fall back to docker).
+# Override at call time:  make <target> CONTAINER_CMD=docker
+CONTAINER_CMD ?= $(shell if command -v podman > /dev/null 2>&1 && podman ps > /dev/null 2>&1; then echo podman; elif command -v docker > /dev/null 2>&1; then echo docker; else echo docker; fi)
+export CONTAINER_CMD
+
 
 .PHONY: build run dev test clean air setup-admin
 
@@ -90,7 +94,7 @@ docker-dev:
 docker-compose-build:
 	docker-compose build
 
-# Stop and remove containers, networks, images, and volumes	
+# Stop and remove containers, networks, images, and volumes
 docker-compose-down:
 	docker-compose down
 
@@ -115,7 +119,7 @@ swag-init:
 # Show migration status
 migrate-status:
 	@echo "Running migration status check..."
-	@docker exec -it auth_db psql -U postgres -d auth_db -c "\dt" || echo "Database not running. Start with: make docker-dev"
+	@$(CONTAINER_CMD) exec -i auth_db psql -U postgres -d auth_db -c "\dt" || echo "Database not running. Start with: make docker-dev"
 
 # Apply all pending migrations (Auto-discovery)
 migrate-up:
@@ -136,21 +140,21 @@ migrate-list:
 migrate-backup:
 	@echo "Creating database backup..."
 	@mkdir -p backups
-	@docker exec auth_db pg_dump -U postgres auth_db > backups/backup_$(shell date +%Y%m%d_%H%M%S).sql
+	@$(CONTAINER_CMD) exec auth_db pg_dump -U postgres auth_db > backups/backup_$(shell date +%Y%m%d_%H%M%S).sql
 	@echo "✅ Backup created in backups/ directory"
 
 # Test database connection (Docker-aware)
 migrate-test:
 	@echo "Testing database connection..."
-	@docker exec auth_db psql -U postgres -d auth_db -c "SELECT version();" && echo "✅ Connection successful!" || echo "❌ Connection failed. Start with: make docker-dev"
+	@$(CONTAINER_CMD) exec auth_db psql -U postgres -d auth_db -c "SELECT version();" && echo "✅ Connection successful!" || echo "❌ Connection failed. Start with: make docker-dev"
 
 # Check database tables and schema (Docker-aware)
 migrate-check:
 	@echo "Checking database schema..."
 	@echo "\n📋 Tables:"
-	@docker exec auth_db psql -U postgres -d auth_db -c "\dt"
+	@$(CONTAINER_CMD) exec auth_db psql -U postgres -d auth_db -c "\dt"
 	@echo "\n📊 Activity Logs Structure:"
-	@docker exec auth_db psql -U postgres -d auth_db -c "\d activity_logs"
+	@$(CONTAINER_CMD) exec auth_db psql -U postgres -d auth_db -c "\d activity_logs"
 
 # Interactive migration tool (if you have psql locally)
 migrate:
@@ -159,13 +163,13 @@ migrate:
 # Initialize migration tracking (first time only)
 migrate-init:
 	@echo "Initializing migration tracking..."
-	@docker exec -i auth_db psql -U postgres -d auth_db < migrations/00_create_migrations_table.sql
+	@$(CONTAINER_CMD) exec -i auth_db psql -U postgres -d auth_db < migrations/00_create_migrations_table.sql
 	@echo "✅ Migration tracking initialized!"
 
 # Check which migrations are tracked in database
 migrate-status-tracked:
 	@echo "📋 Migrations recorded in database:"
-	@docker exec auth_db psql -U postgres -d auth_db -c "SELECT version, name, applied_at, execution_time_ms || 'ms' as duration FROM schema_migrations ORDER BY applied_at;" 2>/dev/null || echo "⚠️  Tracking not initialized. Run: make migrate-init"
+	@$(CONTAINER_CMD) exec auth_db psql -U postgres -d auth_db -c "SELECT version, name, applied_at, execution_time_ms || 'ms' as duration FROM schema_migrations ORDER BY applied_at;" 2>/dev/null || echo "⚠️  Tracking not initialized. Run: make migrate-init"
 
 # Mark migration as applied manually
 migrate-mark-applied:
@@ -173,7 +177,7 @@ migrate-mark-applied:
 		echo "Usage: make migrate-mark-applied VERSION=20240103_000000 NAME=\"description\""; \
 		exit 1; \
 	fi
-	@docker exec auth_db psql -U postgres -d auth_db -c \
+	@$(CONTAINER_CMD) exec auth_db psql -U postgres -d auth_db -c \
 		"INSERT INTO schema_migrations (version, name, success) VALUES ('$(VERSION)', '$(NAME)', true) ON CONFLICT (version) DO NOTHING;"
 	@echo "✅ Migration $(VERSION) marked as applied"
 

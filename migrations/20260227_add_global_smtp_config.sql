@@ -22,9 +22,15 @@ ALTER TABLE email_server_configs ALTER COLUMN app_id DROP NOT NULL;
 -- ============================================================================
 -- 2. Re-add FK constraint (now allows NULL, FK is only enforced for non-NULL values)
 -- ============================================================================
-ALTER TABLE email_server_configs
-    ADD CONSTRAINT email_server_configs_app_id_fkey
-    FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE;
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'email_server_configs_app_id_fkey'
+    ) THEN
+        ALTER TABLE email_server_configs
+            ADD CONSTRAINT email_server_configs_app_id_fkey
+            FOREIGN KEY (app_id) REFERENCES applications(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 -- ============================================================================
 -- 3. Recreate partial unique indexes for default configs

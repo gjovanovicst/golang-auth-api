@@ -6,11 +6,25 @@ DB_CONTAINER="auth_db"
 DB_USER="postgres"
 DB_NAME="auth_db"
 
+# Detect container runtime with connectivity check.
+# Honour an explicit override passed from the Makefile or the caller's environment.
+if [ -z "${CONTAINER_CMD}" ]; then
+  if command -v podman &> /dev/null && podman ps > /dev/null 2>&1; then
+    CONTAINER_CMD="podman"
+  elif command -v docker &> /dev/null; then
+    CONTAINER_CMD="docker"
+  else
+    echo "❌ No container runtime found. Install Docker or start Podman (podman machine start)."
+    exit 1
+  fi
+fi
+
+echo "Using container runtime: ${CONTAINER_CMD}"
 echo "Checking migration status..."
 
 # 1. Ensure schema_migrations table exists
 # We do this silently so we can query it later
-docker exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -c "
+$CONTAINER_CMD exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -c "
 CREATE TABLE IF NOT EXISTS schema_migrations (
     id SERIAL PRIMARY KEY,
     version VARCHAR(255) UNIQUE NOT NULL,
@@ -24,7 +38,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 # 2. Get list of applied migrations from DB
 # We use || true to handle cases where the table might not exist yet (though step 1 covers this)
-APPLIED=$(docker exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -t -c "SELECT version FROM schema_migrations" 2>/dev/null || echo "")
+APPLIED=$($CONTAINER_CMD exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -t -c "SELECT version FROM schema_migrations" 2>/dev/null || echo "")
 
 # 3. Iterate over all .sql files in migrations directory, sorted by name
 # using sort to ensure 00_ runs before 2024_ runs before 2026_
@@ -33,24 +47,24 @@ for file in $(ls migrations/*.sql | sort); do
     if [[ $file == *"_rollback.sql" ]]; then
         continue
     fi
-    
+
     filename=$(basename "$file" .sql)
     version="$filename"
-    
+
     # 4. Check if this version is in the APPLIED list
     if echo "$APPLIED" | grep -q "$version"; then
         # echo "Skipping $version (already applied)"
         continue
     fi
-    
+
     echo "Applying migration: $version"
-    
+
     # 5. Run the migration
     # We pipe the file content into docker exec psql
-    if docker exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -v ON_ERROR_STOP=1 < "$file"; then
+    if $CONTAINER_CMD exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -v ON_ERROR_STOP=1 < "$file"; then
         # 6. Record success
         # We manually insert because not all SQL files contain the INSERT statement
-        docker exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -c "
+        $CONTAINER_CMD exec -i $DB_CONTAINER psql -U $DB_USER -d $DB_NAME -c "
             INSERT INTO schema_migrations (version, name, success, applied_at)
             VALUES ('$version', '$version', true, NOW())
         ON CONFLICT (version) DO NOTHING;" > /dev/null

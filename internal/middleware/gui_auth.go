@@ -50,13 +50,17 @@ func GUIAuthMiddleware(sessionValidator web.SessionValidator) gin.HandlerFunc {
 	}
 }
 
-// redirectToLogin sends a 302 redirect to the login page, preserving the original URL
+// redirectToLogin sends a 302 redirect to the login page, preserving the original URL.
+// The ?error=session_revoked param causes the login page to show a neutral "session no
+// longer valid" message regardless of whether the session expired naturally or was
+// administratively revoked — the middleware cannot distinguish the two without an extra
+// Redis lookup, so we use a single neutral message for both cases.
 func redirectToLogin(c *gin.Context) {
 	originalURL := c.Request.URL.Path
 	if originalURL == "/gui/" || originalURL == "/gui" {
-		c.Redirect(http.StatusFound, "/gui/login")
+		c.Redirect(http.StatusFound, "/gui/login?error=session_revoked")
 	} else {
-		c.Redirect(http.StatusFound, "/gui/login?redirect="+originalURL)
+		c.Redirect(http.StatusFound, "/gui/login?error=session_revoked&redirect="+originalURL)
 	}
 	c.Abort()
 }

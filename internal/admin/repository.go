@@ -1245,6 +1245,29 @@ func (r *Repository) GetUserIDByEmailAndApp(appID, email string) (string, error)
 	return result.ID, nil
 }
 
+// GetAllAppUsersByEmail returns all (appID, userID) pairs across every app
+// where a user with the given email exists. Used for cross-app "revoke all"
+// so that apps outside the SSO session group are also cleaned up.
+func (r *Repository) GetAllAppUsersByEmail(email string) ([]struct{ AppID, UserID string }, error) {
+	type row struct {
+		AppID  string
+		UserID string
+	}
+	var rows []row
+	err := r.DB.Model(&models.User{}).
+		Select("app_id, id as user_id").
+		Where("email = ?", email).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make([]struct{ AppID, UserID string }, 0, len(rows))
+	for _, r := range rows {
+		result = append(result, struct{ AppID, UserID string }{r.AppID, r.UserID})
+	}
+	return result, nil
+}
+
 // GetUserEmailsByIDs returns a map of userID -> email for the given user IDs.
 // Used for batch lookups when displaying session lists.
 func (r *Repository) GetUserEmailsByIDs(userIDs []string) (map[string]string, error) {

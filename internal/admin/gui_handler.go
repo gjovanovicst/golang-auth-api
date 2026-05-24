@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"path/filepath"
@@ -70,6 +71,16 @@ type GUIHandler struct {
 	OIDCService       *oidcpkg.Service               // OIDC provider service (nil = OIDC disabled)
 	TrustedDeviceRepo *twofa.TrustedDeviceRepository // Trusted device repository (nil = feature disabled)
 	HealthHandler     *healthpkg.Handler             // System health + metrics (nil = monitoring disabled)
+	// PublishLogoutFunc, if set, is called after admin session revocation so that
+	// SSE-connected clients in all peer apps receive a peer_logout event and can
+	// redirect to the login page without waiting for the next API call to 401.
+	PublishLogoutFunc func(appID, userEmail string)
+	// GroupRevoker, if set, is used to revoke sessions across all apps in the
+	// same session group when an admin revokes a session for a group-member app
+	// (only when GlobalLogout is enabled on the group).
+	GroupRevoker interface {
+		RevokeAllUserSessionsInGroupByUserID(appID, userID string)
+	}
 }
 
 // NewGUIHandler creates a new GUIHandler
@@ -88,9 +99,15 @@ func NewGUIHandler(accountService *AccountService, dashboardService *DashboardSe
 // LoginPage renders the login form.
 // GET /gui/login
 func (h *GUIHandler) LoginPage(c *gin.Context) {
+	var errMsg string
+	switch c.Query("error") {
+	case "session_expired", "session_revoked":
+		errMsg = "Your session is no longer valid. Please log in again."
+	}
 	data := web.TemplateData{
 		Theme:    web.GetTheme(c),
 		Redirect: c.Query("redirect"),
+		Error:    errMsg,
 	}
 	c.HTML(http.StatusOK, "login", data)
 }
@@ -5729,6 +5746,7 @@ func (h *GUIHandler) SessionRevoke(c *gin.Context) {
 	appID := c.Param("app_id")
 	sessionID := c.Param("session_id")
 	userID := c.Query("user_id")
+	log.Printf("[SessionRevoke] ENTER appID=%s sessionID=%s userID=%s", appID, sessionID, userID)
 
 	if userID == "" {
 		// Try to get user_id from the session itself
@@ -5754,9 +5772,15 @@ func (h *GUIHandler) SessionRevoke(c *gin.Context) {
 			// next request will still get a 401 via the SessionExists check.
 			_ = err
 		}
-		// Revoke the user's sessions in all peer apps of the same SSO session group.
-		// Admin revocation is unconditional (privileged override, ignores GlobalLogout flag).
-		h.revokeSessionsInPeerApps(appID, userID, accessTokenTTL)
+		// If this app belongs to a session group with GlobalLogout enabled, revoke the
+		// user's sessions in all peer apps of the group.  Otherwise do nothing extra —
+		// the caller only asked to revoke this one session in this one app.
+		if h.GroupRevoker != nil {
+			log.Printf("[SessionRevoke] triggering group revocation appID=%s userID=%s", appID, userID)
+			go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appID, userID)
+		}
+	} else {
+		log.Printf("[SessionRevoke] userID is empty, skipping group revocation")
 	}
 
 	// Check if this was called from user detail page
@@ -5792,9 +5816,12 @@ func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
 		_ = err // non-fatal
 	}
 
-	// Revoke the user's sessions in all peer apps of the same SSO session group.
-	// Admin revocation is unconditional (privileged override, ignores GlobalLogout flag).
-	h.revokeSessionsInPeerApps(appID, userID, accessTokenTTL)
+	// If this app belongs to a session group with GlobalLogout enabled, revoke the
+	// user's sessions in all peer apps of the group.  Otherwise do nothing extra —
+	// the caller only asked to revoke sessions in this one app.
+	if h.GroupRevoker != nil {
+		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appID, userID)
+	}
 
 	// Check if this was called from user detail page
 	if c.Query("from_user_detail") == "1" {
@@ -5807,42 +5834,44 @@ func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
 	h.SessionList(c)
 }
 
-// revokeSessionsInPeerApps revokes all sessions (and blacklists access tokens) for
-// the user in every peer app that shares the same SSO session group as appID.
-// This is always performed unconditionally regardless of the group's GlobalLogout
-// setting — an admin explicitly revoking a session is a privileged override.
+// revokeUserSessionsEverywhere revokes all sessions (and blacklists access tokens)
+// for the user in every app where they have an account — not just the session group.
+// This is the correct behaviour for an admin explicitly revoking sessions: the user
+// should be logged out everywhere, unconditionally.
 //
-// IMPORTANT: each peer app stores the same person as a separate User row with a
-// different UUID (scoped by app_id). We resolve the correct peer-app userID by
-// looking up the user's email in each peer app's namespace.
-func (h *GUIHandler) revokeSessionsInPeerApps(appID, userID string, accessTokenTTL time.Duration) {
-	group, err := h.Repo.GetSessionGroupForApp(appID)
-	if err != nil || group == nil {
-		return // app is not in any session group
-	}
-	peerAppIDs, err := h.Repo.GetAppsInSessionGroup(group.ID.String())
-	if err != nil {
-		return
-	}
-
-	// Resolve the source user's email so we can find the same person in peer apps.
+// Each app stores the same person as a separate User row with a different UUID
+// (scoped by app_id).  We resolve all of them by looking up the user's email
+// across the entire users table.
+func (h *GUIHandler) revokeUserSessionsEverywhere(appID, userID string, accessTokenTTL time.Duration) {
+	log.Printf("[RevokeEverywhere] called appID=%s userID=%s", appID, userID)
+	// Resolve the source user's email so we can find the same person in every app.
 	detail, err := h.Repo.GetUserDetailByID(userID)
 	if err != nil || detail == nil || detail.Email == "" {
+		log.Printf("[RevokeEverywhere] GetUserDetailByID failed: err=%v detail=%v", err, detail)
 		return
 	}
 	email := detail.Email
+	log.Printf("[RevokeEverywhere] resolved email=%s", email)
 
-	for _, peerAppID := range peerAppIDs {
-		if peerAppID == appID {
-			continue
-		}
-		// Each peer app has its own User row for the same email — look up the peer userID.
-		peerUserID, err := h.Repo.GetUserIDByEmailAndApp(peerAppID, email)
-		if err != nil || peerUserID == "" {
-			continue // user has no account in this peer app, skip
-		}
-		_ = redis.DeleteAllUserSessions(peerAppID, peerUserID, "")
-		_ = redis.BlacklistAllUserTokens(peerAppID, peerUserID, accessTokenTTL)
+	// Find every (appID, userID) pair for this email across all apps.
+	appUsers, err := h.Repo.GetAllAppUsersByEmail(email)
+	if err != nil || len(appUsers) == 0 {
+		log.Printf("[RevokeEverywhere] GetAllAppUsersByEmail failed or empty: err=%v count=%d", err, len(appUsers))
+		return
+	}
+	log.Printf("[RevokeEverywhere] revoking sessions across %d app(s)", len(appUsers))
+
+	for _, au := range appUsers {
+		_ = redis.DeleteAllUserSessions(au.AppID, au.UserID, "")
+		_ = redis.BlacklistAllUserTokens(au.AppID, au.UserID, accessTokenTTL)
+		_ = redis.DeleteLoginPresence(au.AppID)
+		log.Printf("[RevokeEverywhere] revoked appID=%s userID=%s", au.AppID, au.UserID)
+	}
+
+	// Notify all SSE-connected clients so they redirect to the login page
+	// immediately without waiting for the next API call to return 401.
+	if h.PublishLogoutFunc != nil {
+		go h.PublishLogoutFunc(appID, email)
 	}
 }
 

@@ -127,6 +127,12 @@ func (s *Service) RefreshSession(oldRefreshToken string, accessTTL, refreshTTL t
 	if err := redis.ResetSessionTTL(claims.AppID, claims.SessionID, effectiveRefreshTTL); err != nil {
 		log.Printf("Warning: Failed to reset session TTL: %v\n", err)
 	}
+	// Also slide the session_meta key TTL forward so keyspace-notification-based
+	// session group expiry revocation does not fire prematurely for long-running
+	// sessions that are actively refreshing their tokens.
+	if err := redis.ResetSessionMetaTTL(claims.AppID, claims.UserID, claims.SessionID, effectiveRefreshTTL); err != nil {
+		log.Printf("Warning: Failed to reset session_meta TTL: %v\n", err)
+	}
 	if err := redis.TouchSession(claims.AppID, claims.SessionID); err != nil {
 		log.Printf("Warning: Failed to touch session: %v\n", err)
 	}

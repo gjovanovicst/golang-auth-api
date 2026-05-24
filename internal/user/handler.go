@@ -10,6 +10,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/geoip"
 	"github.com/gjovanovicst/auth_api/internal/health"
 	"github.com/gjovanovicst/auth_api/internal/log"
+	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
@@ -486,7 +487,14 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 	if parseErr == nil {
 		appIDVal, appIDExists := c.Get("app_id")
 		if appIDExists {
-			log.LogTokenRefresh(appIDVal.(uuid.UUID), userUUID, ipAddress, userAgent)
+			appIDUUID := appIDVal.(uuid.UUID)
+			log.LogTokenRefresh(appIDUUID, userUUID, ipAddress, userAgent)
+
+			// Roll the SSO login-presence TTL so the record stays alive for as
+			// long as the session continues to be used (rolling 24 h window).
+			if presenceUserID, presenceGroupID, presenceErr := redis.GetLoginPresence(appIDUUID.String()); presenceErr == nil && presenceUserID != "" {
+				_ = redis.SetLoginPresence(appIDUUID.String(), presenceUserID, presenceGroupID)
+			}
 		}
 	}
 
@@ -783,6 +791,13 @@ func (h *Handler) Logout(c *gin.Context) {
 	if err := h.Service.LogoutUser(appID.String(), userID.(string), sessionID, req.RefreshToken, req.AccessToken); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
+	}
+
+	// Remove the SSO login-presence record so that peer apps that connect after
+	// this logout do not incorrectly receive an on-demand peer_login event.
+	if presenceErr := redis.DeleteLoginPresence(appID.String()); presenceErr != nil {
+		// Non-fatal: log and continue — the presence key will expire on its own.
+		_ = presenceErr
 	}
 
 	// Log logout activity
@@ -1270,6 +1285,11 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 		"login_method": "magic_link",
 	})
 	health.IncLoginSuccess(appID.String())
+
+	// Propagate SSO login to peer apps in the same session group
+	if h.PublishLoginFunc != nil {
+		go h.PublishLoginFunc(appID.String(), result.UserID.String())
+	}
 
 	// Dispatch webhook event (non-fatal)
 	if h.Service.WebhookService != nil {

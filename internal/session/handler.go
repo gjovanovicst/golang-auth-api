@@ -1,6 +1,7 @@
 package session
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -9,9 +10,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// GroupRevoker is an optional dependency that revokes sessions across all apps
+// in the same session group when GlobalLogout is enabled.
+type GroupRevoker interface {
+	RevokeAllUserSessionsInGroupByUserID(appID, userID string)
+}
+
 // Handler handles HTTP requests for session management.
 type Handler struct {
-	Service *Service
+	Service      *Service
+	GroupRevoker GroupRevoker // nil = no group revocation
 }
 
 // NewHandler creates a new session handler.
@@ -100,6 +108,16 @@ func (h *Handler) RevokeSession(c *gin.Context) {
 	}
 
 	health.IncLogout(appIDVal.(string))
+
+	// If the app belongs to a session group with GlobalLogout enabled,
+	// revoke all sessions for this user across all peer apps in the group.
+	if h.GroupRevoker != nil {
+		log.Printf("[SessionGroup] RevokeSession: triggering group revocation for appID=%s userID=%s", appIDVal.(string), userID.(string))
+		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appIDVal.(string), userID.(string))
+	} else {
+		log.Printf("[SessionGroup] RevokeSession: GroupRevoker is nil, skipping group revocation")
+	}
+
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "Session revoked successfully"})
 }
 
@@ -138,5 +156,15 @@ func (h *Handler) RevokeAllSessions(c *gin.Context) {
 	}
 
 	health.IncLogout(appIDVal.(string))
+
+	// Trigger cross-app group revocation so that sessions in all peer apps
+	// belonging to the same session group are also revoked. Mirrors the same
+	// block in RevokeSession (DELETE /sessions/:id).
+	if h.GroupRevoker != nil {
+		log.Printf("[SessionGroup] RevokeAllSessions: triggering group revocation for appID=%s userID=%s",
+			appIDVal.(string), userID.(string))
+		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appIDVal.(string), userID.(string))
+	}
+
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "All other sessions revoked successfully"})
 }

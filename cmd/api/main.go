@@ -248,6 +248,15 @@ func main() {
 		go ssoHandler.PublishLogoutToGroup(appID, userEmail)
 	}
 
+	// Wire group revocation into the session handler so that revoking a single
+	// session also revokes all sessions for that user across peer apps in the
+	// same session group (when GlobalLogout is enabled).
+	sessionHandler.GroupRevoker = sessionGroupRevoker
+
+	// Wire group revocation into the GUI handler so that admin session revocation
+	// also revokes sessions in peer apps of the same session group (GlobalLogout).
+	guiHandler.GroupRevoker = sessionGroupRevoker
+
 	// Wire SSO global logout: when a user logs out of one app in a session group,
 	// their sessions in all other apps of the group are revoked (only when GlobalLogout=true).
 	// The SSE peer_logout notification is also suppressed when GlobalLogout is disabled so
@@ -269,6 +278,7 @@ func main() {
 	userHandler.PublishLoginFunc = publishLogin
 	socialHandler.PublishLoginFunc = publishLogin
 	twofaHandler.PublishLoginFunc = publishLogin
+	webauthnHandler.PublishLoginFunc = publishLogin // ← passkey login (2FA + passwordless)
 
 	// Wire SettingsService resolver into twofa handler so the TRUSTED_DEVICE_COOKIE_SAMESITE
 	// setting is resolved via the 3-tier priority (env > DB > default), allowing the admin GUI
@@ -281,6 +291,12 @@ func main() {
 	// Wire WebhookService into admin GUI handler
 	guiHandler.WebhookService = webhookService
 	webauthnHandler.WebhookService = webhookService
+
+	// Wire SSE logout notification into the admin GUI handler so that admin-triggered
+	// session revocations also push a peer_logout event to SSE-connected clients.
+	guiHandler.PublishLogoutFunc = func(appID, userEmail string) {
+		go ssoHandler.PublishLogoutToGroup(appID, userEmail)
+	}
 
 	// Initialize OIDC Provider (enabled via OIDC_ENABLED=true)
 	var oidcHandler *oidc.Handler
@@ -1002,7 +1018,7 @@ func main() {
 	port := viper.GetString("PORT")
 	log.Printf("Server starting on port %s", port)
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", port),
+		Addr:    fmt.Sprintf("0.0.0.0:%s", port),
 		Handler: r,
 		// Prevent slow-loris on non-SSE endpoints.  SSE connections are long-lived
 		// but they complete the header handshake quickly, so ReadHeaderTimeout is safe.

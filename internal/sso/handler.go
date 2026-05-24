@@ -283,6 +283,15 @@ func (h *Handler) Exchange(c *gin.Context) {
 		roles, _ = h.LookupRoles(targetAppID, targetUser.ID.String())
 	}
 
+	// Revoke any existing sessions for this user in the target app before
+	// creating a new one. This prevents duplicate sessions accumulating when
+	// the SSO exchange fires more than once (e.g. SSE reconnect, direct login
+	// to a peer app that is already reached via SSO).
+	if appErr := h.SessionService.RevokeAllUserSessions(targetAppID, targetUser.ID.String()); appErr != nil {
+		log.Printf("[SSO] Exchange: warning — failed to revoke existing sessions for user %s in app %s: %v",
+			targetUser.ID, targetAppID, appErr.Message)
+	}
+
 	// Create a new session in the target app.
 	ip := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
@@ -296,6 +305,13 @@ func (h *Handler) Exchange(c *gin.Context) {
 
 	log.Printf("[SSO] Exchange: user %s (source app %s) -> target app %s, session %s",
 		sourceUser.Email, sourceAppID, targetAppID, sessionID)
+
+	// Record that the user is now logged in to the target app so that further
+	// peer apps opened later can receive an on-demand peer_login event via the
+	// presence-based fallback in StreamEvents.
+	if presenceErr := redis.SetLoginPresence(targetAppID, targetUser.ID.String(), groupID); presenceErr != nil {
+		log.Printf("[SSO] Exchange: failed to set login presence for target app %s: %v", targetAppID, presenceErr)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"access_token":  accessToken,
@@ -374,6 +390,13 @@ func (h *Handler) PublishLoginToGroup(sourceAppID, userID string) {
 		return
 	}
 
+	// Record that this user is currently logged in to the source app so that
+	// peer apps opening an SSE connection long after the login (past the 90 s
+	// pending-event window) can still receive an on-demand peer_login event.
+	if err := redis.SetLoginPresence(sourceAppID, userID, groupID); err != nil {
+		log.Printf("[SSO] PublishLoginToGroup: failed to set login presence for app %s: %v", sourceAppID, err)
+	}
+
 	peers, err := h.AdminRepo.GetPeersForApp(sourceAppID)
 	if err != nil {
 		log.Printf("[SSO] PublishLoginToGroup: failed to get peers for app %s: %v", sourceAppID, err)
@@ -423,6 +446,15 @@ func (h *Handler) PublishLogoutToGroup(sourceAppID, userEmail string) {
 				log.Printf("[SSO] PublishLogoutToGroup: failed to store pending logout for peer %s: %v", peer.AppID, err)
 			}
 		}
+	}
+
+	// Also store a pending logout for the source app itself. When the logout is
+	// triggered by an admin action or session expiry (not a user-initiated
+	// logout from within the source app), the source app is excluded from
+	// GetPeersForApp but still needs to receive the signal on its next SSE
+	// reconnect so it can redirect to the login page.
+	if err := redis.StorePendingLogoutEvent(sourceAppID); err != nil {
+		log.Printf("[SSO] PublishLogoutToGroup: failed to store pending logout for source app %s: %v", sourceAppID, err)
 	}
 
 	evt := ssoEvent{Type: "peer_logout"}
@@ -496,6 +528,34 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 	// disconnected (e.g. killed by a proxy idle timeout between events).
 	if pending, err := redis.PopPendingLoginEvent(appID); err == nil && pending != "" {
 		writeAndFlush(pending)
+	} else {
+		// Fallback: the short-lived pending-login key (90 s) has expired, but the
+		// user may still have an active session in a peer app.  Check every peer
+		// app's login-presence record (24 h rolling TTL) and, if found, issue a
+		// fresh on-demand SSO token so this newly-opened tab is auto-logged-in.
+		peers, peersErr := h.AdminRepo.GetPeersForApp(appID)
+		if peersErr == nil {
+			for _, peer := range peers {
+				presenceUserID, presenceGroupID, presenceErr := redis.GetLoginPresence(peer.AppID)
+				if presenceErr != nil || presenceUserID == "" {
+					continue
+				}
+				// Mint a fresh single-use exchange token for this app.
+				token := uuid.New().String()
+				if tokenErr := redis.SetSSOToken(token, presenceGroupID, peer.AppID, presenceUserID); tokenErr != nil {
+					log.Printf("[SSO] StreamEvents: failed to set on-demand SSO token for app %s: %v", appID, tokenErr)
+					continue
+				}
+				evt := ssoEvent{
+					Type:      "peer_login",
+					SSOToken:  token,
+					TargetApp: appID,
+				}
+				payload, _ := json.Marshal(evt)
+				writeAndFlush(string(payload))
+				break // one peer with an active session is enough
+			}
+		}
 	}
 
 	// Replay any pending logout event — takes priority over a stale login so

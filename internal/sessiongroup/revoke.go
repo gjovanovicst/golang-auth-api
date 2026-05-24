@@ -3,6 +3,7 @@ package sessiongroup
 import (
 	"log"
 
+	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/user"
 	"github.com/gjovanovicst/auth_api/pkg/models"
@@ -37,15 +38,29 @@ func NewRevoker(adminRepo AdminRepositoryInterface, userRepo *user.Repository, s
 // RevokeAllUserSessionsInGroup revokes all sessions for a user across all apps in the same session group
 // when GlobalLogout is enabled. This is called when a session expires or when a user logs out.
 func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail string) {
+	log.Printf("[SessionGroup] RevokeAllUserSessionsInGroup called: appID=%s userEmail=%s", appID, userEmail)
+
 	group, err := r.AdminRepo.GetSessionGroupForApp(appID)
-	if err != nil || group == nil || !group.GlobalLogout {
+	if err != nil {
+		log.Printf("[SessionGroup] ERROR fetching session group for appID=%s: %v", appID, err)
 		return
 	}
+	if group == nil {
+		log.Printf("[SessionGroup] No session group found for appID=%s — skipping group revocation", appID)
+		return
+	}
+	if !group.GlobalLogout {
+		log.Printf("[SessionGroup] GlobalLogout=false for group %s (%s) — skipping group revocation", group.Name, group.ID)
+		return
+	}
+	log.Printf("[SessionGroup] Found group %s (%s) GlobalLogout=true", group.Name, group.ID)
 
 	appIDs, err := r.AdminRepo.GetAppsInSessionGroup(group.ID.String())
 	if err != nil {
+		log.Printf("[SessionGroup] ERROR fetching apps in group %s: %v", group.ID, err)
 		return
 	}
+	log.Printf("[SessionGroup] Apps in group: %v", appIDs)
 
 	// Look up the user once by email globally — user records are shared across
 	// all apps in the session group (one UUID per person, access controlled by
@@ -53,21 +68,24 @@ func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail string) {
 	// via SSO exchange (they have no separate per-app user row).
 	targetUser, err := r.UserRepo.GetUserByEmailGlobal(userEmail)
 	if err != nil || targetUser == nil {
-		log.Printf("[SessionGroup] Warning: user %s not found globally, cannot revoke peer sessions", userEmail)
+		log.Printf("[SessionGroup] Warning: user %s not found globally (err=%v) — cannot revoke peer sessions", userEmail, err)
 		return
 	}
+	log.Printf("[SessionGroup] Resolved user %s → userID=%s", userEmail, targetUser.ID)
 
-	for _, otherAppID := range appIDs {
-		if otherAppID == appID {
-			continue
-		}
-
-		if appErr := r.SessionService.RevokeAllUserSessions(otherAppID, targetUser.ID.String()); appErr != nil {
+	for _, targetAppID := range appIDs {
+		if appErr := r.SessionService.RevokeAllUserSessions(targetAppID, targetUser.ID.String()); appErr != nil {
 			log.Printf("[SessionGroup] Warning: failed to revoke sessions for user %s in app %s: %v",
-				userEmail, otherAppID, appErr.Message)
+				userEmail, targetAppID, appErr.Message)
 		} else {
 			log.Printf("[SessionGroup] Revoked sessions for user %s in app %s (session group: %s)",
-				userEmail, otherAppID, group.Name)
+				userEmail, targetAppID, group.Name)
+		}
+
+		// Remove the SSO login-presence record so that peer apps opened after this
+		// group logout do not receive a stale on-demand peer_login event.
+		if presenceErr := redis.DeleteLoginPresence(targetAppID); presenceErr != nil {
+			log.Printf("[SessionGroup] Warning: failed to delete login presence for app %s: %v", targetAppID, presenceErr)
 		}
 	}
 
@@ -80,11 +98,14 @@ func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail string) {
 // RevokeAllUserSessionsInGroupByUserID revokes all sessions for a user across all apps in the same session group
 // using the user ID instead of email. This is useful when you have the user ID but not the email.
 func (r *Revoker) RevokeAllUserSessionsInGroupByUserID(appID, userID string) {
+	log.Printf("[SessionGroup] RevokeAllUserSessionsInGroupByUserID called: appID=%s userID=%s", appID, userID)
 	// First get the user to get their email — basic fetch, no social account preload needed
 	userObj, err := r.UserRepo.GetUserByIDBasic(userID)
 	if err != nil || userObj == nil {
+		log.Printf("[SessionGroup] ERROR: could not fetch user for userID=%s err=%v obj=%v", userID, err, userObj)
 		return
 	}
+	log.Printf("[SessionGroup] Resolved userID=%s → email=%s", userID, userObj.Email)
 
 	r.RevokeAllUserSessionsInGroup(appID, userObj.Email)
 }

@@ -353,6 +353,26 @@ func ResetSessionTTL(appID, sessionID string, ttl time.Duration) error {
 	return Rdb.Expire(ctx, key, ttl).Err()
 }
 
+// ResetSessionMetaTTL slides the session_meta key TTL forward on every token rotation.
+// The session_meta key is used by keyspace-notification-based session group expiry
+// revocation (SESSION_GROUP_EXPIRY_REVOCATION_ENABLED). Without this reset, the key
+// expires at the original login time even if the user continues to actively refresh
+// their tokens, which can cause premature cross-app session revocation.
+func ResetSessionMetaTTL(appID, userID, sessionID string, ttl time.Duration) error {
+	metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sessionID)
+	// Use SET with KEEPTTL-compatible approach: only reset if the key exists.
+	// If the key was already deleted (session revoked), this is a no-op.
+	result, err := Rdb.Expire(ctx, metaKey, ttl).Result()
+	if err != nil {
+		return err
+	}
+	if !result {
+		// Key does not exist — session may have been revoked; nothing to reset.
+		return nil
+	}
+	return nil
+}
+
 // TouchSession updates the last_active timestamp of a session.
 func TouchSession(appID, sessionID string) error {
 	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
@@ -1159,6 +1179,56 @@ func PopPendingLoginEvent(appID string) (string, error) {
 		return "", err
 	}
 	return val, nil
+}
+
+// ============================================================================
+// SSO Login Presence
+//
+// A login presence record is written whenever a user successfully logs in to
+// an app that belongs to a session group.  Unlike the short-lived
+// sso:pending_login key (90 s), the presence key uses a rolling 24-hour TTL
+// that is refreshed on every token refresh.  This allows peer apps opened long
+// after the initial login to still receive an on-demand peer_login SSE event
+// on SSE connect.
+//
+// Key layout: sso:presence:{appID}  →  "{userID}|{groupID}"
+// ============================================================================
+
+const loginPresenceTTL = 24 * time.Hour
+
+// SetLoginPresence records that userID is currently logged in to appID as part
+// of groupID.  Only the most-recently-logged-in user is tracked per app.
+// The key is refreshed (rolling TTL) on every call so it stays alive for as
+// long as the session is actively used.
+func SetLoginPresence(appID, userID, groupID string) error {
+	key := fmt.Sprintf("sso:presence:%s", appID)
+	value := userID + "|" + groupID
+	return Rdb.Set(ctx, key, value, loginPresenceTTL).Err()
+}
+
+// GetLoginPresence returns the userID and groupID stored by SetLoginPresence,
+// or ("", "", nil) when no presence record exists for the app.
+func GetLoginPresence(appID string) (userID, groupID string, err error) {
+	key := fmt.Sprintf("sso:presence:%s", appID)
+	val, redisErr := Rdb.Get(ctx, key).Result()
+	if redisErr != nil {
+		if redisErr.Error() == "redis: nil" {
+			return "", "", nil
+		}
+		return "", "", redisErr
+	}
+	parts := strings.SplitN(val, "|", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("malformed login presence value")
+	}
+	return parts[0], parts[1], nil
+}
+
+// DeleteLoginPresence removes the login presence record for appID.  Called on
+// logout and group-wide session revocation.
+func DeleteLoginPresence(appID string) error {
+	key := fmt.Sprintf("sso:presence:%s", appID)
+	return Rdb.Del(ctx, key).Err()
 }
 
 // StorePendingLogoutEvent stores a per-app peer_logout signal in Redis so that

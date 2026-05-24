@@ -30,15 +30,20 @@ type RoleLookupFunc func(appID, userID string) ([]string, error)
 // AssignDefaultRoleFunc is called to assign the default role to a user.
 type AssignDefaultRoleFunc func(appID, userID string) error
 
+// PublishLoginFunc is called after a successful passkey login to propagate the SSO
+// login event to peer apps in the same session group (via Redis pub/sub → SSE).
+type PublishLoginFunc func(appID, userID string)
+
 // Handler handles HTTP requests for WebAuthn/Passkey operations.
 type Handler struct {
 	Service           *Service
-	SessionService    *session.Service // Session management for creating sessions on passkey login
+	SessionService    *session.Service       // Session management for creating sessions on passkey login
 	LookupRoles       RoleLookupFunc
 	AssignDefaultRole AssignDefaultRoleFunc  // Optional: if nil, no self-healing role assignment
 	IPRuleEvaluator   *geoip.IPRuleEvaluator // IP access control evaluator (nil = no IP rules)
 	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
 	WebhookService    *webhook.Service       // Optional: webhook dispatcher (nil = disabled)
+	PublishLoginFunc  PublishLoginFunc        // Optional: SSO login propagation to peer apps (nil = disabled)
 	DB                *gorm.DB               // for loading per-app token TTL overrides
 }
 
@@ -445,6 +450,12 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 	}
 
 	health.IncLoginSuccess(appID.String())
+
+	// Propagate SSO login to peer apps in the same session group
+	if h.PublishLoginFunc != nil {
+		go h.PublishLoginFunc(appID.String(), userIDStr)
+	}
+
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -556,6 +567,12 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 	}
 
 	health.IncLoginSuccess(appID.String())
+
+	// Propagate SSO login to peer apps in the same session group
+	if h.PublishLoginFunc != nil {
+		go h.PublishLoginFunc(appID.String(), userIDStr)
+	}
+
 	c.JSON(http.StatusOK, dto.LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,

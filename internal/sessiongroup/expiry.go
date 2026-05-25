@@ -47,7 +47,7 @@ func DefaultConfig() Config {
 // ExpiryHandlerInterface defines the interface for handling session expiry
 type ExpiryHandlerInterface interface {
 	ShouldRevokeGroupSessions(appID string) (bool, *models.SessionGroup)
-	RevokeAllUserSessionsInGroup(appID, userEmail string)
+	RevokeAllUserSessionsInGroup(appID, userEmail, reason string)
 	GetUserByID(userID string) (*models.User, error)
 }
 
@@ -175,8 +175,9 @@ func (s *ExpiryService) handleExpiredKey(key string) {
 		return
 	}
 
-	// Revoke sessions in all other apps in the group
-	s.handler.RevokeAllUserSessionsInGroup(appID, user.Email)
+	// Revoke sessions in all other apps in the group, marking this as natural expiry
+	// (not admin revocation) so the frontend shows the amber "Session Expired" modal.
+	s.handler.RevokeAllUserSessionsInGroup(appID, user.Email, "expired")
 }
 
 // periodicScanner periodically scans for expired session_meta keys

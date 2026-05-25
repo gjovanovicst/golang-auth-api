@@ -84,6 +84,9 @@ type Application struct {
 	AccessTokenTTLMinutes int `gorm:"default:0" json:"access_token_ttl_minutes"` // Access token lifetime in minutes (0 = use ACCESS_TOKEN_EXPIRATION_MINUTES)
 	RefreshTokenTTLHours  int `gorm:"default:0" json:"refresh_token_ttl_hours"`  // Refresh token lifetime in hours (0 = use REFRESH_TOKEN_EXPIRATION_HOURS)
 
+	// Inactivity timeout — expire session if user has not refreshed within this window (0 = disabled)
+	InactivityTimeoutMinutes int `gorm:"default:0" json:"inactivity_timeout_minutes"` // Minutes of inactivity before session expires (0 = disabled)
+
 	CreatedAt            time.Time             `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt            time.Time             `gorm:"autoUpdateTime" json:"updated_at"`
 	OAuthProviderConfigs []OAuthProviderConfig `gorm:"foreignKey:AppID" json:"oauth_provider_configs"`

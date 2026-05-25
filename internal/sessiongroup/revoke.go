@@ -23,7 +23,7 @@ type Revoker struct {
 	// GroupLogoutFunc, if set, is called after all peer sessions are revoked so
 	// the SSE layer can push a peer_logout event to all connected clients.
 	// Signature matches sso.Handler.PublishLogoutToGroup.
-	GroupLogoutFunc func(sourceAppID, userEmail string)
+	GroupLogoutFunc func(sourceAppID, userEmail, reason string)
 }
 
 // NewRevoker creates a new session group revoker
@@ -36,9 +36,10 @@ func NewRevoker(adminRepo AdminRepositoryInterface, userRepo *user.Repository, s
 }
 
 // RevokeAllUserSessionsInGroup revokes all sessions for a user across all apps in the same session group
-// when GlobalLogout is enabled. This is called when a session expires or when a user logs out.
-func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail string) {
-	log.Printf("[SessionGroup] RevokeAllUserSessionsInGroup called: appID=%s userEmail=%s", appID, userEmail)
+// when GlobalLogout is enabled. reason is forwarded to the SSE peer_logout event so clients can
+// distinguish between "revoked" (admin/explicit) and "expired" (natural TTL expiry).
+func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail, reason string) {
+	log.Printf("[SessionGroup] RevokeAllUserSessionsInGroup called: appID=%s userEmail=%s reason=%s", appID, userEmail, reason)
 
 	group, err := r.AdminRepo.GetSessionGroupForApp(appID)
 	if err != nil {
@@ -89,9 +90,9 @@ func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail string) {
 		}
 	}
 
-	// Notify all SSE-connected clients that they should log out.
+	// Notify all SSE-connected clients that their sessions have been revoked/expired.
 	if r.GroupLogoutFunc != nil {
-		r.GroupLogoutFunc(appID, userEmail)
+		r.GroupLogoutFunc(appID, userEmail, reason)
 	}
 }
 
@@ -107,7 +108,7 @@ func (r *Revoker) RevokeAllUserSessionsInGroupByUserID(appID, userID string) {
 	}
 	log.Printf("[SessionGroup] Resolved userID=%s → email=%s", userID, userObj.Email)
 
-	r.RevokeAllUserSessionsInGroup(appID, userObj.Email)
+	r.RevokeAllUserSessionsInGroup(appID, userObj.Email, "revoked")
 }
 
 // ShouldRevokeGroupSessions checks if a session group has GlobalLogout enabled
@@ -117,6 +118,41 @@ func (r *Revoker) ShouldRevokeGroupSessions(appID string) (bool, *models.Session
 		return false, nil
 	}
 	return group.GlobalLogout, group
+}
+
+// ClearGroupUserBlacklist clears the user-wide token blacklist for a user across
+// all apps in the same session group. This is called after a successful login so
+// that a user who was previously logged out (via group expiry or admin revocation)
+// can authenticate again in all peer apps without being immediately rejected.
+//
+// If the app is not in a session group, only the blacklist for that single app is cleared.
+func (r *Revoker) ClearGroupUserBlacklist(appID, userID string) {
+	group, err := r.AdminRepo.GetSessionGroupForApp(appID)
+	if err != nil || group == nil {
+		// Not in a group — clear just the one app and return
+		if clearErr := redis.ClearUserTokenBlacklist(appID, userID); clearErr != nil {
+			log.Printf("[SessionGroup] Warning: failed to clear token blacklist for user %s in app %s: %v", userID, appID, clearErr)
+		}
+		return
+	}
+
+	appIDs, err := r.AdminRepo.GetAppsInSessionGroup(group.ID.String())
+	if err != nil {
+		log.Printf("[SessionGroup] ClearGroupUserBlacklist: ERROR fetching apps in group %s: %v", group.ID, err)
+		// Still clear for the originating app at minimum
+		if clearErr := redis.ClearUserTokenBlacklist(appID, userID); clearErr != nil {
+			log.Printf("[SessionGroup] Warning: failed to clear token blacklist for user %s in app %s: %v", userID, appID, clearErr)
+		}
+		return
+	}
+
+	for _, targetAppID := range appIDs {
+		if clearErr := redis.ClearUserTokenBlacklist(targetAppID, userID); clearErr != nil {
+			log.Printf("[SessionGroup] Warning: failed to clear token blacklist for user %s in app %s: %v", userID, targetAppID, clearErr)
+		} else {
+			log.Printf("[SessionGroup] Cleared token blacklist for user %s in app %s (group: %s)", userID, targetAppID, group.Name)
+		}
+	}
 }
 
 // GetUserByID gets a user by ID (implements ExpiryHandlerInterface)

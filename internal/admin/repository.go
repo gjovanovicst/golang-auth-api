@@ -294,8 +294,9 @@ type AppCustomizationSettings struct {
 	PwHistoryCount  int
 	PwMaxAgeDays    int
 	// Token TTL overrides (0 = use global defaults)
-	AccessTokenTTLMinutes int
-	RefreshTokenTTLHours  int
+	AccessTokenTTLMinutes    int
+	RefreshTokenTTLHours     int
+	InactivityTimeoutMinutes int
 	// Email Action Link Paths (empty = use system defaults)
 	ResetPasswordPath string
 	MagicLinkPath     string
@@ -345,8 +346,9 @@ func (r *Repository) UpdateApp(id string, name string, description string, front
 		"pw_history_count":  custom.PwHistoryCount,
 		"pw_max_age_days":   custom.PwMaxAgeDays,
 		// Token TTL overrides
-		"access_token_ttl_minutes": custom.AccessTokenTTLMinutes,
-		"refresh_token_ttl_hours":  custom.RefreshTokenTTLHours,
+		"access_token_ttl_minutes":    custom.AccessTokenTTLMinutes,
+		"refresh_token_ttl_hours":     custom.RefreshTokenTTLHours,
+		"inactivity_timeout_minutes":  custom.InactivityTimeoutMinutes,
 		// Email Action Link Paths
 		"reset_password_path": custom.ResetPasswordPath,
 		"magic_link_path":     custom.MagicLinkPath,

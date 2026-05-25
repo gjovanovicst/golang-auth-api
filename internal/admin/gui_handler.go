@@ -589,8 +589,9 @@ func (h *GUIHandler) AppCreateForm(c *gin.Context) {
 		PwHistoryCount  int
 		PwMaxAgeDays    int
 		// Token TTL overrides
-		AccessTokenTTLMinutes int
-		RefreshTokenTTLHours  int
+		AccessTokenTTLMinutes    int
+		RefreshTokenTTLHours     int
+		InactivityTimeoutMinutes int
 		// Email Action Link Paths
 		ResetPasswordPath string
 		MagicLinkPath     string
@@ -756,6 +757,9 @@ func (h *GUIHandler) AppCreate(c *gin.Context) {
 	if v, err := strconv.Atoi(c.PostForm("refresh_token_ttl_hours")); err == nil && v >= 0 {
 		app.RefreshTokenTTLHours = v
 	}
+	if v, err := strconv.Atoi(c.PostForm("inactivity_timeout_minutes")); err == nil && v >= 0 {
+		app.InactivityTimeoutMinutes = v
+	}
 
 	if err := h.Repo.CreateApp(app); err != nil {
 		c.String(http.StatusInternalServerError,
@@ -840,8 +844,9 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		PwHistoryCount  int
 		PwMaxAgeDays    int
 		// Token TTL overrides
-		AccessTokenTTLMinutes int
-		RefreshTokenTTLHours  int
+		AccessTokenTTLMinutes    int
+		RefreshTokenTTLHours     int
+		InactivityTimeoutMinutes int
 		// Email Action Link Paths
 		ResetPasswordPath string
 		MagicLinkPath     string
@@ -882,8 +887,9 @@ func (h *GUIHandler) AppEditForm(c *gin.Context) {
 		PwHistoryCount:  app.PwHistoryCount,
 		PwMaxAgeDays:    app.PwMaxAgeDays,
 		// Token TTL overrides
-		AccessTokenTTLMinutes: app.AccessTokenTTLMinutes,
-		RefreshTokenTTLHours:  app.RefreshTokenTTLHours,
+		AccessTokenTTLMinutes:    app.AccessTokenTTLMinutes,
+		RefreshTokenTTLHours:     app.RefreshTokenTTLHours,
+		InactivityTimeoutMinutes: app.InactivityTimeoutMinutes,
 		// Email Action Link Paths
 		ResetPasswordPath: app.ResetPasswordPath,
 		MagicLinkPath:     app.MagicLinkPath,
@@ -1080,6 +1086,9 @@ func (h *GUIHandler) AppUpdate(c *gin.Context) {
 	}
 	if v, err := strconv.Atoi(c.PostForm("refresh_token_ttl_hours")); err == nil && v >= 0 {
 		custom.RefreshTokenTTLHours = v
+	}
+	if v, err := strconv.Atoi(c.PostForm("inactivity_timeout_minutes")); err == nil && v >= 0 {
+		custom.InactivityTimeoutMinutes = v
 	}
 
 	if err := h.Repo.UpdateApp(id, name, description, frontendURL, twoFAIssuerName, twoFAEnabled, twoFARequired, passkey2FAEnabled, passkeyLoginEnabled, magicLinkEnabled, oidcEnabled, globalLoginEnabled, bf, custom); err != nil {

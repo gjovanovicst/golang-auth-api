@@ -376,9 +376,10 @@ func resolveTokenTTLs(app *models.Application) (accessTTL, refreshTTL time.Durat
 
 // ssoEvent is the shape published to Redis and forwarded to SSE clients.
 type ssoEvent struct {
-	Type      string `json:"type"`       // "peer_login" | "peer_logout" | "ping"
+	Type      string `json:"type"`             // "peer_login" | "peer_logout" | "ping"
 	SSOToken  string `json:"sso_token,omitempty"`
 	TargetApp string `json:"target_app,omitempty"`
+	Reason    string `json:"reason,omitempty"` // "voluntary" | "revoked" (peer_logout only)
 }
 
 // PublishLoginToGroup issues individual SSO exchange tokens for every peer app
@@ -428,7 +429,10 @@ func (h *Handler) PublishLoginToGroup(sourceAppID, userID string) {
 
 // PublishLogoutToGroup publishes a peer_logout event so all peer-app SSE
 // clients can clear their tokens and redirect to the login page.
-func (h *Handler) PublishLogoutToGroup(sourceAppID, userEmail string) {
+// reason should be "voluntary" for user-initiated logouts, "revoked" for
+// admin/forced revocations.  Frontends use this to decide whether to show
+// a "Session Revoked" modal or just redirect silently to the login page.
+func (h *Handler) PublishLogoutToGroup(sourceAppID, userEmail, reason string) {
 	groupID, err := cachedGroupID(sourceAppID, h.AdminRepo)
 	if err != nil || groupID == "" {
 		return
@@ -442,7 +446,7 @@ func (h *Handler) PublishLogoutToGroup(sourceAppID, userEmail string) {
 		log.Printf("[SSO] PublishLogoutToGroup: failed to get peers for app %s: %v", sourceAppID, err)
 	} else {
 		for _, peer := range peers {
-			if err := redis.StorePendingLogoutEvent(peer.AppID); err != nil {
+			if err := redis.StorePendingLogoutEvent(peer.AppID, reason); err != nil {
 				log.Printf("[SSO] PublishLogoutToGroup: failed to store pending logout for peer %s: %v", peer.AppID, err)
 			}
 		}
@@ -453,11 +457,11 @@ func (h *Handler) PublishLogoutToGroup(sourceAppID, userEmail string) {
 	// logout from within the source app), the source app is excluded from
 	// GetPeersForApp but still needs to receive the signal on its next SSE
 	// reconnect so it can redirect to the login page.
-	if err := redis.StorePendingLogoutEvent(sourceAppID); err != nil {
+	if err := redis.StorePendingLogoutEvent(sourceAppID, reason); err != nil {
 		log.Printf("[SSO] PublishLogoutToGroup: failed to store pending logout for source app %s: %v", sourceAppID, err)
 	}
 
-	evt := ssoEvent{Type: "peer_logout"}
+	evt := ssoEvent{Type: "peer_logout", Reason: reason}
 	payload, _ := json.Marshal(evt)
 	if err := redis.PublishSSOEvent(groupID, string(payload)); err != nil {
 		log.Printf("[SSO] PublishLogoutToGroup: failed to publish logout event: %v", err)

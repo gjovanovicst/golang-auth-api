@@ -88,6 +88,13 @@ type TwoFAEnableResponse struct {
 	RecoveryCodes []string `json:"recovery_codes"`
 }
 
+// TwoFAStatusResponse represents the per-application 2FA status for the current user
+type TwoFAStatusResponse struct {
+	Enabled          bool   `json:"enabled"`           // Whether 2FA is enabled for this user in this app
+	Method           string `json:"method,omitempty"`  // "totp", "email", "sms", "passkey", "backup_email"
+	HasRecoveryCodes bool   `json:"has_recovery_codes"` // Whether recovery codes exist
+}
+
 // TwoFARecoveryCodesResponse represents the response for new recovery codes
 type TwoFARecoveryCodesResponse struct {
 	Message       string   `json:"message"`

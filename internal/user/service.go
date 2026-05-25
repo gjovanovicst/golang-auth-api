@@ -233,11 +233,27 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		}, nil
 	}
 
-	// Check if 2FA is enabled for this user AND the app's master switch is ON.
-	// If two_fa_enabled is false on the application, skip the 2FA challenge
-	// entirely even when the individual user has 2FA configured — the admin has
-	// explicitly disabled 2FA at the app level.
-	if user.TwoFAEnabled && (!appLoaded || app.TwoFAEnabled) {
+	// Check if 2FA is enabled for this (user, app) pair AND the app's master switch is ON.
+	// Per-app 2FA is stored in user_app_2fa; if no row exists we fall back to the legacy
+	// global user.TwoFAEnabled flag so that existing deployments continue to work until
+	// the migration populates user_app_2fa rows for all users.
+	var appTwoFAEnabled bool
+	var appTwoFAMethod string
+
+	var appTwoFARec models.UserApp2FA
+	appTwoFAErr := s.DB.Table("user_app_2fa").Where("user_id = ? AND application_id = ?", user.ID, appID).
+		First(&appTwoFARec).Error
+	if appTwoFAErr == nil {
+		// Per-app record exists — use it exclusively
+		appTwoFAEnabled = appTwoFARec.TwoFAEnabled
+		appTwoFAMethod = appTwoFARec.TwoFAMethod
+	} else {
+		// No per-app record yet — fall back to legacy global flag (covers pre-migration users)
+		appTwoFAEnabled = user.TwoFAEnabled
+		appTwoFAMethod = user.TwoFAMethod
+	}
+
+	if appTwoFAEnabled && (!appLoaded || app.TwoFAEnabled) {
 		// Generate temporary token for 2FA verification
 		tempToken := uuid.New().String()
 		if err := redis.SetTempUserSession(appID.String(), tempToken, user.ID.String(), 10*time.Minute); err != nil {
@@ -245,7 +261,7 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		}
 
 		// Determine the user's 2FA method (default to TOTP for backward compatibility)
-		twoFAMethod := user.TwoFAMethod
+		twoFAMethod := appTwoFAMethod
 		if twoFAMethod == "" {
 			twoFAMethod = emailpkg.TwoFAMethodTOTP
 		}

@@ -11,8 +11,21 @@ import (
 	"github.com/google/uuid"
 )
 
+// InactivityResolver resolves the effective inactivity timeout (in minutes) for a given app.
+// Returns 0 if the feature is disabled for that app.
+type InactivityResolver interface {
+	GetInactivityTimeoutMinutes(appID string) int
+}
+
 // Service handles session lifecycle management backed by Redis.
-type Service struct{}
+type Service struct {
+	// InactivityResolver resolves per-app inactivity timeout. Optional; if nil, inactivity
+	// enforcement is skipped.
+	InactivityResolver InactivityResolver
+	// GroupLogoutFunc is called when a session is expired due to inactivity so that peer
+	// apps in the same SSO session group receive a peer_logout SSE event.
+	GroupLogoutFunc func(sourceAppID, userEmail, reason string)
+}
 
 // NewService creates a new session service.
 func NewService() *Service {
@@ -86,6 +99,31 @@ func (s *Service) RefreshSession(oldRefreshToken string, accessTTL, refreshTTL t
 	}
 	if storedToken != oldRefreshToken {
 		return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Refresh token revoked or invalid")
+	}
+
+	// --- Inactivity timeout enforcement ---
+	// Check whether the session has been idle for longer than the per-app (or global)
+	// inactivity window. The last_active field is updated on every token refresh so it
+	// accurately tracks real user activity.
+	if s.InactivityResolver != nil {
+		timeoutMinutes := s.InactivityResolver.GetInactivityTimeoutMinutes(claims.AppID)
+		if timeoutMinutes > 0 {
+			lastActiveStr, laErr := redis.GetSessionField(claims.AppID, claims.SessionID, "last_active")
+			if laErr == nil && lastActiveStr != "" {
+				if lastActive, parseErr := time.Parse(time.RFC3339, lastActiveStr); parseErr == nil {
+					if time.Since(lastActive) > time.Duration(timeoutMinutes)*time.Minute {
+						// Revoke the session immediately so subsequent requests also fail.
+						_ = redis.DeleteSession(claims.AppID, claims.SessionID, claims.UserID)
+						// Fire peer group logout asynchronously so the user is signed out on all
+						// peer apps too. Reason "expired" → amber "Session Expired" modal on frontends.
+						if s.GroupLogoutFunc != nil {
+							go s.GroupLogoutFunc(claims.AppID, claims.UserID, "expired")
+						}
+						return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Session expired due to inactivity")
+					}
+				}
+			}
+		}
 	}
 
 	// Generate new token pair (same session ID).

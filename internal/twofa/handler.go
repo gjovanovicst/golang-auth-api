@@ -287,7 +287,7 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 	appID := appIDVal.(uuid.UUID)
 
 	// Determine the user's current 2FA method and verify accordingly
-	method, methodErr := h.Service.GetUserTwoFAMethod(userID.(string))
+	method, methodErr := h.Service.GetUserTwoFAMethod(appID, userID.(string))
 	if methodErr != nil {
 		c.JSON(methodErr.Code, dto.ErrorResponse{Error: methodErr.Message})
 		return
@@ -301,7 +301,7 @@ func (h *Handler) Disable2FA(c *gin.Context) {
 		}
 	} else {
 		// For TOTP, verify the TOTP code
-		if verifyErr := h.Service.VerifyTOTP(userID.(string), req.Code); verifyErr != nil {
+		if verifyErr := h.Service.VerifyTOTP(appID, userID.(string), req.Code); verifyErr != nil {
 			c.JSON(verifyErr.Code, dto.ErrorResponse{Error: verifyErr.Message})
 			return
 		}
@@ -370,7 +370,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	if req.RecoveryCode != "" {
 		// Recovery code verification — works for both TOTP and email 2FA
 		method = "recovery_code"
-		verificationErr = h.Service.VerifyRecoveryCode(userID, req.RecoveryCode)
+		verificationErr = h.Service.VerifyRecoveryCode(appID, userID, req.RecoveryCode)
 
 		// Log recovery code usage
 		userUUID, parseErr := uuid.Parse(userID)
@@ -379,7 +379,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		}
 	} else if req.Code != "" {
 		// Determine the user's 2FA method to decide how to verify the code
-		userMethod, methodErr := h.Service.GetUserTwoFAMethod(userID)
+		userMethod, methodErr := h.Service.GetUserTwoFAMethod(appID, userID)
 		if methodErr != nil {
 			c.JSON(methodErr.Code, dto.ErrorResponse{Error: methodErr.Message})
 			return
@@ -408,7 +408,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		} else {
 			// TOTP code verification (default)
 			method = "totp"
-			verificationErr = h.Service.VerifyTOTP(userID, req.Code)
+			verificationErr = h.Service.VerifyTOTP(appID, userID, req.Code)
 		}
 	} else {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Either code or recovery code is required"})
@@ -509,6 +509,13 @@ func (h *Handler) GenerateRecoveryCodes(c *gin.Context) {
 		return
 	}
 
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
 	var req dto.TwoFAVerifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
@@ -516,12 +523,12 @@ func (h *Handler) GenerateRecoveryCodes(c *gin.Context) {
 	}
 
 	// Verify TOTP code before generating new recovery codes
-	if err := h.Service.VerifyTOTP(userID.(string), req.Code); err != nil {
+	if err := h.Service.VerifyTOTP(appID, userID.(string), req.Code); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
 
-	recoveryCodes, err := h.Service.GenerateNewRecoveryCodes(userID.(string))
+	recoveryCodes, err := h.Service.GenerateNewRecoveryCodes(appID, userID.(string))
 	if err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
@@ -531,15 +538,67 @@ func (h *Handler) GenerateRecoveryCodes(c *gin.Context) {
 	ipAddress, userAgent := util.GetClientInfo(c)
 	userUUID, parseErr := uuid.Parse(userID.(string))
 	if parseErr == nil {
-		appIDVal, appIDExists := c.Get("app_id")
-		if appIDExists {
-			log.LogRecoveryCodeGenerate(appIDVal.(uuid.UUID), userUUID, ipAddress, userAgent)
-		}
+		log.LogRecoveryCodeGenerate(appID, userUUID, ipAddress, userAgent)
 	}
 
 	c.JSON(http.StatusOK, dto.TwoFARecoveryCodesResponse{
 		Message:       "New recovery codes generated successfully",
 		RecoveryCodes: recoveryCodes,
+	})
+}
+
+// @Summary Get per-app 2FA status
+// @Description Returns the 2FA enabled state and method for the current user in this application
+// @Tags 2FA
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} dto.TwoFAStatusResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Router /2fa/status [get]
+func (h *Handler) Get2FAStatus(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "User ID not found in context"})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userUUID, parseErr := uuid.Parse(userID.(string))
+	if parseErr != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "Invalid user ID"})
+		return
+	}
+
+	// Try per-app record first
+	if h.Service.UserApp2FARepo != nil {
+		rec, err := h.Service.UserApp2FARepo.Get(userUUID, appID)
+		if err == nil && rec != nil {
+			hasRecoveryCodes := len(rec.RecoveryCodes) > 2 // more than null/empty JSON
+			c.JSON(http.StatusOK, dto.TwoFAStatusResponse{
+				Enabled:          rec.TwoFAEnabled,
+				Method:           rec.TwoFAMethod,
+				HasRecoveryCodes: hasRecoveryCodes && rec.TwoFAEnabled,
+			})
+			return
+		}
+	}
+
+	// Fallback to global user record (pre-migration)
+	usr, err := h.Service.UserRepo.GetUserByID(userID.(string))
+	if err != nil {
+		c.JSON(http.StatusOK, dto.TwoFAStatusResponse{Enabled: false})
+		return
+	}
+	c.JSON(http.StatusOK, dto.TwoFAStatusResponse{
+		Enabled:          usr.TwoFAEnabled,
+		Method:           usr.TwoFAMethod,
+		HasRecoveryCodes: usr.TwoFAEnabled && len(usr.TwoFARecoveryCodes) > 2,
 	})
 }
 
@@ -933,7 +992,7 @@ func (h *Handler) DisableBackupEmail2FA(c *gin.Context) {
 	appID := appIDVal.(uuid.UUID)
 
 	// Verify the user's current 2FA method is backup_email before disabling
-	method, methodErr := h.Service.GetUserTwoFAMethod(userID.(string))
+	method, methodErr := h.Service.GetUserTwoFAMethod(appID, userID.(string))
 	if methodErr != nil {
 		c.JSON(methodErr.Code, dto.ErrorResponse{Error: methodErr.Message})
 		return

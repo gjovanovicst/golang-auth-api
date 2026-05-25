@@ -1142,3 +1142,18 @@ func (s *Service) IsAppTwoFAEnabled(appID uuid.UUID) bool {
 	}
 	return app.TwoFAEnabled
 }
+
+// GetUserAppTwoFA returns the per-app 2FA enabled flag and method for the given user+app pair.
+// If no per-app record exists it falls back to the user's global two_fa_enabled / two_fa_method values.
+func (s *Service) GetUserAppTwoFA(appID uuid.UUID, userID uuid.UUID, fallbackEnabled bool, fallbackMethod string) (bool, string) {
+	var rec models.UserApp2FA
+	err := s.SocialRepo.DB.Table("user_app_2fa").
+		Where("user_id = ? AND application_id = ?", userID, appID).
+		First(&rec).Error
+	if err == nil {
+		return rec.TwoFAEnabled, rec.TwoFAMethod
+	}
+	// No per-app record — fall back to legacy global flag
+	return fallbackEnabled, fallbackMethod
+}
+ 

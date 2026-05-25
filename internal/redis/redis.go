@@ -333,6 +333,12 @@ func GetSession(appID, sessionID string) (map[string]string, error) {
 	return result, nil
 }
 
+// GetSessionField retrieves a single field from a session hash.
+func GetSessionField(appID, sessionID, field string) (string, error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	return Rdb.HGet(ctx, key, field).Result()
+}
+
 // GetSessionRefreshToken retrieves only the refresh_token field from a session.
 func GetSessionRefreshToken(appID, sessionID string) (string, error) {
 	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
@@ -1234,9 +1240,10 @@ func DeleteLoginPresence(appID string) error {
 // StorePendingLogoutEvent stores a per-app peer_logout signal in Redis so that
 // a client reconnecting after missing the pub/sub broadcast still gets logged
 // out.  TTL is 90 seconds — same reasoning as pending login.
-func StorePendingLogoutEvent(appID string) error {
+// reason should be "voluntary" (user-initiated) or "revoked" (admin/forced).
+func StorePendingLogoutEvent(appID, reason string) error {
 	key := fmt.Sprintf("sso:pending_logout:%s", appID)
-	payload := `{"type":"peer_logout"}`
+	payload := fmt.Sprintf(`{"type":"peer_logout","reason":%q}`, reason)
 	return Rdb.Set(ctx, key, payload, 90*time.Second).Err()
 }
 

@@ -511,6 +511,12 @@
                                        value="{{.RefreshTokenTTLHours}}" min="0" placeholder="0 = use global default">
                                 <div class="form-text">How long refresh tokens are valid. 0 uses the <code>REFRESH_TOKEN_EXPIRATION_HOURS</code> env var.</div>
                             </div>
+                            <div class="col-md-6">
+                                <label for="appInactivityTimeout" class="form-label small text-muted">Inactivity Timeout (minutes)</label>
+                                <input type="number" class="form-control" id="appInactivityTimeout" name="inactivity_timeout_minutes"
+                                       value="{{.InactivityTimeoutMinutes}}" min="0" placeholder="0 = use global default">
+                                <div class="form-text">Expire sessions that have not refreshed within this window. 0 uses the global <code>INACTIVITY_TIMEOUT_MINUTES</code> setting (default 360 min / 6 h).</div>
+                            </div>
                         </div>
                     </div>
 

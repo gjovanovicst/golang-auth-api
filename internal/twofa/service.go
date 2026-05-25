@@ -28,16 +28,18 @@ type Service struct {
 	UserRepo          *user.Repository
 	DB                *gorm.DB
 	EmailService      *emailpkg.Service
-	WebhookService    *webhook.Service // Optional: if nil, webhook dispatch is skipped
-	SMSSender         sms.Sender       // Optional: if nil, SMS features are unavailable
+	WebhookService    *webhook.Service     // Optional: if nil, webhook dispatch is skipped
+	SMSSender         sms.Sender           // Optional: if nil, SMS features are unavailable
 	TrustedDeviceRepo *TrustedDeviceRepository
+	UserApp2FARepo    *UserApp2FARepository // Per-application 2FA records
 }
 
 func NewService(userRepo *user.Repository, db *gorm.DB, emailService *emailpkg.Service) *Service {
 	return &Service{
-		UserRepo:     userRepo,
-		DB:           db,
-		EmailService: emailService,
+		UserRepo:       userRepo,
+		DB:             db,
+		EmailService:   emailService,
+		UserApp2FARepo: NewUserApp2FARepository(db),
 	}
 }
 
@@ -151,8 +153,12 @@ func (s *Service) Enable2FA(appID uuid.UUID, userID string) ([]string, *errors.A
 	recoveryCodes := generateRecoveryCodes(8)
 	recoveryCodesJSON, _ := json.Marshal(recoveryCodes)
 
-	// Update user in database
-	if err := s.UserRepo.Enable2FAWithMethod(userID, secret, string(recoveryCodesJSON), emailpkg.TwoFAMethodTOTP); err != nil {
+	// Write to per-app 2FA record (upsert so it also creates the row if missing)
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+	if err := s.UserApp2FARepo.EnableOrCreate(userUUID, appID, secret, string(recoveryCodesJSON), emailpkg.TwoFAMethodTOTP); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to enable 2FA")
 	}
 
@@ -173,9 +179,13 @@ func (s *Service) Enable2FA(appID uuid.UUID, userID string) ([]string, *errors.A
 	return recoveryCodes, nil
 }
 
-// Disable2FA disables 2FA for a user
+// Disable2FA disables 2FA for a user for the given application
 func (s *Service) Disable2FA(appID uuid.UUID, userID string) *errors.AppError {
-	if err := s.UserRepo.Disable2FA(userID); err != nil {
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+	if err := s.UserApp2FARepo.Disable2FA(userUUID, appID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to disable 2FA")
 	}
 
@@ -191,9 +201,13 @@ func (s *Service) Disable2FA(appID uuid.UUID, userID string) *errors.AppError {
 
 // DisableBackupEmail2FAMethod disables backup_email as the active 2FA method and restores
 // the user's previous 2FA method (e.g. TOTP) that was saved when backup_email was enabled.
-// If there was no prior method the user ends up with 2FA fully disabled.
+// If there was no prior method the user ends up with 2FA fully disabled for this app.
 func (s *Service) DisableBackupEmail2FAMethod(appID uuid.UUID, userID string) *errors.AppError {
-	if err := s.UserRepo.RestorePreviousTwoFAMethod(userID); err != nil {
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+	if err := s.UserApp2FARepo.RestorePreviousMethod(userUUID, appID); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to disable backup email 2FA")
 	}
 
@@ -208,73 +222,119 @@ func (s *Service) DisableBackupEmail2FAMethod(appID uuid.UUID, userID string) *e
 	return nil
 }
 
-// VerifyTOTP verifies a TOTP code for an already enabled 2FA user
-func (s *Service) VerifyTOTP(userID, totpCode string) *errors.AppError {
-	user, err := s.UserRepo.GetUserByID(userID)
-	if err != nil {
-		return errors.NewAppError(errors.ErrNotFound, "User not found")
+// VerifyTOTP verifies a TOTP code for an already enabled 2FA user in the given app
+func (s *Service) VerifyTOTP(appID uuid.UUID, userID, totpCode string) *errors.AppError {
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
 	}
 
-	if !user.TwoFAEnabled || user.TwoFASecret == "" {
-		return errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user")
-	}
-
-	// Verify the TOTP code
-	if !totp.Validate(totpCode, user.TwoFASecret) {
-		return errors.NewAppError(errors.ErrUnauthorized, "Invalid TOTP code")
-	}
-
-	return nil
-}
-
-// VerifyRecoveryCode verifies a recovery code
-func (s *Service) VerifyRecoveryCode(userID, recoveryCode string) *errors.AppError {
-	user, err := s.UserRepo.GetUserByID(userID)
-	if err != nil {
-		return errors.NewAppError(errors.ErrNotFound, "User not found")
-	}
-
-	if !user.TwoFAEnabled {
-		return errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user")
-	}
-
-	// Parse recovery codes
-	var recoveryCodes []string
-	if err := json.Unmarshal(user.TwoFARecoveryCodes, &recoveryCodes); err != nil {
-		return errors.NewAppError(errors.ErrInternal, "Failed to parse recovery codes")
-	}
-
-	// Check if the recovery code exists
-	for i, code := range recoveryCodes {
-		if code == recoveryCode {
-			// Remove the used recovery code
-			recoveryCodes = append(recoveryCodes[:i], recoveryCodes[i+1:]...)
-			updatedCodes, _ := json.Marshal(recoveryCodes)
-
-			// Update the database
-			if err := s.UserRepo.UpdateRecoveryCodes(userID, string(updatedCodes)); err != nil {
-				return errors.NewAppError(errors.ErrInternal, "Failed to update recovery codes")
+	// Try per-app record first
+	if s.UserApp2FARepo != nil {
+		rec, err := s.UserApp2FARepo.Get(userUUID, appID)
+		if err == nil && rec != nil {
+			if !rec.TwoFAEnabled || rec.TwoFASecret == "" {
+				return errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user in this application")
 			}
-
+			if !totp.Validate(totpCode, rec.TwoFASecret) {
+				return errors.NewAppError(errors.ErrUnauthorized, "Invalid TOTP code")
+			}
 			return nil
 		}
 	}
 
+	// Fallback to legacy global user record (pre-migration)
+	usr, err := s.UserRepo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+	if !usr.TwoFAEnabled || usr.TwoFASecret == "" {
+		return errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user")
+	}
+	if !totp.Validate(totpCode, usr.TwoFASecret) {
+		return errors.NewAppError(errors.ErrUnauthorized, "Invalid TOTP code")
+	}
+	return nil
+}
+
+// VerifyRecoveryCode verifies a recovery code for the given (user, app) pair
+func (s *Service) VerifyRecoveryCode(appID uuid.UUID, userID, recoveryCode string) *errors.AppError {
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+
+	// Try per-app record first
+	if s.UserApp2FARepo != nil {
+		rec, err := s.UserApp2FARepo.Get(userUUID, appID)
+		if err == nil && rec != nil && rec.TwoFAEnabled {
+			consumeErr := s.UserApp2FARepo.ConsumeRecoveryCode(userUUID, appID, recoveryCode)
+			if consumeErr == gorm.ErrRecordNotFound {
+				return errors.NewAppError(errors.ErrUnauthorized, "Invalid recovery code")
+			}
+			if consumeErr != nil {
+				return errors.NewAppError(errors.ErrInternal, "Failed to update recovery codes")
+			}
+			return nil
+		}
+	}
+
+	// Fallback to legacy global user record (pre-migration)
+	usr, err := s.UserRepo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+	if !usr.TwoFAEnabled {
+		return errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user")
+	}
+	var recoveryCodes []string
+	if err := json.Unmarshal(usr.TwoFARecoveryCodes, &recoveryCodes); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to parse recovery codes")
+	}
+	for i, code := range recoveryCodes {
+		if code == recoveryCode {
+			recoveryCodes = append(recoveryCodes[:i], recoveryCodes[i+1:]...)
+			updatedCodes, _ := json.Marshal(recoveryCodes)
+			if err := s.UserRepo.UpdateRecoveryCodes(userID, string(updatedCodes)); err != nil {
+				return errors.NewAppError(errors.ErrInternal, "Failed to update recovery codes")
+			}
+			return nil
+		}
+	}
 	return errors.NewAppError(errors.ErrUnauthorized, "Invalid recovery code")
 }
 
-// GenerateNewRecoveryCodes generates new recovery codes for a user
-func (s *Service) GenerateNewRecoveryCodes(userID string) ([]string, *errors.AppError) {
-	user, err := s.UserRepo.GetUserByID(userID)
+// GenerateNewRecoveryCodes generates new recovery codes for a user for the given app
+func (s *Service) GenerateNewRecoveryCodes(appID uuid.UUID, userID string) ([]string, *errors.AppError) {
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+
+	// Try per-app record first
+	if s.UserApp2FARepo != nil {
+		rec, err := s.UserApp2FARepo.Get(userUUID, appID)
+		if err == nil && rec != nil {
+			if !rec.TwoFAEnabled {
+				return nil, errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user in this application")
+			}
+			recoveryCodes := generateRecoveryCodes(8)
+			recoveryCodesJSON, _ := json.Marshal(recoveryCodes)
+			if err := s.UserApp2FARepo.UpdateRecoveryCodes(userUUID, appID, string(recoveryCodesJSON)); err != nil {
+				return nil, errors.NewAppError(errors.ErrInternal, "Failed to update recovery codes")
+			}
+			return recoveryCodes, nil
+		}
+	}
+
+	// Fallback to legacy global user record
+	usr, err := s.UserRepo.GetUserByID(userID)
 	if err != nil {
 		return nil, errors.NewAppError(errors.ErrNotFound, "User not found")
 	}
-
-	if !user.TwoFAEnabled {
+	if !usr.TwoFAEnabled {
 		return nil, errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user")
 	}
-
-	// Generate new recovery codes
 	recoveryCodes := generateRecoveryCodes(8)
 	recoveryCodesJSON, _ := json.Marshal(recoveryCodes)
 
@@ -306,8 +366,12 @@ func (s *Service) EnableEmail2FA(appID uuid.UUID, userID string) ([]string, *err
 	recoveryCodes := generateRecoveryCodes(8)
 	recoveryCodesJSON, _ := json.Marshal(recoveryCodes)
 
-	// Enable 2FA with email method — no TOTP secret needed
-	if err := s.UserRepo.Enable2FAWithMethod(userID, "", string(recoveryCodesJSON), emailpkg.TwoFAMethodEmail); err != nil {
+	// Enable 2FA with email method in per-app record
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+	if err := s.UserApp2FARepo.EnableOrCreate(userUUID, appID, "", string(recoveryCodesJSON), emailpkg.TwoFAMethodEmail); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to enable email 2FA")
 	}
 
@@ -330,7 +394,9 @@ func (s *Service) GenerateEmail2FACode(appID uuid.UUID, userID string) *errors.A
 		return errors.NewAppError(errors.ErrNotFound, "User not found")
 	}
 
-	if !usr.TwoFAEnabled || usr.TwoFAMethod != emailpkg.TwoFAMethodEmail {
+	// Check per-app record; fallback to global
+	method, methodErr := s.GetUserTwoFAMethod(appID, userID)
+	if methodErr != nil || method != emailpkg.TwoFAMethodEmail {
 		return errors.NewAppError(errors.ErrBadRequest, "Email 2FA is not enabled for this user")
 	}
 
@@ -428,8 +494,29 @@ func (s *Service) isEmail2FAAllowed(appID uuid.UUID) bool {
 	return false
 }
 
-// GetUserTwoFAMethod returns the 2FA method for a user.
-func (s *Service) GetUserTwoFAMethod(userID string) (string, *errors.AppError) {
+// GetUserTwoFAMethod returns the 2FA method for a user in the given application.
+func (s *Service) GetUserTwoFAMethod(appID uuid.UUID, userID string) (string, *errors.AppError) {
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return "", errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+
+	// Try per-app record first
+	if s.UserApp2FARepo != nil {
+		rec, err := s.UserApp2FARepo.Get(userUUID, appID)
+		if err == nil && rec != nil {
+			if !rec.TwoFAEnabled {
+				return "", errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user in this application")
+			}
+			method := rec.TwoFAMethod
+			if method == "" {
+				method = emailpkg.TwoFAMethodTOTP
+			}
+			return method, nil
+		}
+	}
+
+	// Fallback to legacy global user record
 	usr, err := s.UserRepo.GetUserByID(userID)
 	if err != nil {
 		return "", errors.NewAppError(errors.ErrNotFound, "User not found")
@@ -522,7 +609,11 @@ func (s *Service) EnableSMS2FA(appID uuid.UUID, userID string) ([]string, *error
 	recoveryCodes := generateRecoveryCodes(8)
 	recoveryCodesJSON, _ := json.Marshal(recoveryCodes)
 
-	if err := s.UserRepo.Enable2FAWithMethod(userID, "", string(recoveryCodesJSON), emailpkg.TwoFAMethodSMS); err != nil {
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+	if err := s.UserApp2FARepo.EnableOrCreate(userUUID, appID, "", string(recoveryCodesJSON), emailpkg.TwoFAMethodSMS); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to enable SMS 2FA")
 	}
 
@@ -546,7 +637,9 @@ func (s *Service) GenerateSMS2FACode(appID uuid.UUID, userID string) *errors.App
 	if err != nil {
 		return errors.NewAppError(errors.ErrNotFound, "User not found")
 	}
-	if !usr.TwoFAEnabled || usr.TwoFAMethod != emailpkg.TwoFAMethodSMS {
+	// Check per-app 2FA method
+	method, methodErr := s.GetUserTwoFAMethod(appID, userID)
+	if methodErr != nil || method != emailpkg.TwoFAMethodSMS {
 		return errors.NewAppError(errors.ErrBadRequest, "SMS 2FA is not enabled for this user")
 	}
 	if !usr.PhoneVerified || usr.PhoneNumber == "" {
@@ -674,13 +767,25 @@ func (s *Service) EnableBackupEmail2FA(appID uuid.UUID, userID string) ([]string
 
 	// Save the user's current method/secret before switching to backup_email so that
 	// DisableBackupEmail2FAMethod can restore the prior configuration exactly.
-	if err := s.UserRepo.SaveAndSwitchToBackupEmail2FA(
-		userID,
-		usr.TwoFAMethod,
-		usr.TwoFASecret,
-		string(recoveryCodesJSON),
-	); err != nil {
+	userUUID, parseErr := uuid.Parse(userID)
+	if parseErr != nil {
+		return nil, errors.NewAppError(errors.ErrBadRequest, "Invalid user ID")
+	}
+
+	// Get the current per-app method/secret to save as "previous"
+	var prevMethod, prevSecret string
+	if rec, recErr := s.UserApp2FARepo.Get(userUUID, appID); recErr == nil && rec != nil {
+		prevMethod = rec.TwoFAMethod
+		prevSecret = rec.TwoFASecret
+	}
+
+	// Enable backup_email method in per-app record
+	if err := s.UserApp2FARepo.EnableOrCreate(userUUID, appID, "", string(recoveryCodesJSON), emailpkg.TwoFAMethodBackupEmail); err != nil {
 		return nil, errors.NewAppError(errors.ErrInternal, "Failed to enable backup email 2FA")
+	}
+	// Save previous method so it can be restored on disable
+	if saveErr := s.UserApp2FARepo.SavePreviousMethod(userUUID, appID, prevMethod, prevSecret); saveErr != nil {
+		log.Printf("Warning: Failed to save previous 2FA method for user %s: %v", userID, saveErr)
 	}
 
 	if s.WebhookService != nil {

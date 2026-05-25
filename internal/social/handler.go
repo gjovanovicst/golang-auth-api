@@ -329,7 +329,8 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
 
-	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
+	appTwoFAEnabled, appTwoFAMethod := h.Service.GetUserAppTwoFA(appID, user.ID, user.TwoFAEnabled, user.TwoFAMethod)
+	if appTwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		// Trusted device check: if the client presents a valid trusted-device cookie
 		// matching this user + app, skip 2FA entirely and issue tokens immediately.
 		if h.ValidateTrustedDevice != nil {
@@ -373,7 +374,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		}
 		// Redirect with 2FA requirement — NO session created yet
 		// Include the user's configured 2FA method so the frontend can show the correct input
-		twoFAMethod := user.TwoFAMethod
+		twoFAMethod := appTwoFAMethod
 		if twoFAMethod == "" {
 			twoFAMethod = "totp"
 		}
@@ -572,7 +573,8 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 
 	ipAddress, userAgent := util.GetClientInfo(c)
 
-	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
+	appTwoFAEnabled, appTwoFAMethod := h.Service.GetUserAppTwoFA(appID, user.ID, user.TwoFAEnabled, user.TwoFAMethod)
+	if appTwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		// Trusted device check: if the client presents a valid trusted-device cookie
 		// matching this user + app, skip 2FA entirely and issue tokens immediately.
 		if h.ValidateTrustedDevice != nil {
@@ -616,7 +618,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		}
 		// Redirect with 2FA requirement — NO session created yet
 		// Include the user's configured 2FA method so the frontend can show the correct input
-		twoFAMethod := user.TwoFAMethod
+		twoFAMethod := appTwoFAMethod
 		if twoFAMethod == "" {
 			twoFAMethod = "totp"
 		}
@@ -813,7 +815,8 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	if user.TwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
+	appTwoFAEnabled, appTwoFAMethod := h.Service.GetUserAppTwoFA(appID, user.ID, user.TwoFAEnabled, user.TwoFAMethod)
+	if appTwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		// Trusted device check: if the client presents a valid trusted-device cookie
 		// matching this user + app, skip 2FA entirely and issue tokens immediately.
 		ipAddress, userAgent := util.GetClientInfo(c)
@@ -858,7 +861,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		}
 		// Redirect with 2FA requirement — NO session created yet
 		// Include the user's configured 2FA method so the frontend can show the correct input
-		twoFAMethod := user.TwoFAMethod
+		twoFAMethod := appTwoFAMethod
 		if twoFAMethod == "" {
 			twoFAMethod = "totp"
 		}

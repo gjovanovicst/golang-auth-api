@@ -133,6 +133,7 @@ var settingsRegistry = []SettingDefinition{
 	// --- JWT & Tokens ---
 	{Key: "ACCESS_TOKEN_EXPIRATION_MINUTES", EnvVar: "ACCESS_TOKEN_EXPIRATION_MINUTES", Category: "jwt", Type: SettingTypeInt, DefaultValue: "15", Label: "Access Token Expiration (minutes)", Description: "How long access tokens remain valid.", Sensitive: false, RequiresRestart: false},
 	{Key: "REFRESH_TOKEN_EXPIRATION_HOURS", EnvVar: "REFRESH_TOKEN_EXPIRATION_HOURS", Category: "jwt", Type: SettingTypeInt, DefaultValue: "720", Label: "Refresh Token Expiration (hours)", Description: "How long refresh tokens remain valid (720 = 30 days).", Sensitive: false, RequiresRestart: false},
+	{Key: "INACTIVITY_TIMEOUT_MINUTES", EnvVar: "INACTIVITY_TIMEOUT_MINUTES", Category: "jwt", Type: SettingTypeInt, DefaultValue: "360", Label: "Inactivity Timeout (minutes)", Description: "Global default: minutes of inactivity before a session is expired (0 = disabled, 360 = 6 hours). Override per app in the app settings.", Sensitive: false, RequiresRestart: false},
 
 	// --- Admin Session ---
 	{Key: "ADMIN_SESSION_EXPIRATION_HOURS", EnvVar: "ADMIN_SESSION_EXPIRATION_HOURS", Category: "admin", Type: SettingTypeInt, DefaultValue: "8", Label: "Session Expiration (hours)", Description: "How long admin GUI sessions remain active.", Sensitive: false, RequiresRestart: false},

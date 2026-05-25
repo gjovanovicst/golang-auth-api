@@ -21,6 +21,14 @@ services:
     networks:
       - default
       - shared-api-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
 
   # Redis Cache
   redis:
@@ -39,6 +47,14 @@ services:
     networks:
       - default
       - shared-api-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+        reservations:
+          cpus: "0.01"
+          memory: 16M
 
   # Redis Commander - Web UI for Redis Management
   redis-commander:
@@ -56,6 +72,11 @@ services:
     restart: unless-stopped
     networks:
       - default
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
 
   # Mailpit — local SMTP catch-all + web UI for email testing.
   # SMTP:   localhost:1025  (host) / mailpit:1025  (inside Docker)
@@ -70,6 +91,11 @@ services:
     networks:
       - default
       - shared-api-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64M
 
   # Go Auth API — Development with Air hot reload
   # Image is built explicitly by dev.sh via: podman build -f Dockerfile.dev
@@ -99,6 +125,14 @@ services:
     networks:
       - default
       - shared-api-network
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1536M
+        reservations:
+          cpus: "0.05"
+          memory: 128M
 
 volumes:
   postgres_data:

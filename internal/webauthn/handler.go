@@ -32,7 +32,7 @@ type AssignDefaultRoleFunc func(appID, userID string) error
 
 // PublishLoginFunc is called after a successful passkey login to propagate the SSO
 // login event to peer apps in the same session group (via Redis pub/sub → SSE).
-type PublishLoginFunc func(appID, userID string)
+type PublishLoginFunc func(appID, userID, deviceID string)
 
 // Handler handles HTTP requests for WebAuthn/Passkey operations.
 type Handler struct {
@@ -44,6 +44,7 @@ type Handler struct {
 	AnomalyDetector   *log.AnomalyDetector   // Anomaly detector for login monitoring (nil = disabled)
 	WebhookService    *webhook.Service       // Optional: webhook dispatcher (nil = disabled)
 	PublishLoginFunc  PublishLoginFunc        // Optional: SSO login propagation to peer apps (nil = disabled)
+	SyncLoginFunc     func(appID, userID string) // Optional: called synchronously before response (e.g. clear token blacklist)
 	DB                *gorm.DB               // for loading per-app token TTL overrides
 }
 
@@ -395,6 +396,9 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 	// Get client info early for IP blocking check
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Compute device fingerprint for device-scoped SSO events.
+	deviceID := util.DeviceFingerprint(c)
+
 	// Check IP-based access rules before processing 2FA verification
 	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
 		return
@@ -421,7 +425,7 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 
 	// Generate final tokens (via session if available, else legacy)
 	roles := h.getUserRoles(appID.String(), userIDStr)
-	accessToken, refreshToken, tokenErr := h.createSessionOrTokens(appID.String(), userIDStr, ipAddress, userAgent, roles)
+	accessToken, refreshToken, tokenErr := 	h.createSessionOrTokens(appID.String(), userIDStr, ipAddress, userAgent, deviceID, roles)
 	if tokenErr != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to generate tokens"})
 		return
@@ -452,8 +456,11 @@ func (h *Handler) FinishPasskey2FA(c *gin.Context) {
 	health.IncLoginSuccess(appID.String())
 
 	// Propagate SSO login to peer apps in the same session group
+	if h.SyncLoginFunc != nil {
+		h.SyncLoginFunc(appID.String(), userIDStr)
+	}
 	if h.PublishLoginFunc != nil {
-		go h.PublishLoginFunc(appID.String(), userIDStr)
+		go h.PublishLoginFunc(appID.String(), userIDStr, deviceID)
 	}
 
 	c.JSON(http.StatusOK, dto.LoginResponse{
@@ -522,6 +529,9 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 	// Get client info early for IP blocking check
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Compute device fingerprint for device-scoped SSO events.
+	deviceID := util.DeviceFingerprint(c)
+
 	// Check IP-based access rules before processing passwordless login
 	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
 		return
@@ -541,7 +551,7 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 
 	// Generate tokens (via session if available, else legacy)
 	roles := h.getUserRoles(appID.String(), userIDStr)
-	accessToken, refreshToken, tokenErr := h.createSessionOrTokens(appID.String(), userIDStr, ipAddress, userAgent, roles)
+	accessToken, refreshToken, tokenErr := 	h.createSessionOrTokens(appID.String(), userIDStr, ipAddress, userAgent, deviceID, roles)
 	if tokenErr != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to generate tokens"})
 		return
@@ -569,8 +579,11 @@ func (h *Handler) FinishPasswordlessLogin(c *gin.Context) {
 	health.IncLoginSuccess(appID.String())
 
 	// Propagate SSO login to peer apps in the same session group
+	if h.SyncLoginFunc != nil {
+		h.SyncLoginFunc(appID.String(), userIDStr)
+	}
 	if h.PublishLoginFunc != nil {
-		go h.PublishLoginFunc(appID.String(), userIDStr)
+		go h.PublishLoginFunc(appID.String(), userIDStr, deviceID)
 	}
 
 	c.JSON(http.StatusOK, dto.LoginResponse{
@@ -626,7 +639,7 @@ func generateTokensForUser(appID string, userID string, roles []string, accessTT
 // createSessionOrTokens creates a session via the session service if available,
 // otherwise falls back to legacy token generation.
 // Per-app token TTL overrides are resolved via user.ResolveTokenTTLs.
-func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent string, roles []string) (string, string, error) {
+func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent, deviceID string, roles []string) (string, string, error) {
 	// Load per-app token TTL overrides
 	var app models.Application
 	var appPtr *models.Application
@@ -638,7 +651,7 @@ func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent string, rol
 	accessTTL, refreshTTL := user.ResolveTokenTTLs(appPtr)
 
 	if h.SessionService != nil {
-		accessToken, refreshToken, _, appErr := h.SessionService.CreateSession(appID, userID, ip, userAgent, roles, accessTTL, refreshTTL)
+		accessToken, refreshToken, _, appErr := h.SessionService.CreateSession(appID, userID, ip, userAgent, deviceID, roles, accessTTL, refreshTTL)
 		if appErr != nil {
 			return "", "", fmt.Errorf("%s", appErr.Message)
 		}

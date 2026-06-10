@@ -276,18 +276,49 @@ func ClearUserTokenBlacklist(appID, userID string) error {
 	return Rdb.Del(ctx, key).Err()
 }
 
+// ScanAndClearAllUserBlacklists removes every app-scoped blacklist_user key for the
+// given userID across ALL applications. This is a SCAN-based sweep used on login to
+// guarantee that stale revocation entries left over from previous force-logouts,
+// session-group expiries, or container restarts cannot block the newly authenticated
+// user — regardless of which apps are currently in a session group.
+//
+// The scan uses the pattern "app:*:blacklist_user:{userID}" and deletes in batches.
+// Cost: one SCAN round-trip per 100 keys in the keyspace (typically a single round-trip
+// in dev/small environments). Safe to call asynchronously.
+func ScanAndClearAllUserBlacklists(userID string) error {
+	pattern := fmt.Sprintf("app:*:blacklist_user:%s", userID)
+	var cursor uint64
+	for {
+		keys, nextCursor, err := Rdb.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			if err := Rdb.Del(ctx, keys...).Err(); err != nil {
+				return err
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
+}
+
 // ==================== Session Management Functions ====================
 
 // CreateSession stores a new session as a Redis Hash with metadata.
 // Key pattern: app:{appID}:session:{sessionID}
 // Also adds the sessionID to the user's session index set.
-func CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent string, ttl time.Duration) error {
+func CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent, deviceID string, ttl time.Duration) error {
 	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
 	fields := map[string]interface{}{
 		"user_id":       userID,
 		"refresh_token": refreshToken,
 		"ip":            ip,
 		"user_agent":    userAgent,
+		"device_id":     deviceID,
 		"created_at":    time.Now().UTC().Format(time.RFC3339),
 		"last_active":   time.Now().UTC().Format(time.RFC3339),
 	}
@@ -385,6 +416,30 @@ func TouchSession(appID, sessionID string) error {
 	return Rdb.HSet(ctx, key, "last_active", time.Now().UTC().Format(time.RFC3339)).Err()
 }
 
+// TouchSessionThrottled updates the last_active timestamp only if it has not been
+// updated within minInterval. This is safe to call on every authenticated request
+// without flooding Redis with writes — at most one write per session per minInterval.
+// Returns (true, nil) if the timestamp was updated, (false, nil) if skipped (too soon),
+// and (false, err) if a Redis error occurred.
+func TouchSessionThrottled(appID, sessionID string, minInterval time.Duration) (bool, error) {
+	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	lastActiveStr, err := Rdb.HGet(ctx, key, "last_active").Result()
+	if err != nil {
+		// Key missing (session deleted) or Redis error — skip touch, let middleware
+		// handle the missing session on its own SessionExists check.
+		return false, nil
+	}
+	if lastActive, parseErr := time.Parse(time.RFC3339, lastActiveStr); parseErr == nil {
+		if time.Since(lastActive) < minInterval {
+			return false, nil // updated recently enough — skip
+		}
+	}
+	if err := Rdb.HSet(ctx, key, "last_active", time.Now().UTC().Format(time.RFC3339)).Err(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // DeleteSession removes a session hash and removes it from the user and app session indexes.
 func DeleteSession(appID, sessionID, userID string) error {
 	key := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
@@ -460,6 +515,40 @@ func DeleteAllUserSessions(appID, userID, exceptSessionID string) error {
 		Rdb.SAdd(ctx, indexKey, exceptSessionID)
 	}
 
+	return nil
+}
+
+// DeleteUserSessionsByDevice deletes sessions for a user in an app, but only
+// those whose device_id field matches the given deviceID. Sessions with an
+// empty device_id are only deleted during broadcast revocation (deviceID="").
+func DeleteUserSessionsByDevice(appID, userID, deviceID string) error {
+	sessionIDs, err := GetUserSessionIDs(appID, userID)
+	if err != nil {
+		return err
+	}
+	for _, sid := range sessionIDs {
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		did, err := Rdb.HGet(ctx, sessionKey, "device_id").Result()
+		if err != nil || did == "" {
+			// Pre-migration session or missing field: only delete when
+			// broadcast-revoking (deviceID is empty).
+			if deviceID == "" {
+				Rdb.Del(ctx, sessionKey)
+				appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+				Rdb.SRem(ctx, appIndexKey, sid)
+			}
+			continue
+		}
+		if did == deviceID {
+			Rdb.Del(ctx, sessionKey)
+			appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+			Rdb.SRem(ctx, appIndexKey, sid)
+		}
+	}
+	if deviceID == "" {
+		indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+		Rdb.Del(ctx, indexKey)
+	}
 	return nil
 }
 
@@ -1237,20 +1326,22 @@ func DeleteLoginPresence(appID string) error {
 	return Rdb.Del(ctx, key).Err()
 }
 
-// StorePendingLogoutEvent stores a per-app peer_logout signal in Redis so that
-// a client reconnecting after missing the pub/sub broadcast still gets logged
-// out.  TTL is 90 seconds — same reasoning as pending login.
+// StorePendingLogoutEvent stores a per-app-per-user peer_logout signal in Redis
+// so that a client reconnecting after missing the pub/sub broadcast still gets
+// logged out.  TTL is 90 seconds — same reasoning as pending login.
 // reason should be "voluntary" (user-initiated) or "revoked" (admin/forced).
-func StorePendingLogoutEvent(appID, reason string) error {
-	key := fmt.Sprintf("sso:pending_logout:%s", appID)
-	payload := fmt.Sprintf(`{"type":"peer_logout","reason":%q}`, reason)
+// The key includes userID so that a logout for one user does not accidentally
+// trigger a "session expired" dialog for a different user on the same app.
+func StorePendingLogoutEvent(appID, userID, reason, deviceID string) error {
+	key := fmt.Sprintf("sso:pending_logout:%s:%s", appID, userID)
+	payload := fmt.Sprintf(`{"type":"peer_logout","reason":%q,"device_id":%q}`, reason, deviceID)
 	return Rdb.Set(ctx, key, payload, 90*time.Second).Err()
 }
 
 // PopPendingLogoutEvent returns and deletes the pending logout signal for the
-// given appID, or ("", nil) if there is none.
-func PopPendingLogoutEvent(appID string) (string, error) {
-	key := fmt.Sprintf("sso:pending_logout:%s", appID)
+// given appID+userID, or ("", nil) if there is none.
+func PopPendingLogoutEvent(appID, userID string) (string, error) {
+	key := fmt.Sprintf("sso:pending_logout:%s:%s", appID, userID)
 	val, err := Rdb.GetDel(ctx, key).Result()
 	if err != nil {
 		if err.Error() == "redis: nil" {
@@ -1259,6 +1350,14 @@ func PopPendingLogoutEvent(appID string) (string, error) {
 		return "", err
 	}
 	return val, nil
+}
+
+// DeletePendingLogoutEvent deletes any pending logout signal for the given
+// appID+userID. Called after a successful login so a stale logout event from
+// a previous session is not replayed to the newly authenticated client.
+func DeletePendingLogoutEvent(appID, userID string) error {
+	key := fmt.Sprintf("sso:pending_logout:%s:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
 }
 
 // SubscribeSSOEvents subscribes to the SSO event channel for a session group
@@ -1314,8 +1413,15 @@ func GetExpiredSessionMetaKeys() ([]string, error) {
 			if err != nil {
 				continue
 			}
-			// TTL <= 0 means expired or no TTL
-			if ttl <= 0 {
+			// Redis TTL semantics:
+			//   > 0  → key is alive with remaining TTL (skip)
+			//  == -1 → key exists but has NO expiry (persistent/orphaned key — skip,
+			//           do NOT treat as expired; keyspace notifications handle true expiry)
+			//  == -2 → key does not exist (SCAN won't return these)
+			// We deliberately exclude -1 (no-TTL) keys because treating them as expired
+			// was causing all sessions to be revoked immediately after server restart or
+			// after any session_meta key was created without an expiry.
+			if ttl == 0 {
 				expiredKeys = append(expiredKeys, key)
 			}
 		}
@@ -1326,4 +1432,23 @@ func GetExpiredSessionMetaKeys() ([]string, error) {
 	}
 
 	return expiredKeys, nil
+}
+
+// SetTrustedDeviceActivation stores a short-lived activation payload keyed by a
+// random HMAC-signed ID.  The payload contains the plaintext trusted-device token,
+// user ID, and app ID.  TTL is fixed at 60 seconds (single login session).
+func SetTrustedDeviceActivation(id, payload string) error {
+	key := fmt.Sprintf("trusted_device_activation:%s", id)
+	return Rdb.Set(ctx, key, payload, 60*time.Second).Err()
+}
+
+// GetAndDeleteTrustedDeviceActivation atomically reads and deletes an activation
+// entry.  Returns redis.Nil when the key does not exist or has already expired.
+func GetAndDeleteTrustedDeviceActivation(id string) (string, error) {
+	key := fmt.Sprintf("trusted_device_activation:%s", id)
+	val, err := Rdb.GetDel(ctx, key).Result()
+	if err != nil {
+		return "", err
+	}
+	return val, nil
 }

@@ -1,6 +1,7 @@
 package user
 
 import (
+	stdlog "log"
 	"net/http"
 	"time"
 
@@ -30,7 +31,8 @@ type Handler struct {
 	AnomalyDetector       *log.AnomalyDetector      // Anomaly detector for login monitoring (nil = disabled)
 	BruteForceService     *bruteforce.Service       // Brute-force protection service (lockout, delays, CAPTCHA)
 	ValidateTrustedDevice TrustedDeviceValidateFunc // Optional: skip 2FA when a valid trusted-device cookie is present
-	PublishLoginFunc      func(appID, userID string) // Optional: called in a goroutine after successful login to propagate SSO
+	PublishLoginFunc      func(appID, userID, deviceID string) // Optional: called in a goroutine after successful login
+	SyncLoginFunc         func(appID, userID string) // Optional: called synchronously before response (e.g. clear token blacklist)
 }
 
 func NewHandler(s *Service) *Handler {
@@ -267,6 +269,9 @@ func (h *Handler) Login(c *gin.Context) {
 	// Get client info for logging and session tracking
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Compute device fingerprint for device-scoped SSO events.
+	deviceID := util.DeviceFingerprint(c)
+
 	// Check IP-based access rules before processing login
 	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
 		return
@@ -323,7 +328,7 @@ func (h *Handler) Login(c *gin.Context) {
 		}
 	}
 
-	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password, ipAddress, userAgent)
+	loginResult, err := h.Service.LoginUser(appID, req.Email, req.Password, ipAddress, userAgent, deviceID)
 	if err != nil {
 		// Only track as failed login if it was an authentication failure (401),
 		// not if the account is locked/deactivated (403) or other errors.
@@ -381,27 +386,49 @@ func (h *Handler) Login(c *gin.Context) {
 	// Trusted device check: if the client presents a valid trusted-device cookie and
 	// it matches this app + user, skip 2FA entirely and issue tokens immediately.
 	if loginResult.RequiresTwoFA && h.ValidateTrustedDevice != nil {
-		if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
-			if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
-				tdUserID == loginResult.UserID && tdAppID == appID {
+		cookieToken, cookieErr := c.Cookie("trusted_device")
+		if cookieErr != nil || cookieToken == "" {
+			// No trusted-device cookie in the request — proceed to normal 2FA.
+			stdlog.Printf("Info: no trusted_device cookie for user %s (app %s), requiring 2FA",
+				loginResult.UserID, appID)
+		} else {
+			tdUserID, tdAppID, tdOk := h.ValidateTrustedDevice(cookieToken)
+			if !tdOk {
+				stdlog.Printf("Info: trusted_device cookie validation failed for user %s (app %s)",
+					loginResult.UserID, appID)
+			} else if tdUserID != loginResult.UserID || tdAppID != appID {
+				stdlog.Printf("Info: trusted_device cookie mismatch for user %s (app %s): cookie user=%s app=%s",
+					loginResult.UserID, appID, tdUserID, tdAppID)
+			} else {
 				// Trusted device is valid — bypass 2FA by creating a fresh session
-				accessToken, refreshToken, sessionErr := h.Service.CreateSessionForUser(appID, loginResult.UserID, ipAddress, userAgent)
-			if sessionErr == nil {
-				details := map[string]interface{}{
-					"requires_2fa":   false,
-					"trusted_device": true,
+				accessToken, refreshToken, sessionErr := h.Service.CreateSessionForUser(appID, loginResult.UserID, ipAddress, userAgent, deviceID)
+				if sessionErr != nil {
+					// Session creation failed — log the error and fall through to the
+					// regular 2FA flow below. The temp session created by LoginUser is
+					// still valid, so the user can complete 2FA normally.
+					stdlog.Printf("Warning: trusted device bypass failed to create session for user %s (app %s): %v",
+						loginResult.UserID, appID, sessionErr.Message)
+				} else {
+					stdlog.Printf("Info: trusted device bypass succeeded for user %s (app %s)",
+						loginResult.UserID, appID)
+					details := map[string]interface{}{
+						"requires_2fa":   false,
+						"trusted_device": true,
+					}
+					h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
+					health.IncLoginSuccess(appID.String())
+					if h.SyncLoginFunc != nil {
+						h.SyncLoginFunc(appID.String(), loginResult.UserID.String())
+					}
+					if h.PublishLoginFunc != nil {
+						go h.PublishLoginFunc(appID.String(), loginResult.UserID.String(), deviceID)
+					}
+					c.JSON(http.StatusOK, dto.LoginResponse{
+						AccessToken:  accessToken,
+						RefreshToken: refreshToken,
+					})
+					return
 				}
-				h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
-				health.IncLoginSuccess(appID.String())
-				if h.PublishLoginFunc != nil {
-					go h.PublishLoginFunc(appID.String(), loginResult.UserID.String())
-				}
-				c.JSON(http.StatusOK, dto.LoginResponse{
-					AccessToken:  accessToken,
-					RefreshToken: refreshToken,
-				})
-				return
-			}
 			}
 		}
 	}
@@ -433,8 +460,11 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 	h.runLoginAnomalyDetection(appID, loginResult.UserID, req.Email, ipAddress, userAgent, log.EventLogin, details)
 	health.IncLoginSuccess(appID.String())
+	if h.SyncLoginFunc != nil {
+		h.SyncLoginFunc(appID.String(), loginResult.UserID.String())
+	}
 	if h.PublishLoginFunc != nil {
-		go h.PublishLoginFunc(appID.String(), loginResult.UserID.String())
+		go h.PublishLoginFunc(appID.String(), loginResult.UserID.String(), deviceID)
 	}
 
 	// Standard login response
@@ -788,7 +818,9 @@ func (h *Handler) Logout(c *gin.Context) {
 		sessionID = sid.(string)
 	}
 
-	if err := h.Service.LogoutUser(appID.String(), userID.(string), sessionID, req.RefreshToken, req.AccessToken); err != nil {
+	deviceID := util.DeviceFingerprint(c)
+
+	if err := h.Service.LogoutUser(appID.String(), userID.(string), sessionID, req.RefreshToken, req.AccessToken, deviceID); err != nil {
 		c.JSON(err.Code, dto.ErrorResponse{Error: err.Message})
 		return
 	}
@@ -1261,12 +1293,15 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Compute device fingerprint for device-scoped SSO events.
+	deviceID := util.DeviceFingerprint(c)
+
 	// Check IP-based access rules before processing magic link
 	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
 		return
 	}
 
-	result, err := h.Service.VerifyMagicLink(appID, req.Token, ipAddress, userAgent)
+	result, err := h.Service.VerifyMagicLink(appID, req.Token, ipAddress, userAgent, deviceID)
 	if err != nil {
 		// Log failed attempt
 		log.LogMagicLinkFailed(appID, ipAddress, userAgent, err.Message)
@@ -1287,8 +1322,11 @@ func (h *Handler) VerifyMagicLink(c *gin.Context) {
 	health.IncLoginSuccess(appID.String())
 
 	// Propagate SSO login to peer apps in the same session group
+	if h.SyncLoginFunc != nil {
+		h.SyncLoginFunc(appID.String(), result.UserID.String())
+	}
 	if h.PublishLoginFunc != nil {
-		go h.PublishLoginFunc(appID.String(), result.UserID.String())
+		go h.PublishLoginFunc(appID.String(), result.UserID.String(), deviceID)
 	}
 
 	// Dispatch webhook event (non-fatal)

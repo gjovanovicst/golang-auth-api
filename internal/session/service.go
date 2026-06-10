@@ -24,7 +24,7 @@ type Service struct {
 	InactivityResolver InactivityResolver
 	// GroupLogoutFunc is called when a session is expired due to inactivity so that peer
 	// apps in the same SSO session group receive a peer_logout SSE event.
-	GroupLogoutFunc func(sourceAppID, userEmail, reason string)
+	GroupLogoutFunc func(sourceAppID, userID, reason, deviceID string)
 }
 
 // NewService creates a new session service.
@@ -39,7 +39,7 @@ func NewService() *Service {
 //
 // accessTTL and refreshTTL control token lifetimes. Pass 0 to use the global
 // defaults configured via environment variables.
-func (s *Service) CreateSession(appID, userID, ip, userAgent string, roles []string, accessTTL, refreshTTL time.Duration) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
+func (s *Service) CreateSession(appID, userID, ip, userAgent, deviceID string, roles []string, accessTTL, refreshTTL time.Duration) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
 	sessionID = uuid.New().String()
 
 	// Resolve effective refresh TTL for Redis session expiry
@@ -58,7 +58,7 @@ func (s *Service) CreateSession(appID, userID, ip, userAgent string, roles []str
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to generate refresh token")
 	}
 
-	if err := redis.CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent, effectiveRefreshTTL); err != nil {
+	if err := redis.CreateSession(appID, sessionID, userID, refreshToken, ip, userAgent, deviceID, effectiveRefreshTTL); err != nil {
 		return "", "", "", errors.NewAppError(errors.ErrInternal, "Failed to create session")
 	}
 
@@ -112,12 +112,14 @@ func (s *Service) RefreshSession(oldRefreshToken string, accessTTL, refreshTTL t
 			if laErr == nil && lastActiveStr != "" {
 				if lastActive, parseErr := time.Parse(time.RFC3339, lastActiveStr); parseErr == nil {
 					if time.Since(lastActive) > time.Duration(timeoutMinutes)*time.Minute {
+						// Read device_id before deleting so the peer_logout is scoped.
+						deviceID, _ := redis.GetSessionField(claims.AppID, claims.SessionID, "device_id")
 						// Revoke the session immediately so subsequent requests also fail.
 						_ = redis.DeleteSession(claims.AppID, claims.SessionID, claims.UserID)
 						// Fire peer group logout asynchronously so the user is signed out on all
 						// peer apps too. Reason "expired" → amber "Session Expired" modal on frontends.
 						if s.GroupLogoutFunc != nil {
-							go s.GroupLogoutFunc(claims.AppID, claims.UserID, "expired")
+							go s.GroupLogoutFunc(claims.AppID, claims.UserID, "expired", deviceID)
 						}
 						return "", "", "", errors.NewAppError(errors.ErrUnauthorized, "Session expired due to inactivity")
 					}
@@ -256,10 +258,23 @@ func (s *Service) RevokeAllUserSessions(appID, userID string) *errors.AppError {
 	}
 
 	// Blacklist all tokens as a safety net
-	maxTokenLifetime := time.Hour * time.Duration(24*30) // 30 days
+	maxTokenLifetime := jwt.DefaultRefreshTokenTTL()
+	if maxTokenLifetime <= 0 {
+		maxTokenLifetime = 720 * time.Hour
+	}
 	if err := redis.BlacklistAllUserTokens(appID, userID, maxTokenLifetime); err != nil {
 		return errors.NewAppError(errors.ErrInternal, "Failed to blacklist user tokens")
 	}
 
 	return nil
 }
+
+// RevokeUserSessionsByDevice deletes sessions for a user in an app where the
+// device_id matches. Sessions without device_id (pre-migration) are deleted too.
+func (s *Service) RevokeUserSessionsByDevice(appID, userID, deviceID string) *errors.AppError {
+	if err := redis.DeleteUserSessionsByDevice(appID, userID, deviceID); err != nil {
+		log.Printf("Warning: Failed to delete device-scoped sessions for user %s: %v\n", userID, err)
+	}
+	return nil
+}
+

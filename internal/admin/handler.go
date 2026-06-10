@@ -183,6 +183,39 @@ func (h *Handler) CreateApp(c *gin.Context) {
 	})
 }
 
+// ListApps returns a JSON-paginated list of all applications.
+// @Summary List applications
+// @Description Returns all registered applications (paginated). Used by Centrora to populate the per-app settings UI.
+// @Tags Admin
+// @Produce json
+// @Param page     query int    false "Page number (default 1)"
+// @Param pageSize query int    false "Page size (default 100)"
+// @Param tenantId query string false "Filter by tenant ID"
+// @Success 200 {object} map[string]interface{}
+// @Security AdminApiKey
+// @Router /admin/apps [get]
+func (h *Handler) ListApps(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "100"))
+	tenantID := c.Query("tenantId")
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 100
+	}
+	apps, total, err := h.Repo.ListAppsWithDetails(page, pageSize, tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to list applications"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":  apps,
+		"total": total,
+		"page":  page,
+	})
+}
+
 // GetAppDetails retrieves app details including OAuth configs
 // @Summary Get application details
 // @Description Retrieve details of a specific application including OAuth configurations
@@ -1953,4 +1986,27 @@ func writeUserCSV(w interface{ Write([]byte) (int, error) }, items []UserExportI
 		})
 	}
 	cw.Flush()
+}
+
+// GetUsersByIDs handles POST /admin/users/by-ids.
+// Accepts {"ids": ["uuid1","uuid2",...]} and returns a list of user profiles
+// (id, email, name, picture). Intended for trusted service-to-service calls.
+func (h *Handler) GetUsersByIDs(c *gin.Context) {
+	var req struct {
+		IDs []string `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many IDs (max 200)"})
+		return
+	}
+	profiles, err := h.Repo.GetUserProfilesByIDs(req.IDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to lookup users"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": profiles})
 }

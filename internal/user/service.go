@@ -36,7 +36,7 @@ type AssignDefaultRoleFunc func(appID, userID string) error
 // GroupLogoutFunc is called (in a goroutine) after a successful logout when the
 // app belongs to an SSO session group with GlobalLogout enabled.  It is wired
 // from cmd/api/main.go via adminRepo to avoid an import cycle.
-type GroupLogoutFunc func(appID, userEmail string)
+type GroupLogoutFunc func(appID, userID, deviceID string)
 
 type Service struct {
 	Repo              *Repository
@@ -171,7 +171,7 @@ func (s *Service) RegisterUser(appID uuid.UUID, email, password string) (uuid.UU
 	return user.ID, nil
 }
 
-func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent string) (*LoginResult, *errors.AppError) {
+func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent, deviceID string) (*LoginResult, *errors.AppError) {
 	// Load application flags first — global_login_enabled must be known before
 	// the user lookup. All other flags are loaded here too to avoid a second query.
 	// Fail-open: if the query fails we treat all flags as safe defaults.
@@ -332,7 +332,7 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 	if appLoaded && app.TwoFARequired {
 		// User doesn't have 2FA set up, but the app requires it.
 		// Issue tokens via session so the user can authenticate to /2fa/generate, but flag the response.
-		accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, &app)
+		accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, deviceID, &app)
 		if appErr != nil {
 			return nil, appErr
 		}
@@ -356,7 +356,7 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 	if appLoaded {
 		appPtr = &app
 	}
-	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, appPtr)
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, "", appPtr)
 	if appErr != nil {
 		return nil, appErr
 	}
@@ -425,7 +425,7 @@ func (s *Service) RefreshUserToken(refreshToken string, accessTTL, refreshTTL ti
 }
 
 // LogoutUser logs out a user by revoking their session and blacklisting their access token
-func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken string) *errors.AppError {
+func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken, deviceID string) *errors.AppError {
 	// Revoke the session if session service is available and sessionID is present
 	if s.SessionService != nil && sessionID != "" {
 		if appErr := s.SessionService.LogoutSession(appID, userID, sessionID, accessToken); appErr != nil {
@@ -433,9 +433,7 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 		}
 		// Propagate logout to SSO group peers (non-blocking, best-effort)
 		if s.GroupLogoutFunc != nil {
-			if u, err := s.Repo.GetUserByIDBasic(userID); err == nil && u != nil {
-				go s.GroupLogoutFunc(appID, u.Email)
-			}
+			go s.GroupLogoutFunc(appID, userID, deviceID)
 		}
 		return nil
 	}
@@ -465,21 +463,19 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 
 	// Propagate logout to SSO group peers (non-blocking, best-effort)
 	if s.GroupLogoutFunc != nil {
-		if u, err := s.Repo.GetUserByIDBasic(userID); err == nil && u != nil {
-			go s.GroupLogoutFunc(appID, u.Email)
-		}
+		go s.GroupLogoutFunc(appID, userID, deviceID)
 	}
 
 	return nil
 }
 
 // createSession creates a new session via the session service, or falls back to legacy token storage.
-func (s *Service) createSession(appID, userID, ip, userAgent string, app *models.Application) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
+func (s *Service) createSession(appID, userID, ip, userAgent, deviceID string, app *models.Application) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
 	roles := s.getUserRoles(appID, userID)
 	accessTTL, refreshTTL := ResolveTokenTTLs(app)
 
 	if s.SessionService != nil {
-		return s.SessionService.CreateSession(appID, userID, ip, userAgent, roles, accessTTL, refreshTTL)
+		return s.SessionService.CreateSession(appID, userID, ip, userAgent, deviceID, roles, accessTTL, refreshTTL)
 	}
 
 	// Legacy fallback: generate tokens without session tracking
@@ -500,13 +496,13 @@ func (s *Service) createSession(appID, userID, ip, userAgent string, app *models
 
 // CreateSessionForUser creates a new authenticated session for a user by app+userID.
 // Used by the trusted-device bypass in the Login handler to issue tokens when 2FA is skipped.
-func (s *Service) CreateSessionForUser(appID, userID uuid.UUID, ip, userAgent string) (accessToken, refreshToken string, appErr *errors.AppError) {
+func (s *Service) CreateSessionForUser(appID, userID uuid.UUID, ip, userAgent, deviceID string) (accessToken, refreshToken string, appErr *errors.AppError) {
 	var app models.Application
 	var appPtr *models.Application
 	if s.DB.Select("access_token_ttl_minutes, refresh_token_ttl_hours").First(&app, "id = ?", appID).Error == nil {
 		appPtr = &app
 	}
-	at, rt, _, err := s.createSession(appID.String(), userID.String(), ip, userAgent, appPtr)
+	at, rt, _, err := s.createSession(appID.String(), userID.String(), ip, userAgent, deviceID, appPtr)
 	return at, rt, err
 }
 
@@ -975,7 +971,7 @@ func (s *Service) RequestMagicLink(appID uuid.UUID, email string) *errors.AppErr
 
 // VerifyMagicLink verifies a magic link token and creates a session (passwordless login).
 // 2FA is skipped since the magic link itself serves as email-based verification.
-func (s *Service) VerifyMagicLink(appID uuid.UUID, token, ip, userAgent string) (*LoginResult, *errors.AppError) {
+func (s *Service) VerifyMagicLink(appID uuid.UUID, token, ip, userAgent, deviceID string) (*LoginResult, *errors.AppError) {
 	// Check if magic link is enabled for this application
 	var app models.Application
 	if err := s.DB.Select("magic_link_enabled, access_token_ttl_minutes, refresh_token_ttl_hours").First(&app, "id = ?", appID).Error; err != nil {
@@ -1018,7 +1014,7 @@ func (s *Service) VerifyMagicLink(appID uuid.UUID, token, ip, userAgent string) 
 	}
 
 	// Create session (skip 2FA — magic link is itself an email-based verification factor)
-	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, &app)
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, "", &app)
 	if appErr != nil {
 		return nil, appErr
 	}

@@ -206,6 +206,7 @@ type AppListItem struct {
 	TenantID            uuid.UUID
 	Name                string
 	Description         string
+	FrontendURL         string
 	TenantName          string
 	OAuthConfigCount    int64
 	TwoFAEnabled        bool
@@ -235,6 +236,7 @@ func (r *Repository) ListAppsWithDetails(page, pageSize int, tenantID string) ([
 
 	query := r.DB.Model(&models.Application{}).
 		Select(`applications.id, applications.tenant_id, applications.name, applications.description,
+			applications.frontend_url,
 			applications.created_at, applications.updated_at,
 			applications.two_fa_enabled, applications.two_fa_required,
 			applications.passkey2_fa_enabled, applications.passkey_login_enabled,
@@ -346,9 +348,9 @@ func (r *Repository) UpdateApp(id string, name string, description string, front
 		"pw_history_count":  custom.PwHistoryCount,
 		"pw_max_age_days":   custom.PwMaxAgeDays,
 		// Token TTL overrides
-		"access_token_ttl_minutes":    custom.AccessTokenTTLMinutes,
-		"refresh_token_ttl_hours":     custom.RefreshTokenTTLHours,
-		"inactivity_timeout_minutes":  custom.InactivityTimeoutMinutes,
+		"access_token_ttl_minutes":   custom.AccessTokenTTLMinutes,
+		"refresh_token_ttl_hours":    custom.RefreshTokenTTLHours,
+		"inactivity_timeout_minutes": custom.InactivityTimeoutMinutes,
 		// Email Action Link Paths
 		"reset_password_path": custom.ResetPasswordPath,
 		"magic_link_path":     custom.MagicLinkPath,
@@ -1292,6 +1294,29 @@ func (r *Repository) GetUserEmailsByIDs(userIDs []string) (map[string]string, er
 		result[r.ID] = r.Email
 	}
 	return result, nil
+}
+
+// UserProfile is a minimal user profile used for bulk member enrichment.
+type UserProfile struct {
+	ID      string `json:"id"`
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Picture string `json:"picture" gorm:"column:profile_picture"`
+}
+
+// GetUserProfilesByIDs returns a slice of UserProfile for the given user IDs.
+func (r *Repository) GetUserProfilesByIDs(userIDs []string) ([]UserProfile, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	var rows []UserProfile
+	if err := r.DB.Model(&models.User{}).
+		Select("id, email, name, profile_picture").
+		Where("id IN ?", userIDs).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // GetAppNamesByIDs returns a map of appID -> appName for the given application IDs.

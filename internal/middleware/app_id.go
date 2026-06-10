@@ -28,6 +28,15 @@ func AppIDMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// The trusted-device activation endpoint is a plain browser GET navigation
+		// (window.location.href) — no custom headers can be set.  The handler
+		// authenticates the request via an HMAC-signed token stored in Redis and
+		// does not need the app_id from middleware context.
+		if path == "/2fa/trusted-device/activate" {
+			c.Next()
+			return
+		}
+
 		appIDStr := c.GetHeader(HeaderAppID)
 
 		// If header is missing, check query parameter

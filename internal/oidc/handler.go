@@ -32,8 +32,7 @@ type Handler struct {
 	Repo    *Repository
 	// GroupLogoutFunc, if set, is called on RP-initiated logout to revoke the
 	// user's sessions in all peer apps that share the same session group.
-	// Signature mirrors userService.GroupLogoutFunc: (appID, userEmail string).
-	GroupLogoutFunc func(appID, userEmail string)
+	GroupLogoutFunc func(appID, userID, deviceID string)
 }
 
 // NewHandler constructs the OIDC Handler.
@@ -734,7 +733,7 @@ func (h *Handler) EndSession(c *gin.Context) {
 	}
 	// logoutUserID / logoutUserEmail are populated below from the hint or the
 	// OIDC browser session cookie so we can revoke the user's JWT sessions.
-	var logoutUserID, logoutUserEmail string
+	var logoutUserID string
 	if idTokenHint != "" {
 		rsaKey, err := h.Service.GetOrCreateRSAKey(app.ID)
 		if err == nil {
@@ -751,7 +750,6 @@ func (h *Handler) EndSession(c *gin.Context) {
 				return
 			}
 			logoutUserID = idClaims.Subject
-			logoutUserEmail = user.Email
 		}
 	}
 
@@ -765,9 +763,6 @@ func (h *Handler) EndSession(c *gin.Context) {
 		if logoutUserID == "" {
 			if uid, err := redis.GetOIDCBrowserSession(app.ID.String(), sessionToken); err == nil && uid != "" {
 				logoutUserID = uid
-				if user, err := h.Repo.GetUserByID(uid); err == nil && user != nil {
-					logoutUserEmail = user.Email
-				}
 			}
 		}
 		_ = redis.DeleteOIDCBrowserSession(app.ID.String(), sessionToken)
@@ -782,8 +777,8 @@ func (h *Handler) EndSession(c *gin.Context) {
 		_ = redis.BlacklistAllUserTokens(appIDStr, logoutUserID, accessTokenTTL)
 		// Cross-app SSO logout: revoke sessions in all peer apps that share the
 		// same session group (mirrors userService.GroupLogoutFunc behaviour).
-		if h.GroupLogoutFunc != nil && logoutUserEmail != "" {
-			h.GroupLogoutFunc(appIDStr, logoutUserEmail)
+		if h.GroupLogoutFunc != nil {
+			h.GroupLogoutFunc(appIDStr, logoutUserID, "")
 		}
 	}
 

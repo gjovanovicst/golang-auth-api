@@ -361,7 +361,7 @@ func (s *Service) MintTokensForUser(app *models.Application, client *models.OIDC
 	if sessionTTL <= 0 {
 		sessionTTL = 720 * time.Hour
 	}
-	if err := redis.CreateSession(app.ID.String(), sessionID, user.ID.String(), refreshToken, "", "", sessionTTL); err != nil {
+	if err := redis.CreateSession(app.ID.String(), sessionID, user.ID.String(), refreshToken, "", "", "", sessionTTL); err != nil {
 		return "", "", "", 0, fmt.Errorf("create session: %w", err)
 	}
 
@@ -445,7 +445,7 @@ func (s *Service) ClientCredentialsGrant(app *models.Application, clientID, clie
 	if ccSessionTTL <= 0 {
 		ccSessionTTL = 720 * time.Hour
 	}
-	if err := redis.CreateSession(app.ID.String(), sessionID, client.ID.String(), "", "", "", ccSessionTTL); err != nil {
+	if err := redis.CreateSession(app.ID.String(), sessionID, client.ID.String(), "", "", "", "", ccSessionTTL); err != nil {
 		log.Printf("[OIDC] ClientCredentialsGrant: failed to create Redis session: %v", err)
 	}
 

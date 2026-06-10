@@ -2,12 +2,17 @@ package middleware
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gjovanovicst/auth_api/internal/rbac"
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/pkg/jwt"
 )
+
+// touchInterval is the minimum time between last_active updates on the session hash.
+// Keeps Redis write rate low while still tracking activity on every request.
+const touchInterval = 5 * time.Minute
 
 // AuthMiddleware authenticates requests using JWT
 func AuthMiddleware() gin.HandlerFunc {
@@ -72,6 +77,11 @@ func AuthMiddleware() gin.HandlerFunc {
 					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Session has been revoked"})
 					return
 				}
+
+				// Update last_active on the session hash (throttled to once per touchInterval).
+				// This ensures the inactivity clock reflects real user activity, not just
+				// token-refresh cycles, so the configured inactivity timeout behaves correctly.
+				go redis.TouchSessionThrottled(claims.AppID, claims.SessionID, touchInterval) //nolint:errcheck
 			}
 		} else {
 			// Redis not available - log warning in production, but allow for testing
@@ -80,19 +90,19 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-	c.Set("userID", claims.UserID)
-	c.Set("appID", claims.AppID)
-	c.Set("roles", claims.Roles)
-	if claims.SessionID != "" {
-		c.Set("sessionID", claims.SessionID)
-	}
-	if claims.OrgID != "" {
-		c.Set("orgID", claims.OrgID)
-	}
-	if claims.OrgRole != "" {
-		c.Set("orgRole", claims.OrgRole)
-	}
-	c.Next()
+		c.Set("userID", claims.UserID)
+		c.Set("appID", claims.AppID)
+		c.Set("roles", claims.Roles)
+		if claims.SessionID != "" {
+			c.Set("sessionID", claims.SessionID)
+		}
+		if claims.OrgID != "" {
+			c.Set("orgID", claims.OrgID)
+		}
+		if claims.OrgRole != "" {
+			c.Set("orgRole", claims.OrgRole)
+		}
+		c.Next()
 	}
 }
 

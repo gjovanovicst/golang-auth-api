@@ -28,8 +28,8 @@ type Service struct {
 	UserRepo          *user.Repository
 	DB                *gorm.DB
 	EmailService      *emailpkg.Service
-	WebhookService    *webhook.Service     // Optional: if nil, webhook dispatch is skipped
-	SMSSender         sms.Sender           // Optional: if nil, SMS features are unavailable
+	WebhookService    *webhook.Service // Optional: if nil, webhook dispatch is skipped
+	SMSSender         sms.Sender       // Optional: if nil, SMS features are unavailable
 	TrustedDeviceRepo *TrustedDeviceRepository
 	UserApp2FARepo    *UserApp2FARepository // Per-application 2FA records
 }

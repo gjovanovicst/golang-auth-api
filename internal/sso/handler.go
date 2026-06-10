@@ -12,6 +12,7 @@ import (
 	"github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/session"
 	"github.com/gjovanovicst/auth_api/internal/user"
+	"github.com/gjovanovicst/auth_api/internal/util"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -283,20 +284,12 @@ func (h *Handler) Exchange(c *gin.Context) {
 		roles, _ = h.LookupRoles(targetAppID, targetUser.ID.String())
 	}
 
-	// Revoke any existing sessions for this user in the target app before
-	// creating a new one. This prevents duplicate sessions accumulating when
-	// the SSO exchange fires more than once (e.g. SSE reconnect, direct login
-	// to a peer app that is already reached via SSO).
-	if appErr := h.SessionService.RevokeAllUserSessions(targetAppID, targetUser.ID.String()); appErr != nil {
-		log.Printf("[SSO] Exchange: warning — failed to revoke existing sessions for user %s in app %s: %v",
-			targetUser.ID, targetAppID, appErr.Message)
-	}
-
 	// Create a new session in the target app.
 	ip := c.ClientIP()
 	userAgent := c.GetHeader("User-Agent")
+	deviceID := util.DeviceFingerprint(c)
 	accessToken, refreshToken, sessionID, appErr := h.SessionService.CreateSession(
-		targetAppID, targetUser.ID.String(), ip, userAgent, roles, accessTTL, refreshTTL,
+		targetAppID, targetUser.ID.String(), ip, userAgent, deviceID, roles, accessTTL, refreshTTL,
 	)
 	if appErr != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
@@ -380,16 +373,22 @@ type ssoEvent struct {
 	SSOToken  string `json:"sso_token,omitempty"`
 	TargetApp string `json:"target_app,omitempty"`
 	Reason    string `json:"reason,omitempty"` // "voluntary" | "revoked" (peer_logout only)
+	DeviceID  string `json:"device_id,omitempty"`
 }
 
 // PublishLoginToGroup issues individual SSO exchange tokens for every peer app
 // of sourceAppID and publishes a peer_login event to the Redis pub/sub channel
-// for the session group.  It is safe to call in a goroutine.
-func (h *Handler) PublishLoginToGroup(sourceAppID, userID string) {
+// for the session group. It is safe to call in a goroutine.
+// deviceID is the device fingerprint (IP+UA hash) scoping the SSO token.
+func (h *Handler) PublishLoginToGroup(sourceAppID, userID, deviceID string) {
 	groupID, err := cachedGroupID(sourceAppID, h.AdminRepo)
 	if err != nil || groupID == "" {
 		return
 	}
+
+	// Clear any stale pending logout event for the source app so a previous
+	// session's revocation is not replayed to the newly logged-in client.
+	_ = redis.DeletePendingLogoutEvent(sourceAppID, userID)
 
 	// Record that this user is currently logged in to the source app so that
 	// peer apps opening an SSE connection long after the login (past the 90 s
@@ -405,6 +404,9 @@ func (h *Handler) PublishLoginToGroup(sourceAppID, userID string) {
 	}
 
 	for _, peer := range peers {
+		// Clear any stale pending logout for each peer app as well.
+		_ = redis.DeletePendingLogoutEvent(peer.AppID, userID)
+
 		token := uuid.New().String()
 		if err := redis.SetSSOToken(token, groupID, sourceAppID, userID); err != nil {
 			log.Printf("[SSO] PublishLoginToGroup: failed to set SSO token for peer %s: %v", peer.AppID, err)
@@ -414,6 +416,7 @@ func (h *Handler) PublishLoginToGroup(sourceAppID, userID string) {
 			Type:      "peer_login",
 			SSOToken:  token,
 			TargetApp: peer.AppID,
+			DeviceID:  deviceID,
 		}
 		payload, _ := json.Marshal(evt)
 		// Store for reconnecting clients BEFORE publishing so there is no window
@@ -432,36 +435,36 @@ func (h *Handler) PublishLoginToGroup(sourceAppID, userID string) {
 // reason should be "voluntary" for user-initiated logouts, "revoked" for
 // admin/forced revocations.  Frontends use this to decide whether to show
 // a "Session Revoked" modal or just redirect silently to the login page.
-func (h *Handler) PublishLogoutToGroup(sourceAppID, userEmail, reason string) {
+func (h *Handler) PublishLogoutToGroup(sourceAppID, userID, reason, deviceID string) {
+	log.Printf("[SSO] PublishLogoutToGroup: source=%s user=%s reason=%s device=%s", sourceAppID, userID, reason, deviceID)
 	groupID, err := cachedGroupID(sourceAppID, h.AdminRepo)
 	if err != nil || groupID == "" {
+		log.Printf("[SSO] PublishLogoutToGroup: group not found for app %s (err=%v) — skipping", sourceAppID, err)
 		return
 	}
 
-	// Store a pending logout per peer app BEFORE publishing so that clients
-	// which reconnect after the pub/sub message has already been delivered
-	// still receive the logout signal on their next SSE connect.
 	peers, err := h.AdminRepo.GetPeersForApp(sourceAppID)
 	if err != nil {
 		log.Printf("[SSO] PublishLogoutToGroup: failed to get peers for app %s: %v", sourceAppID, err)
 	} else {
 		for _, peer := range peers {
-			if err := redis.StorePendingLogoutEvent(peer.AppID, reason); err != nil {
+			if err := redis.StorePendingLogoutEvent(peer.AppID, userID, reason, deviceID); err != nil {
 				log.Printf("[SSO] PublishLogoutToGroup: failed to store pending logout for peer %s: %v", peer.AppID, err)
+			}
+			evt := ssoEvent{Type: "peer_logout", Reason: reason, DeviceID: deviceID, TargetApp: peer.AppID}
+			payload, _ := json.Marshal(evt)
+			if err := redis.PublishSSOEvent(groupID, string(payload)); err != nil {
+				log.Printf("[SSO] PublishLogoutToGroup: failed to publish logout event for peer %s: %v", peer.AppID, err)
 			}
 		}
 	}
 
-	// Also store a pending logout for the source app itself. When the logout is
-	// triggered by an admin action or session expiry (not a user-initiated
-	// logout from within the source app), the source app is excluded from
-	// GetPeersForApp but still needs to receive the signal on its next SSE
-	// reconnect so it can redirect to the login page.
-	if err := redis.StorePendingLogoutEvent(sourceAppID, reason); err != nil {
+	// Also notify the source app — needed when logout is triggered by an admin
+	// action or session expiry where the source app didn't initiate the logout.
+	if err := redis.StorePendingLogoutEvent(sourceAppID, userID, reason, deviceID); err != nil {
 		log.Printf("[SSO] PublishLogoutToGroup: failed to store pending logout for source app %s: %v", sourceAppID, err)
 	}
-
-	evt := ssoEvent{Type: "peer_logout", Reason: reason}
+	evt := ssoEvent{Type: "peer_logout", Reason: reason, DeviceID: deviceID, TargetApp: sourceAppID}
 	payload, _ := json.Marshal(evt)
 	if err := redis.PublishSSOEvent(groupID, string(payload)); err != nil {
 		log.Printf("[SSO] PublishLogoutToGroup: failed to publish logout event: %v", err)
@@ -528,36 +531,17 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 		return true
 	}
 
+	// Compute the device fingerprint for this SSE connection. Used to
+	// filter peer_login and peer_logout events to the same browser/device.
+	sseDeviceID := util.DeviceFingerprint(c)
+
 	// Replay any pending login event that was published while this client was
-	// disconnected (e.g. killed by a proxy idle timeout between events).
+	// disconnected. Only replay if the device fingerprint matches.
 	if pending, err := redis.PopPendingLoginEvent(appID); err == nil && pending != "" {
-		writeAndFlush(pending)
-	} else {
-		// Fallback: the short-lived pending-login key (90 s) has expired, but the
-		// user may still have an active session in a peer app.  Check every peer
-		// app's login-presence record (24 h rolling TTL) and, if found, issue a
-		// fresh on-demand SSO token so this newly-opened tab is auto-logged-in.
-		peers, peersErr := h.AdminRepo.GetPeersForApp(appID)
-		if peersErr == nil {
-			for _, peer := range peers {
-				presenceUserID, presenceGroupID, presenceErr := redis.GetLoginPresence(peer.AppID)
-				if presenceErr != nil || presenceUserID == "" {
-					continue
-				}
-				// Mint a fresh single-use exchange token for this app.
-				token := uuid.New().String()
-				if tokenErr := redis.SetSSOToken(token, presenceGroupID, peer.AppID, presenceUserID); tokenErr != nil {
-					log.Printf("[SSO] StreamEvents: failed to set on-demand SSO token for app %s: %v", appID, tokenErr)
-					continue
-				}
-				evt := ssoEvent{
-					Type:      "peer_login",
-					SSOToken:  token,
-					TargetApp: appID,
-				}
-				payload, _ := json.Marshal(evt)
-				writeAndFlush(string(payload))
-				break // one peer with an active session is enough
+		var pendingEvt ssoEvent
+		if json.Unmarshal([]byte(pending), &pendingEvt) == nil {
+			if pendingEvt.DeviceID == "" || pendingEvt.DeviceID == sseDeviceID {
+				writeAndFlush(pending)
 			}
 		}
 	}
@@ -565,8 +549,19 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 	// Replay any pending logout event — takes priority over a stale login so
 	// check after login to let login write first, but logout will overwrite the
 	// client state correctly on the frontend.
-	if pending, err := redis.PopPendingLogoutEvent(appID); err == nil && pending != "" {
-		writeAndFlush(pending)
+	// user_id is passed as a query param so we only replay the logout for the
+	// specific user connecting, not for any other user who may have logged out
+	// of the same app previously.
+	userID := c.Query("user_id")
+	if userID != "" {
+		if pending, err := redis.PopPendingLogoutEvent(appID, userID); err == nil && pending != "" {
+			var pendingEvt ssoEvent
+			if json.Unmarshal([]byte(pending), &pendingEvt) == nil {
+				if pendingEvt.DeviceID == "" || pendingEvt.DeviceID == sseDeviceID {
+					writeAndFlush(pending)
+				}
+			}
+		}
 	}
 	for {
 		select {
@@ -594,6 +589,11 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 				continue
 			}
 			if evt.TargetApp != "" && evt.TargetApp != appID {
+				continue
+			}
+			// Filter peer_login and peer_logout by device fingerprint.
+			// Events without a device_id (old clients) broadcast to all.
+			if evt.DeviceID != "" && evt.DeviceID != sseDeviceID {
 				continue
 			}
 			if !writeAndFlush(msg.Payload) {

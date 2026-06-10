@@ -28,7 +28,8 @@ type Handler struct {
 	AnomalyDetector       *log.AnomalyDetector                                 // Anomaly detector for login monitoring (nil = disabled)
 	TwoFAService          *twofa.Service                                       // Optional: if set, auto-sends SMS 2FA code on social login with SMS 2FA
 	ValidateTrustedDevice func(plainToken string) (uuid.UUID, uuid.UUID, bool) // Optional: if set, trusted device bypass is checked before requiring 2FA
-	PublishLoginFunc      func(appID, userID string)                           // Optional: called in a goroutine after successful login to propagate SSO
+	PublishLoginFunc      func(appID, userID, deviceID string)                           // Optional: called in a goroutine after successful login
+	SyncLoginFunc         func(appID, userID string)                           // Optional: called synchronously before response (e.g. clear token blacklist)
 }
 
 func NewHandler(s *Service) *Handler {
@@ -329,36 +330,56 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	// Only create session when 2FA is NOT required
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Compute device fingerprint for device-scoped SSO events.
+	deviceID := util.DeviceFingerprint(c)
+
 	appTwoFAEnabled, appTwoFAMethod := h.Service.GetUserAppTwoFA(appID, user.ID, user.TwoFAEnabled, user.TwoFAMethod)
 	if appTwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		// Trusted device check: if the client presents a valid trusted-device cookie
 		// matching this user + app, skip 2FA entirely and issue tokens immediately.
 		if h.ValidateTrustedDevice != nil {
-			if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
-				if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
-					tdUserID == user.ID && tdAppID == appID {
+			cookieToken, cookieErr := c.Cookie("trusted_device")
+			if cookieErr != nil || cookieToken == "" {
+				stdlog.Printf("Info: [Google] no trusted_device cookie for user %s (app %s), requiring 2FA",
+					user.ID, appID)
+			} else {
+				tdUserID, tdAppID, tdOk := h.ValidateTrustedDevice(cookieToken)
+				if !tdOk {
+					stdlog.Printf("Info: [Google] trusted_device cookie validation failed for user %s (app %s)",
+						user.ID, appID)
+				} else if tdUserID != user.ID || tdAppID != appID {
+					stdlog.Printf("Info: [Google] trusted_device cookie mismatch for user %s (app %s): cookie user=%s app=%s",
+						user.ID, appID, tdUserID, tdAppID)
+				} else {
 					// Check IP-based access rules before completing login
 					if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
 						return
 					}
-					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent, deviceID)
 					if sessionErr != nil {
+						stdlog.Printf("Warning: [Google] trusted device bypass failed to create session for user %s (app %s): %v",
+							user.ID, appID, sessionErr.Message)
 						errorMsg := url.QueryEscape(sessionErr.Message)
 						frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
 						c.Redirect(http.StatusFound, frontendURL)
 						return
 					}
-				h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "google")
-				frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=google",
-					redirectURI,
-					url.QueryEscape(accessToken),
-					url.QueryEscape(refreshToken))
-				health.IncLoginSuccess(appID.String())
-				if h.PublishLoginFunc != nil {
-					go h.PublishLoginFunc(appID.String(), userID.String())
-				}
-				c.Redirect(http.StatusFound, frontendURL)
-				return
+					stdlog.Printf("Info: [Google] trusted device bypass succeeded for user %s (app %s)",
+						user.ID, appID)
+					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "google")
+					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=google",
+						redirectURI,
+						url.QueryEscape(accessToken),
+						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
+					if h.SyncLoginFunc != nil {
+						h.SyncLoginFunc(appID.String(), userID.String())
+					}
+					if h.PublishLoginFunc != nil {
+						go h.PublishLoginFunc(appID.String(), userID.String(), deviceID)
+					}
+					c.Redirect(http.StatusFound, frontendURL)
+					return
 				}
 			}
 		}
@@ -396,7 +417,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent, deviceID)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
 		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
@@ -414,8 +435,11 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 		url.QueryEscape(refreshToken))
 
 	health.IncLoginSuccess(appID.String())
+	if h.SyncLoginFunc != nil {
+		h.SyncLoginFunc(appID.String(), userID.String())
+	}
 	if h.PublishLoginFunc != nil {
-		go h.PublishLoginFunc(appID.String(), userID.String())
+		go h.PublishLoginFunc(appID.String(), userID.String(), deviceID)
 	}
 	c.Redirect(http.StatusFound, frontendURL)
 }
@@ -573,36 +597,56 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Compute device fingerprint for device-scoped SSO events.
+	deviceID := util.DeviceFingerprint(c)
+
 	appTwoFAEnabled, appTwoFAMethod := h.Service.GetUserAppTwoFA(appID, user.ID, user.TwoFAEnabled, user.TwoFAMethod)
 	if appTwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		// Trusted device check: if the client presents a valid trusted-device cookie
 		// matching this user + app, skip 2FA entirely and issue tokens immediately.
 		if h.ValidateTrustedDevice != nil {
-			if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
-				if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
-					tdUserID == user.ID && tdAppID == appID {
+			cookieToken, cookieErr := c.Cookie("trusted_device")
+			if cookieErr != nil || cookieToken == "" {
+				stdlog.Printf("Info: [Facebook] no trusted_device cookie for user %s (app %s), requiring 2FA",
+					user.ID, appID)
+			} else {
+				tdUserID, tdAppID, tdOk := h.ValidateTrustedDevice(cookieToken)
+				if !tdOk {
+					stdlog.Printf("Info: [Facebook] trusted_device cookie validation failed for user %s (app %s)",
+						user.ID, appID)
+				} else if tdUserID != user.ID || tdAppID != appID {
+					stdlog.Printf("Info: [Facebook] trusted_device cookie mismatch for user %s (app %s): cookie user=%s app=%s",
+						user.ID, appID, tdUserID, tdAppID)
+				} else {
 					// Check IP-based access rules before completing login
 					if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
 						return
 					}
-					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent, deviceID)
 					if sessionErr != nil {
+						stdlog.Printf("Warning: [Facebook] trusted device bypass failed to create session for user %s (app %s): %v",
+							user.ID, appID, sessionErr.Message)
 						errorMsg := url.QueryEscape(sessionErr.Message)
 						frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
 						c.Redirect(http.StatusFound, frontendURL)
 						return
 					}
-				h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "facebook")
-				frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=facebook",
-					redirectURI,
-					url.QueryEscape(accessToken),
-					url.QueryEscape(refreshToken))
-				health.IncLoginSuccess(appID.String())
-				if h.PublishLoginFunc != nil {
-					go h.PublishLoginFunc(appID.String(), userID.String())
-				}
-				c.Redirect(http.StatusFound, frontendURL)
-				return
+					stdlog.Printf("Info: [Facebook] trusted device bypass succeeded for user %s (app %s)",
+						user.ID, appID)
+					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "facebook")
+					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=facebook",
+						redirectURI,
+						url.QueryEscape(accessToken),
+						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
+					if h.SyncLoginFunc != nil {
+						h.SyncLoginFunc(appID.String(), userID.String())
+					}
+					if h.PublishLoginFunc != nil {
+						go h.PublishLoginFunc(appID.String(), userID.String(), deviceID)
+					}
+					c.Redirect(http.StatusFound, frontendURL)
+					return
 				}
 			}
 		}
@@ -640,7 +684,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent, deviceID)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
 		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
@@ -658,8 +702,11 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 		url.QueryEscape(refreshToken))
 
 	health.IncLoginSuccess(appID.String())
+	if h.SyncLoginFunc != nil {
+		h.SyncLoginFunc(appID.String(), userID.String())
+	}
 	if h.PublishLoginFunc != nil {
-		go h.PublishLoginFunc(appID.String(), userID.String())
+		go h.PublishLoginFunc(appID.String(), userID.String(), deviceID)
 	}
 	c.Redirect(http.StatusFound, frontendURL)
 }
@@ -816,36 +863,57 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 	}
 
 	appTwoFAEnabled, appTwoFAMethod := h.Service.GetUserAppTwoFA(appID, user.ID, user.TwoFAEnabled, user.TwoFAMethod)
+
+	// Compute device fingerprint for device-scoped SSO events.
+	deviceID := util.DeviceFingerprint(c)
+
 	if appTwoFAEnabled && h.Service.IsAppTwoFAEnabled(appID) {
 		// Trusted device check: if the client presents a valid trusted-device cookie
 		// matching this user + app, skip 2FA entirely and issue tokens immediately.
 		ipAddress, userAgent := util.GetClientInfo(c)
 		if h.ValidateTrustedDevice != nil {
-			if cookieToken, cookieErr := c.Cookie("trusted_device"); cookieErr == nil && cookieToken != "" {
-				if tdUserID, tdAppID, ok := h.ValidateTrustedDevice(cookieToken); ok &&
-					tdUserID == user.ID && tdAppID == appID {
+			cookieToken, cookieErr := c.Cookie("trusted_device")
+			if cookieErr != nil || cookieToken == "" {
+				stdlog.Printf("Info: [GitHub] no trusted_device cookie for user %s (app %s), requiring 2FA",
+					user.ID, appID)
+			} else {
+				tdUserID, tdAppID, tdOk := h.ValidateTrustedDevice(cookieToken)
+				if !tdOk {
+					stdlog.Printf("Info: [GitHub] trusted_device cookie validation failed for user %s (app %s)",
+						user.ID, appID)
+				} else if tdUserID != user.ID || tdAppID != appID {
+					stdlog.Printf("Info: [GitHub] trusted_device cookie mismatch for user %s (app %s): cookie user=%s app=%s",
+						user.ID, appID, tdUserID, tdAppID)
+				} else {
 					// Check IP-based access rules before completing login
 					if !h.checkIPAccessRedirect(c, appID, ipAddress, userAgent, redirectURI) {
 						return
 					}
-					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+					accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent, deviceID)
 					if sessionErr != nil {
+						stdlog.Printf("Warning: [GitHub] trusted device bypass failed to create session for user %s (app %s): %v",
+							user.ID, appID, sessionErr.Message)
 						errorMsg := url.QueryEscape(sessionErr.Message)
 						frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
 						c.Redirect(http.StatusFound, frontendURL)
 						return
 					}
-				h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "github")
-				frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=github",
-					redirectURI,
-					url.QueryEscape(accessToken),
-					url.QueryEscape(refreshToken))
-				health.IncLoginSuccess(appID.String())
-				if h.PublishLoginFunc != nil {
-					go h.PublishLoginFunc(appID.String(), userID.String())
-				}
-				c.Redirect(http.StatusFound, frontendURL)
-				return
+					stdlog.Printf("Info: [GitHub] trusted device bypass succeeded for user %s (app %s)",
+						user.ID, appID)
+					h.runSocialLoginAnomalyDetection(appID, userID, user.Email, ipAddress, userAgent, "github")
+					frontendURL := fmt.Sprintf("%s?access_token=%s&refresh_token=%s&provider=github",
+						redirectURI,
+						url.QueryEscape(accessToken),
+						url.QueryEscape(refreshToken))
+					health.IncLoginSuccess(appID.String())
+					if h.SyncLoginFunc != nil {
+						h.SyncLoginFunc(appID.String(), userID.String())
+					}
+					if h.PublishLoginFunc != nil {
+						go h.PublishLoginFunc(appID.String(), userID.String(), deviceID)
+					}
+					c.Redirect(http.StatusFound, frontendURL)
+					return
 				}
 			}
 		}
@@ -886,7 +954,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent)
+	accessToken, refreshToken, sessionErr := h.Service.CreateSessionOrTokens(appID.String(), userID.String(), ipAddress, userAgent, deviceID)
 	if sessionErr != nil {
 		errorMsg := url.QueryEscape(sessionErr.Message)
 		frontendURL := fmt.Sprintf("%s?error=%s", redirectURI, errorMsg)
@@ -904,8 +972,11 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 		url.QueryEscape(refreshToken))
 
 	health.IncLoginSuccess(appID.String())
+	if h.SyncLoginFunc != nil {
+		h.SyncLoginFunc(appID.String(), userID.String())
+	}
 	if h.PublishLoginFunc != nil {
-		go h.PublishLoginFunc(appID.String(), userID.String())
+		go h.PublishLoginFunc(appID.String(), userID.String(), deviceID)
 	}
 	c.Redirect(http.StatusFound, frontendURL)
 }

@@ -74,12 +74,13 @@ type GUIHandler struct {
 	// PublishLogoutFunc, if set, is called after admin session revocation so that
 	// SSE-connected clients in all peer apps receive a peer_logout event and can
 	// redirect to the login page without waiting for the next API call to 401.
-	PublishLogoutFunc func(appID, userEmail string)
+	PublishLogoutFunc func(appID, userID, deviceID string)
 	// GroupRevoker, if set, is used to revoke sessions across all apps in the
 	// same session group when an admin revokes a session for a group-member app
 	// (only when GlobalLogout is enabled on the group).
 	GroupRevoker interface {
-		RevokeAllUserSessionsInGroupByUserID(appID, userID string)
+		RevokeAllUserSessionsInGroupByUserID(appID, userID, deviceID string)
+		ClearGroupUserBlacklist(appID, userID string)
 	}
 }
 
@@ -1653,8 +1654,8 @@ func (h *GUIHandler) UserToggleActive(c *gin.Context) {
 		return
 	}
 
-	// If user was deactivated, revoke all their tokens immediately
 	if !newActive {
+		// User was deactivated — revoke all their tokens immediately
 		// Blacklist all tokens for this user for 30 days
 		maxTokenLifetime := 30 * 24 * time.Hour
 		if rErr := redis.BlacklistAllUserTokens(appID, id, maxTokenLifetime); rErr != nil {
@@ -1666,6 +1667,16 @@ func (h *GUIHandler) UserToggleActive(c *gin.Context) {
 		if rErr == nil && currentRefreshToken != "" {
 			if rErr := redis.RevokeRefreshToken(appID, id, currentRefreshToken); rErr != nil {
 				fmt.Printf("Warning: Failed to revoke refresh token for deactivated user %s: %v\n", id, rErr)
+			}
+		}
+	} else {
+		// User was re-activated — clear any stale blacklist entries so their tokens
+		// are accepted again immediately (covers all peer apps in a session group).
+		if h.GroupRevoker != nil {
+			h.GroupRevoker.ClearGroupUserBlacklist(appID, id)
+		} else {
+			if rErr := redis.ClearUserTokenBlacklist(appID, id); rErr != nil {
+				fmt.Printf("Warning: Failed to clear token blacklist for re-activated user %s: %v\n", id, rErr)
 			}
 		}
 	}
@@ -5786,7 +5797,7 @@ func (h *GUIHandler) SessionRevoke(c *gin.Context) {
 		// the caller only asked to revoke this one session in this one app.
 		if h.GroupRevoker != nil {
 			log.Printf("[SessionRevoke] triggering group revocation appID=%s userID=%s", appID, userID)
-			go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appID, userID)
+			go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appID, userID, "")
 		}
 	} else {
 		log.Printf("[SessionRevoke] userID is empty, skipping group revocation")
@@ -5829,7 +5840,7 @@ func (h *GUIHandler) SessionRevokeAllForUser(c *gin.Context) {
 	// user's sessions in all peer apps of the group.  Otherwise do nothing extra —
 	// the caller only asked to revoke sessions in this one app.
 	if h.GroupRevoker != nil {
-		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appID, userID)
+		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appID, userID, "")
 	}
 
 	// Check if this was called from user detail page
@@ -5880,7 +5891,7 @@ func (h *GUIHandler) revokeUserSessionsEverywhere(appID, userID string, accessTo
 	// Notify all SSE-connected clients so they redirect to the login page
 	// immediately without waiting for the next API call to return 401.
 	if h.PublishLogoutFunc != nil {
-		go h.PublishLogoutFunc(appID, email)
+		go h.PublishLogoutFunc(appID, userID, "")
 	}
 }
 

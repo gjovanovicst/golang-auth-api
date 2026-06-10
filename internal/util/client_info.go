@@ -1,18 +1,18 @@
 package util
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
-// GetClientIP extracts the real client IP address from the request
+// GetClientIP extracts the real client IP address from the request.
 func GetClientIP(c *gin.Context) string {
-	// Check for X-Forwarded-For header (most common)
 	forwarded := c.GetHeader("X-Forwarded-For")
 	if forwarded != "" {
-		// X-Forwarded-For can contain multiple IPs, use the first one
 		ips := strings.Split(forwarded, ",")
 		if len(ips) > 0 {
 			ip := strings.TrimSpace(ips[0])
@@ -21,29 +21,22 @@ func GetClientIP(c *gin.Context) string {
 			}
 		}
 	}
-
-	// Check for X-Real-IP header
 	realIP := c.GetHeader("X-Real-IP")
 	if realIP != "" && realIP != "unknown" {
 		return realIP
 	}
-
-	// Check for CF-Connecting-IP header (Cloudflare)
 	cfIP := c.GetHeader("CF-Connecting-IP")
 	if cfIP != "" && cfIP != "unknown" {
 		return cfIP
 	}
-
-	// Fallback to RemoteAddr
 	ip, _, err := net.SplitHostPort(c.Request.RemoteAddr)
 	if err != nil {
-		return c.Request.RemoteAddr // Return as is if parsing fails
+		return c.Request.RemoteAddr
 	}
-
 	return ip
 }
 
-// GetUserAgent extracts the User-Agent from the request
+// GetUserAgent extracts the User-Agent from the request.
 func GetUserAgent(c *gin.Context) string {
 	userAgent := c.GetHeader("User-Agent")
 	if userAgent == "" {
@@ -52,7 +45,18 @@ func GetUserAgent(c *gin.Context) string {
 	return userAgent
 }
 
-// GetClientInfo returns both IP address and User-Agent
+// GetClientInfo returns both IP address and User-Agent.
 func GetClientInfo(c *gin.Context) (string, string) {
 	return GetClientIP(c), GetUserAgent(c)
+}
+
+// DeviceFingerprint returns a SHA-256 hash of the client's IP + User-Agent,
+// truncated to 8 hex chars. Same browser → same fingerprint; different
+// browser/device → different fingerprint. Used for device-scoped SSO
+// without cookies or frontend changes.
+func DeviceFingerprint(c *gin.Context) string {
+	ip := GetClientIP(c)
+	ua := GetUserAgent(c)
+	h := sha256.Sum256([]byte(ip + "|" + ua))
+	return hex.EncodeToString(h[:4])
 }

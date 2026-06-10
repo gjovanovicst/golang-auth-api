@@ -42,9 +42,10 @@ type ResetPasswordRequest struct {
 
 // LoginResponse represents the response payload for successful login
 type LoginResponse struct {
-	AccessToken     string `json:"access_token"`               // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
-	RefreshToken    string `json:"refresh_token"`              // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
-	PasswordExpired bool   `json:"password_expired,omitempty"` // true when the password has expired; no tokens are issued in this case
+	AccessToken           string `json:"access_token"`               // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	RefreshToken          string `json:"refresh_token"`              // #nosec G101,G117 -- This is a DTO field, not a hardcoded credential
+	PasswordExpired       bool   `json:"password_expired,omitempty"` // true when the password has expired; no tokens are issued in this case
+	TrustedDeviceSetupURL string `json:"trusted_device_setup_url,omitempty"` // when set, frontend must navigate here to set the trusted-device cookie in a first-party context
 }
 
 // TwoFARequiredResponse represents response when 2FA is required during login
@@ -90,8 +91,8 @@ type TwoFAEnableResponse struct {
 
 // TwoFAStatusResponse represents the per-application 2FA status for the current user
 type TwoFAStatusResponse struct {
-	Enabled          bool   `json:"enabled"`           // Whether 2FA is enabled for this user in this app
-	Method           string `json:"method,omitempty"`  // "totp", "email", "sms", "passkey", "backup_email"
+	Enabled          bool   `json:"enabled"`            // Whether 2FA is enabled for this user in this app
+	Method           string `json:"method,omitempty"`   // "totp", "email", "sms", "passkey", "backup_email"
 	HasRecoveryCodes bool   `json:"has_recovery_codes"` // Whether recovery codes exist
 }
 
@@ -319,12 +320,12 @@ type SetPasswordRequest struct {
 // ReissueTokenRequest is the request body for POST /app/:id/auth/reissue.
 // This endpoint is internal-only and must never be exposed publicly.
 type ReissueTokenRequest struct {
-	UserID         string   `json:"user_id" validate:"required,uuid4"`
-	SessionID      string   `json:"session_id" validate:"omitempty,uuid4"`
-	OrgID          string   `json:"org_id" validate:"required,uuid4"`
-	OrgRole        string   `json:"org_role" validate:"required,oneof=owner admin member viewer translator"`
-	Roles          []string `json:"roles"`
-	OriginalAppID  string   `json:"original_app_id" validate:"omitempty,uuid4"` // app_id from the original token; if set, the reissued JWT will carry this app_id so Redis session lookup succeeds
+	UserID        string   `json:"user_id" validate:"required,uuid4"`
+	SessionID     string   `json:"session_id" validate:"omitempty,uuid4"`
+	OrgID         string   `json:"org_id" validate:"required,uuid4"`
+	OrgRole       string   `json:"org_role" validate:"required,oneof=owner admin member viewer translator"`
+	Roles         []string `json:"roles"`
+	OriginalAppID string   `json:"original_app_id" validate:"omitempty,uuid4"` // app_id from the original token; if set, the reissued JWT will carry this app_id so Redis session lookup succeeds
 }
 
 // ReissueTokenResponse is the response from POST /app/:id/auth/reissue.

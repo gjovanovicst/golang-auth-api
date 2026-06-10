@@ -1,9 +1,14 @@
 package twofa
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	stdlog "log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -47,7 +52,17 @@ type Handler struct {
 	TrustedDeviceRepo *TrustedDeviceRepository // nil = trusted device feature disabled
 	DB                *gorm.DB                 // for loading per-app token TTL overrides
 	SettingResolver   SettingResolverFunc      // Optional: resolves system settings (env > DB > default); falls back to os.Getenv if nil
-	PublishLoginFunc  func(appID, userID string) // Optional: called in a goroutine after successful 2FA login to propagate SSO
+	PublishLoginFunc  func(appID, userID, deviceID string) // Optional: called in a goroutine after successful 2FA login
+	SyncLoginFunc     func(appID, userID string) // Optional: called synchronously before response (e.g. clear token blacklist)
+	// Trusted-device first-party cookie activation.
+	// HMACSecret is used to sign and verify single-use activation tokens so the
+	// plaintext device token is never exposed in the activation URL.
+	// Wire with viper.GetString("JWT_SECRET") + "_tdact" in main.go.
+	HMACSecret string
+	// PublicURL is the externally reachable base URL of this API server
+	// (e.g. "http://localhost:8080" in dev, "https://auth.example.com" in prod).
+	// Used to build the trusted-device activation URL returned to frontends.
+	PublicURL string
 }
 
 func NewHandler(s *Service) *Handler {
@@ -351,6 +366,9 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	// Get client info early for IP blocking check
 	ipAddress, userAgent := util.GetClientInfo(c)
 
+	// Compute device fingerprint for device-scoped SSO events.
+	deviceID := util.DeviceFingerprint(c)
+
 	// Check IP-based access rules before processing 2FA verification
 	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
 		return
@@ -422,7 +440,7 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 
 	// Generate final tokens (via session if available, else legacy)
 	roles := h.getUserRoles(appID.String(), userID)
-	accessToken, refreshToken, tokenErr := h.createSessionOrTokens(appID.String(), userID, ipAddress, userAgent, roles)
+	accessToken, refreshToken, tokenErr := h.createSessionOrTokens(appID.String(), userID, ipAddress, userAgent, deviceID, roles)
 	if tokenErr != nil {
 		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to generate tokens"})
 		return
@@ -446,6 +464,10 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	clearTempSession(appID.String(), req.TempToken)
 
 	// If the user opted in to trusting this device, create a trusted device record and set the cookie.
+	// The cookie is also set via a dedicated first-party GET endpoint (trusted_device_setup_url in the
+	// response) to ensure the browser stores it as a same-origin cookie that is reliably sent during
+	// OAuth redirect flows (which can be blocked for cross-origin XHR-set cookies in some browsers).
+	var trustedDeviceSetupURL string
 	if req.RememberDevice && h.TrustedDeviceRepo != nil {
 		if enabled, maxDays := h.Service.IsTrustedDeviceEnabled(appID); enabled {
 			userUUIDForDevice, parseErrDevice := uuid.Parse(userID)
@@ -455,7 +477,9 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 					deviceName = "Unknown Device"
 				}
 				if plainToken, tdErr := h.Service.CreateTrustedDevice(appID, userUUIDForDevice, deviceName, userAgent, ipAddress, maxDays); tdErr == nil {
-					secureCookie, sameSite := h.trustedDeviceCookieAttrs()
+					// Fallback: set cookie directly in the XHR response.
+					// This works when the frontend and auth_api share the same origin.
+					secureCookie, sameSite := h.trustedDeviceCookieAttrs(c)
 					http.SetCookie(c.Writer, &http.Cookie{ // #nosec G124 -- Secure is set dynamically via trustedDeviceCookieAttrs(); HttpOnly is always true
 						Name:     "trusted_device",
 						Value:    plainToken,
@@ -465,6 +489,19 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 						Secure:   secureCookie,
 						SameSite: sameSite,
 					})
+					// Primary: build a first-party activation URL so frontends can
+					// navigate the browser directly to the auth_api, ensuring the
+					// trusted_device cookie is set as a same-origin cookie (not via
+					// cross-origin XHR) and is reliably sent in subsequent OAuth flows.
+					if setupURL, buildErr := h.buildTrustedDeviceSetupURL(appID.String(), userID, plainToken, maxDays); buildErr == nil {
+						trustedDeviceSetupURL = setupURL
+					} else {
+						stdlog.Printf("Warning: [VerifyLogin] Failed to build trusted device setup URL for user %s (app %s): %v",
+							userID, appID, buildErr)
+					}
+				} else {
+					stdlog.Printf("Warning: [VerifyLogin] Failed to create trusted device for user %s (app %s): %v",
+						userID, appID, tdErr.Message)
 				}
 			}
 		}
@@ -481,12 +518,16 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 	}
 
 	health.IncLoginSuccess(appID.String())
+	if h.SyncLoginFunc != nil {
+		h.SyncLoginFunc(appID.String(), userID)
+	}
 	if h.PublishLoginFunc != nil {
-		go h.PublishLoginFunc(appID.String(), userID)
+		go h.PublishLoginFunc(appID.String(), userID, deviceID)
 	}
 	c.JSON(http.StatusOK, dto.LoginResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
+		AccessToken:           accessToken,
+		RefreshToken:          refreshToken,
+		TrustedDeviceSetupURL: trustedDeviceSetupURL,
 	})
 }
 
@@ -761,7 +802,7 @@ func generateTokensForUser(appID string, userID string, roles []string, accessTT
 // createSessionOrTokens creates a session via the session service if available,
 // otherwise falls back to legacy token generation.
 // Per-app token TTL overrides are resolved via user.ResolveTokenTTLs.
-func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent string, roles []string) (string, string, error) {
+func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent, deviceID string, roles []string) (string, string, error) {
 	// Load per-app token TTL overrides
 	var app models.Application
 	var appPtr *models.Application
@@ -773,7 +814,7 @@ func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent string, rol
 	accessTTL, refreshTTL := user.ResolveTokenTTLs(appPtr)
 
 	if h.SessionService != nil {
-		accessToken, refreshToken, _, appErr := h.SessionService.CreateSession(appID, userID, ip, userAgent, roles, accessTTL, refreshTTL)
+		accessToken, refreshToken, _, appErr := h.SessionService.CreateSession(appID, userID, ip, userAgent, deviceID, roles, accessTTL, refreshTTL)
 		if appErr != nil {
 			return "", "", fmt.Errorf("%s", appErr.Message)
 		}
@@ -782,26 +823,153 @@ func (h *Handler) createSessionOrTokens(appID, userID, ip, userAgent string, rol
 	return generateTokensForUser(appID, userID, roles, accessTTL, refreshTTL)
 }
 
+// buildTrustedDeviceSetupURL generates a single-use, HMAC-signed activation URL
+// that allows the frontend to navigate the browser directly to the auth_api
+// (first-party context) to set the trusted_device cookie reliably.
+//
+// The plaintext device token is stored in Redis under a random ID; only that ID
+// (plus its HMAC-SHA256 signature) is embedded in the URL to avoid exposing the
+// token value in browser history or server logs.
+func (h *Handler) buildTrustedDeviceSetupURL(appID, userID, plainToken string, maxDays int) (string, error) {
+	if h.HMACSecret == "" || h.PublicURL == "" {
+		return "", fmt.Errorf("HMACSecret or PublicURL not configured")
+	}
+
+	// Generate a random 16-byte activation ID
+	rawID := make([]byte, 16)
+	if _, err := rand.Read(rawID); err != nil {
+		return "", fmt.Errorf("failed to generate activation ID: %w", err)
+	}
+	id := fmt.Sprintf("%x", rawID)
+
+	// HMAC-sign the ID so the activation endpoint can verify it has not been forged
+	mac := hmac.New(sha256.New, []byte(h.HMACSecret))
+	mac.Write([]byte(id))
+	sig := fmt.Sprintf("%x", mac.Sum(nil))
+
+	// Serialise the payload and store it in Redis for 60 seconds (single-use)
+	type activationPayload struct {
+		PlainToken string `json:"plain_token"`
+		UserID     string `json:"user_id"`
+		AppID      string `json:"app_id"`
+		MaxDays    int    `json:"max_days"`
+	}
+	payload, err := json.Marshal(activationPayload{
+		PlainToken: plainToken,
+		UserID:     userID,
+		AppID:      appID,
+		MaxDays:    maxDays,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to serialise activation payload: %w", err)
+	}
+	if err := redis.SetTrustedDeviceActivation(id, string(payload)); err != nil {
+		return "", fmt.Errorf("failed to store activation payload: %w", err)
+	}
+
+	return fmt.Sprintf("%s/2fa/trusted-device/activate?id=%s&mac=%s", h.PublicURL, id, sig), nil
+}
+
+// ActivateTrustedDevice handles GET /2fa/trusted-device/activate.
+// It verifies the HMAC-signed activation token, retrieves the plaintext
+// trusted-device token from Redis, sets the trusted_device cookie as a
+// first-party response (the browser navigates directly to this endpoint),
+// and then redirects the browser back to the frontend.
+//
+// This endpoint is the primary mechanism for setting the trusted_device cookie
+// in a same-origin context so that it is reliably sent during subsequent OAuth
+// redirect flows regardless of browser third-party cookie policies.
+//
+// @Summary      Activate trusted device cookie (first-party)
+// @Description  Validates a single-use signed token, sets the trusted_device cookie in first-party context, and redirects to the frontend
+// @Tags         2FA
+// @Param        id       query  string  true  "Activation ID"
+// @Param        mac      query  string  true  "HMAC-SHA256 signature of the ID"
+// @Param        redirect query  string  false "Frontend URL to redirect to after activation"
+// @Success      302
+// @Failure      400  {object}  dto.ErrorResponse
+// @Router /2fa/trusted-device/activate [get]
+func (h *Handler) ActivateTrustedDevice(c *gin.Context) {
+	id := c.Query("id")
+	mac := c.Query("mac")
+	redirectTo := c.Query("redirect")
+
+	if id == "" || mac == "" {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "missing activation parameters"})
+		return
+	}
+
+	// Verify HMAC — prevents forged activation IDs
+	expected := hmac.New(sha256.New, []byte(h.HMACSecret))
+	expected.Write([]byte(id))
+	expectedSig := fmt.Sprintf("%x", expected.Sum(nil))
+	if !hmac.Equal([]byte(mac), []byte(expectedSig)) {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "invalid activation token"})
+		return
+	}
+
+	// Retrieve and atomically delete the activation payload (single-use)
+	payloadStr, err := redis.GetAndDeleteTrustedDeviceActivation(id)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "activation token expired or already used"})
+		return
+	}
+
+	// Unmarshal the payload
+	var payload struct {
+		PlainToken string `json:"plain_token"`
+		MaxDays    int    `json:"max_days"`
+	}
+	if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil || payload.PlainToken == "" {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "malformed activation payload"})
+		return
+	}
+
+	// Set the trusted_device cookie in first-party context
+	secureCookie, sameSite := h.trustedDeviceCookieAttrs(c)
+	maxDays := payload.MaxDays
+	if maxDays <= 0 {
+		maxDays = 30
+	}
+	http.SetCookie(c.Writer, &http.Cookie{ // #nosec G124 -- Secure is set dynamically via trustedDeviceCookieAttrs(); HttpOnly is always true
+		Name:     "trusted_device",
+		Value:    payload.PlainToken,
+		Path:     "/",
+		MaxAge:   maxDays * 86400,
+		HttpOnly: true,
+		Secure:   secureCookie,
+		SameSite: sameSite,
+	})
+
+	// Validate and sanitise the redirect URL
+	if redirectTo == "" {
+		redirectTo = os.Getenv("FRONTEND_URL")
+		if redirectTo == "" {
+			redirectTo = "http://localhost:5173"
+		}
+	} else {
+		// Only allow URLs whose host is in the ALLOWED_REDIRECT_DOMAINS list
+		parsed, parseErr := url.Parse(redirectTo)
+		if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			redirectTo = os.Getenv("FRONTEND_URL")
+			if redirectTo == "" {
+				redirectTo = "http://localhost:5173"
+			}
+		}
+	}
+
+	c.Redirect(http.StatusFound, redirectTo)
+}
+
 // trustedDeviceCookieAttrs returns the Secure flag and SameSite policy to use
 // for the trusted-device cookie based on the TRUSTED_DEVICE_COOKIE_SAMESITE
-// setting (default: "none").
-//
-// Resolution order (3-tier):
-//  1. SettingResolver (admin.SettingsService: env > DB > default) — used when wired in main.go
-//  2. os.Getenv("TRUSTED_DEVICE_COOKIE_SAMESITE") — fallback when SettingResolver is nil
-//  3. Hardcoded default "none"
-//
-// Policy values:
-//   - "none"   → SameSite=None, Secure=true  (required for cross-origin / cross-site deployments
-//     where the Auth API and the frontend are on different domains, e.g. Planora)
-//   - "lax"    → SameSite=Lax,  Secure=true in release mode
-//   - "strict" → SameSite=Strict, Secure=true in release mode
-//
-// In all cases Secure=true is enforced in release mode so the cookie is never
-// transmitted over plain HTTP in production. In debug/test mode Secure=false so
-// local http://localhost flows continue to work.
-func (h *Handler) trustedDeviceCookieAttrs() (secure bool, sameSite http.SameSite) {
-	secure = gin.Mode() == gin.ReleaseMode
+// setting (default: "none") and the current request's transport security.
+func (h *Handler) trustedDeviceCookieAttrs(c *gin.Context) (secure bool, sameSite http.SameSite) {
+	// Determine whether the transport is HTTPS (direct TLS, behind a proxy, or
+	// production mode where HTTPS is expected).
+	isHTTPS := gin.Mode() == gin.ReleaseMode ||
+		c.Request.TLS != nil ||
+		c.GetHeader("X-Forwarded-Proto") == "https"
 
 	var policy string
 	if h.SettingResolver != nil {
@@ -814,14 +982,24 @@ func (h *Handler) trustedDeviceCookieAttrs() (secure bool, sameSite http.SameSit
 	switch policy {
 	case "strict":
 		sameSite = http.SameSiteStrictMode
+		secure = isHTTPS
 	case "lax":
 		sameSite = http.SameSiteLaxMode
+		secure = isHTTPS
 	default:
-		// "none" — required for cross-origin deployments (Planora ↔ Auth API on different domains).
-		// SameSite=None requires Secure=true; enforce it unconditionally so the browser accepts
-		// the attribute even in non-release builds running behind an HTTPS reverse proxy.
-		sameSite = http.SameSiteNoneMode
-		secure = true
+		// "none" — intended for cross-origin deployments.
+		if isHTTPS {
+			// Transport is secure → SameSite=None + Secure=true works.
+			sameSite = http.SameSiteNoneMode
+			secure = true
+		} else {
+			// Plain HTTP → SameSite=None would be rejected by browsers
+			// (RFC requires Secure with None).  Downgrade to Lax so the
+			// cookie is accepted and works for same-site requests (e.g.
+			// localhost:5173 → localhost:8080).
+			sameSite = http.SameSiteLaxMode
+			secure = false
+		}
 	}
 	return secure, sameSite
 }

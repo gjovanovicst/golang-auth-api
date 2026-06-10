@@ -13,7 +13,7 @@ import (
 // GroupRevoker is an optional dependency that revokes sessions across all apps
 // in the same session group when GlobalLogout is enabled.
 type GroupRevoker interface {
-	RevokeAllUserSessionsInGroupByUserID(appID, userID string)
+	RevokeAllUserSessionsInGroupByUserID(appID, userID, deviceID string)
 }
 
 // Handler handles HTTP requests for session management.
@@ -113,7 +113,7 @@ func (h *Handler) RevokeSession(c *gin.Context) {
 	// revoke all sessions for this user across all peer apps in the group.
 	if h.GroupRevoker != nil {
 		log.Printf("[SessionGroup] RevokeSession: triggering group revocation for appID=%s userID=%s", appIDVal.(string), userID.(string))
-		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appIDVal.(string), userID.(string))
+		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appIDVal.(string), userID.(string), "")
 	} else {
 		log.Printf("[SessionGroup] RevokeSession: GroupRevoker is nil, skipping group revocation")
 	}
@@ -163,7 +163,7 @@ func (h *Handler) RevokeAllSessions(c *gin.Context) {
 	if h.GroupRevoker != nil {
 		log.Printf("[SessionGroup] RevokeAllSessions: triggering group revocation for appID=%s userID=%s",
 			appIDVal.(string), userID.(string))
-		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appIDVal.(string), userID.(string))
+		go h.GroupRevoker.RevokeAllUserSessionsInGroupByUserID(appIDVal.(string), userID.(string), "")
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "All other sessions revoked successfully"})

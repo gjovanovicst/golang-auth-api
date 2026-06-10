@@ -203,6 +203,9 @@ func main() {
 	twofaHandler.TrustedDeviceRepo = trustedDeviceRepo
 	// Wire DB for per-app token TTL overrides
 	twofaHandler.DB = database.DB
+	// Wire HMAC secret and public URL for first-party trusted-device cookie activation
+	twofaHandler.HMACSecret = viper.GetString("JWT_SECRET") + "_tdact"
+	twofaHandler.PublicURL = viper.GetString("PUBLIC_URL")
 	// Wire trusted device validation callback into user handler (avoids circular import)
 	userHandler.ValidateTrustedDevice = func(plainToken string) (uuid.UUID, uuid.UUID, bool) {
 		device, appErr := twofaService.ValidateTrustedDevice(plainToken)
@@ -248,15 +251,12 @@ func main() {
 	sessionGroupRevoker := sessiongroup.NewRevoker(adminRepo, userRepo, sessionService)
 	// Wire SSO peer_logout events for expiry-triggered group revocations (e.g. Redis
 	// keyspace notification fires when a session_meta key expires in one app).
-	sessionGroupRevoker.GroupLogoutFunc = func(appID, userEmail, reason string) {
-		go ssoHandler.PublishLogoutToGroup(appID, userEmail, reason)
+	sessionGroupRevoker.GroupLogoutFunc = func(appID, userID, reason, deviceID string) {
+		go ssoHandler.PublishLogoutToGroup(appID, userID, reason, deviceID)
 	}
-	// Wire SSO peer logout into session service so inactivity-expired sessions
-	// also push a peer_logout SSE event to peer apps in the same session group.
-	sessionService.GroupLogoutFunc = func(sourceAppID, userEmail, reason string) {
-		go ssoHandler.PublishLogoutToGroup(sourceAppID, userEmail, reason)
+	sessionService.GroupLogoutFunc = func(sourceAppID, userID, reason, deviceID string) {
+		go ssoHandler.PublishLogoutToGroup(sourceAppID, userID, reason, deviceID)
 	}
-
 	// Wire group revocation into the session handler so that revoking a single
 	// session also revokes all sessions for that user across peer apps in the
 	// same session group (when GlobalLogout is enabled).
@@ -270,24 +270,38 @@ func main() {
 	// their sessions in all other apps of the group are revoked (only when GlobalLogout=true).
 	// The SSE peer_logout notification is also suppressed when GlobalLogout is disabled so
 	// that frontends of peer apps do not auto-logout the user.
-	userService.GroupLogoutFunc = func(appID, userEmail string) {
+	userService.GroupLogoutFunc = func(appID, userID, deviceID string) {
 		shouldRevoke, _ := sessionGroupRevoker.ShouldRevokeGroupSessions(appID)
 		if !shouldRevoke {
 			return
 		}
-		sessionGroupRevoker.RevokeAllUserSessionsInGroup(appID, userEmail, "voluntary")
-		go ssoHandler.PublishLogoutToGroup(appID, userEmail, "voluntary")
+		sessionGroupRevoker.RevokeAllUserSessionsInGroupByUserID(appID, userID, deviceID)
+		go ssoHandler.PublishLogoutToGroup(appID, userID, "voluntary", deviceID)
 	}
 
 	// Wire SSO login propagation: after a successful login in any handler, publish
 	// SSO exchange tokens to peer apps via Redis pub/sub → SSE.
-	// Also clear the user-wide token blacklist across all apps in the session group
-	// so that a user who was previously logged out (via group expiry or admin revocation)
-	// can authenticate again in peer apps without being immediately rejected.
-	publishLogin := func(appID, userID string) {
+	// ClearGroupUserBlacklist MUST run synchronously (before the login response is
+	// returned) so that a newly created session cannot be rejected by a stale
+	// revocation blacklist entry before the client even makes its first API call.
+	// The SSO pub/sub publish is fire-and-forget and can stay in a goroutine.
+	clearBlacklist := func(appID, userID string) {
 		sessionGroupRevoker.ClearGroupUserBlacklist(appID, userID)
-		ssoHandler.PublishLoginToGroup(appID, userID)
+		// Clear any stale pending logout event for the source app so the SSE
+		// replay in StreamEvents does not deliver a peer_logout from a previous
+		// session to the newly logged-in client. This MUST run synchronously
+		// before the login response is returned, otherwise the client's SSE
+		// connection (established immediately on page load) beats the goroutine
+		// in PublishLoginToGroup and replays the old logout event first.
+		_ = redis.DeletePendingLogoutEvent(appID, userID)
 	}
+	publishLogin := func(appID, userID, deviceID string) {
+		ssoHandler.PublishLoginToGroup(appID, userID, deviceID)
+	}
+	userHandler.SyncLoginFunc = clearBlacklist
+	socialHandler.SyncLoginFunc = clearBlacklist
+	twofaHandler.SyncLoginFunc = clearBlacklist
+	webauthnHandler.SyncLoginFunc = clearBlacklist
 	userHandler.PublishLoginFunc = publishLogin
 	socialHandler.PublishLoginFunc = publishLogin
 	twofaHandler.PublishLoginFunc = publishLogin
@@ -307,8 +321,8 @@ func main() {
 
 	// Wire SSE logout notification into the admin GUI handler so that admin-triggered
 	// session revocations also push a peer_logout event to SSE-connected clients.
-	guiHandler.PublishLogoutFunc = func(appID, userEmail string) {
-		go ssoHandler.PublishLogoutToGroup(appID, userEmail, "revoked")
+	guiHandler.PublishLogoutFunc = func(appID, userID, deviceID string) {
+		go ssoHandler.PublishLogoutToGroup(appID, userID, "revoked", deviceID)
 	}
 
 	// Initialize OIDC Provider (enabled via OIDC_ENABLED=true)
@@ -321,13 +335,13 @@ func main() {
 		// Wire OIDC RP-initiated logout group logout: revoke peer-app JWT sessions
 		// for the logging-out user, mirroring userService.GroupLogoutFunc.
 		// SSE peer_logout is only published when GlobalLogout is enabled.
-		oidcHandler.GroupLogoutFunc = func(appID, userEmail string) {
+		oidcHandler.GroupLogoutFunc = func(appID, userID, deviceID string) {
 			shouldRevoke, _ := sessionGroupRevoker.ShouldRevokeGroupSessions(appID)
 			if !shouldRevoke {
 				return
 			}
-			sessionGroupRevoker.RevokeAllUserSessionsInGroup(appID, userEmail, "voluntary")
-			go ssoHandler.PublishLogoutToGroup(appID, userEmail, "voluntary")
+			sessionGroupRevoker.RevokeAllUserSessionsInGroupByUserID(appID, userID, deviceID)
+			go ssoHandler.PublishLogoutToGroup(appID, userID, "voluntary", deviceID)
 		}
 		// Fix #10: Run an initial cleanup immediately on startup so stale codes
 		// from before the last restart are purged without waiting a full hour.
@@ -439,6 +453,10 @@ func main() {
 		public.GET("/2fa/backup-email/verify", twofaHandler.VerifyBackupEmail)
 		// 2FA available methods (public so login UI can show method options)
 		public.GET("/2fa/methods", twofaHandler.GetAvailableMethods)
+		// First-party trusted-device cookie activation — frontend navigates here after 2FA with
+		// remember_device=true so the cookie is set in a same-origin browser context rather than
+		// via a cross-origin XHR response (which may not be sent during OAuth redirect flows).
+		public.GET("/2fa/trusted-device/activate", twofaHandler.ActivateTrustedDevice)
 
 		// Passkey 2FA login (public because it needs temp token)
 		public.POST("/2fa/passkey/begin", middleware.APIPasskey2FARateLimit(), webauthnHandler.BeginPasskey2FA)
@@ -598,6 +616,7 @@ func main() {
 		adminRoutes.POST("/tenants", adminHandler.CreateTenant)
 		adminRoutes.GET("/tenants", adminHandler.ListTenants)
 		adminRoutes.POST("/apps", adminHandler.CreateApp)
+		adminRoutes.GET("/apps", adminHandler.ListApps)
 		adminRoutes.GET("/apps/:id", adminHandler.GetAppDetails)
 		adminRoutes.POST("/apps/:id/oauth-config", adminHandler.UpsertOAuthConfig)
 
@@ -664,6 +683,7 @@ func main() {
 		// User Import/Export (Admin)
 		adminRoutes.GET("/users/export", adminHandler.ExportUsers)
 		adminRoutes.POST("/users/import", adminHandler.ImportUsers)
+		adminRoutes.POST("/users/by-ids", adminHandler.GetUsersByIDs)
 
 		// Trusted Device Management (Admin)
 		adminRoutes.GET("/users/:id/trusted-devices", adminHandler.AdminListTrustedDevices)

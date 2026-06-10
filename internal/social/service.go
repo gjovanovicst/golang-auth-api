@@ -108,7 +108,7 @@ func (s *Service) assignDefaultRole(appID, userID string) {
 // CreateSessionOrTokens creates a session via the session service if available,
 // otherwise falls back to legacy token generation.
 // Per-app token TTL overrides are resolved via ResolveTokenTTLs.
-func (s *Service) CreateSessionOrTokens(appID, userID, ip, userAgent string) (accessToken, refreshToken string, appErr *errors.AppError) {
+func (s *Service) CreateSessionOrTokens(appID, userID, ip, userAgent, deviceID string) (accessToken, refreshToken string, appErr *errors.AppError) {
 	roles := s.getUserRoles(appID, userID)
 
 	// Load per-app token TTL overrides
@@ -120,7 +120,7 @@ func (s *Service) CreateSessionOrTokens(appID, userID, ip, userAgent string) (ac
 	accessTTL, refreshTTL := user.ResolveTokenTTLs(appPtr)
 
 	if s.SessionService != nil {
-		at, rt, _, sErr := s.SessionService.CreateSession(appID, userID, ip, userAgent, roles, accessTTL, refreshTTL)
+		at, rt, _, sErr := s.SessionService.CreateSession(appID, userID, ip, userAgent, deviceID, roles, accessTTL, refreshTTL)
 		if sErr != nil {
 			return "", "", sErr
 		}
@@ -1126,7 +1126,7 @@ func (s *Service) ConfirmMerge(appID uuid.UUID, mergeToken, password, ip, userAg
 	}
 
 	// 6. Issue session tokens
-	at, rt, sessionErr := s.CreateSessionOrTokens(appID.String(), payload.UserID, ip, userAgent)
+	at, rt, sessionErr := s.CreateSessionOrTokens(appID.String(), payload.UserID, ip, userAgent, "")
 	if sessionErr != nil {
 		return "", "", sessionErr
 	}
@@ -1156,4 +1156,3 @@ func (s *Service) GetUserAppTwoFA(appID uuid.UUID, userID uuid.UUID, fallbackEna
 	// No per-app record — fall back to legacy global flag
 	return fallbackEnabled, fallbackMethod
 }
- 

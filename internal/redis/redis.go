@@ -1253,19 +1253,21 @@ func PublishSSOEvent(groupID, payload string) error {
 	return Rdb.Publish(ctx, ssoEventChannel(groupID), payload).Err()
 }
 
-// StorePendingLoginEvent stores a per-app peer_login payload in Redis so that
-// a client that was disconnected when the event was published can receive it on
-// reconnect.  The entry expires after 90 seconds — long enough to survive a
+// StorePendingLoginEvent stores a per-app-per-user peer_login payload in Redis
+// so that a client that was disconnected when the event was published can receive
+// it on reconnect.  The entry expires after 90 seconds — long enough to survive a
 // proxy-forced reconnect cycle but short enough not to replay stale logins.
-func StorePendingLoginEvent(appID, payload string) error {
-	key := fmt.Sprintf("sso:pending_login:%s", appID)
+// The key includes userID so that a login for one user is never replayed to a
+// different user sharing the same browser/device.
+func StorePendingLoginEvent(appID, userID, payload string) error {
+	key := fmt.Sprintf("sso:pending_login:%s:%s", appID, userID)
 	return Rdb.Set(ctx, key, payload, 90*time.Second).Err()
 }
 
 // PopPendingLoginEvent returns and deletes the pending login payload for the
-// given appID, or ("", nil) if there is none.
-func PopPendingLoginEvent(appID string) (string, error) {
-	key := fmt.Sprintf("sso:pending_login:%s", appID)
+// given appID+userID, or ("", nil) if there is none.
+func PopPendingLoginEvent(appID, userID string) (string, error) {
+	key := fmt.Sprintf("sso:pending_login:%s:%s", appID, userID)
 	val, err := Rdb.GetDel(ctx, key).Result()
 	if err != nil {
 		if err.Error() == "redis: nil" {
@@ -1286,43 +1288,39 @@ func PopPendingLoginEvent(appID string) (string, error) {
 // after the initial login to still receive an on-demand peer_login SSE event
 // on SSE connect.
 //
-// Key layout: sso:presence:{appID}  →  "{userID}|{groupID}"
+// Key layout: sso:presence:{appID}:{userID}  →  "{groupID}"
 // ============================================================================
 
 const loginPresenceTTL = 24 * time.Hour
 
 // SetLoginPresence records that userID is currently logged in to appID as part
-// of groupID.  Only the most-recently-logged-in user is tracked per app.
+// of groupID.  The key is user-scoped so that multiple users can have active
+// presence records for the same app simultaneously.
 // The key is refreshed (rolling TTL) on every call so it stays alive for as
 // long as the session is actively used.
 func SetLoginPresence(appID, userID, groupID string) error {
-	key := fmt.Sprintf("sso:presence:%s", appID)
-	value := userID + "|" + groupID
-	return Rdb.Set(ctx, key, value, loginPresenceTTL).Err()
+	key := fmt.Sprintf("sso:presence:%s:%s", appID, userID)
+	return Rdb.Set(ctx, key, groupID, loginPresenceTTL).Err()
 }
 
-// GetLoginPresence returns the userID and groupID stored by SetLoginPresence,
-// or ("", "", nil) when no presence record exists for the app.
-func GetLoginPresence(appID string) (userID, groupID string, err error) {
-	key := fmt.Sprintf("sso:presence:%s", appID)
+// GetLoginPresence returns the groupID stored by SetLoginPresence for the given
+// appID+userID, or ("", nil) when no presence record exists.
+func GetLoginPresence(appID, userID string) (groupID string, err error) {
+	key := fmt.Sprintf("sso:presence:%s:%s", appID, userID)
 	val, redisErr := Rdb.Get(ctx, key).Result()
 	if redisErr != nil {
 		if redisErr.Error() == "redis: nil" {
-			return "", "", nil
+			return "", nil
 		}
-		return "", "", redisErr
+		return "", redisErr
 	}
-	parts := strings.SplitN(val, "|", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("malformed login presence value")
-	}
-	return parts[0], parts[1], nil
+	return val, nil
 }
 
-// DeleteLoginPresence removes the login presence record for appID.  Called on
-// logout and group-wide session revocation.
-func DeleteLoginPresence(appID string) error {
-	key := fmt.Sprintf("sso:presence:%s", appID)
+// DeleteLoginPresence removes the login presence record for appID+userID.
+// Called on logout and group-wide session revocation.
+func DeleteLoginPresence(appID, userID string) error {
+	key := fmt.Sprintf("sso:presence:%s:%s", appID, userID)
 	return Rdb.Del(ctx, key).Err()
 }
 

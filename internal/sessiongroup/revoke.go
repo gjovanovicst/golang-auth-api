@@ -103,7 +103,7 @@ func (r *Revoker) RevokeAllUserSessionsInGroup(appID, userEmail, reason, deviceI
 
 		// Remove the SSO login-presence record so that peer apps opened after this
 		// group logout do not receive a stale on-demand peer_login event.
-		if presenceErr := redis.DeleteLoginPresence(targetAppID); presenceErr != nil {
+		if presenceErr := redis.DeleteLoginPresence(targetAppID, targetUser.ID.String()); presenceErr != nil {
 			log.Printf("[SessionGroup] Warning: failed to delete login presence for app %s: %v", targetAppID, presenceErr)
 		}
 	}

@@ -522,8 +522,8 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 
 			// Roll the SSO login-presence TTL so the record stays alive for as
 			// long as the session continues to be used (rolling 24 h window).
-			if presenceUserID, presenceGroupID, presenceErr := redis.GetLoginPresence(appIDUUID.String()); presenceErr == nil && presenceUserID != "" {
-				_ = redis.SetLoginPresence(appIDUUID.String(), presenceUserID, presenceGroupID)
+			if groupID, presenceErr := redis.GetLoginPresence(appIDUUID.String(), userID); presenceErr == nil && groupID != "" {
+				_ = redis.SetLoginPresence(appIDUUID.String(), userID, groupID)
 			}
 		}
 	}
@@ -827,7 +827,7 @@ func (h *Handler) Logout(c *gin.Context) {
 
 	// Remove the SSO login-presence record so that peer apps that connect after
 	// this logout do not incorrectly receive an on-demand peer_login event.
-	if presenceErr := redis.DeleteLoginPresence(appID.String()); presenceErr != nil {
+	if presenceErr := redis.DeleteLoginPresence(appID.String(), userID.(string)); presenceErr != nil {
 		// Non-fatal: log and continue — the presence key will expire on its own.
 		_ = presenceErr
 	}

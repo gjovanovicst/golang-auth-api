@@ -5884,7 +5884,7 @@ func (h *GUIHandler) revokeUserSessionsEverywhere(appID, userID string, accessTo
 	for _, au := range appUsers {
 		_ = redis.DeleteAllUserSessions(au.AppID, au.UserID, "")
 		_ = redis.BlacklistAllUserTokens(au.AppID, au.UserID, accessTokenTTL)
-		_ = redis.DeleteLoginPresence(au.AppID)
+		_ = redis.DeleteLoginPresence(au.AppID, au.UserID)
 		log.Printf("[RevokeEverywhere] revoked appID=%s userID=%s", au.AppID, au.UserID)
 	}
 

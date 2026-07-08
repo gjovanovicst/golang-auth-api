@@ -32,6 +32,7 @@ var ValidEventTypes = []string{
 	"user.verified",
 	"user.login",
 	"user.password_changed",
+	"user.deleted",
 	"2fa.enabled",
 	"2fa.disabled",
 	"social.linked",

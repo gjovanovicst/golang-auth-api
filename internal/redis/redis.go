@@ -1278,6 +1278,28 @@ func PopPendingLoginEvent(appID, userID string) (string, error) {
 	return val, nil
 }
 
+// StorePendingLoginDeviceMapping maps a deviceID to the userID so that the SSE
+// StreamEvents handler can find pending login events for a device without knowing
+// the userID in advance (the client may not have a cached_user_profile).
+func StorePendingLoginDeviceMapping(appID, deviceID, userID string) error {
+	key := fmt.Sprintf("sso:pending_login_d:%s:%s", appID, deviceID)
+	return Rdb.Set(ctx, key, userID, 90*time.Second).Err()
+}
+
+// PopPendingLoginDeviceMapping returns and deletes the userID for the given
+// appID+deviceID, or ("", nil) if there is none.
+func PopPendingLoginDeviceMapping(appID, deviceID string) (string, error) {
+	key := fmt.Sprintf("sso:pending_login_d:%s:%s", appID, deviceID)
+	val, err := Rdb.GetDel(ctx, key).Result()
+	if err != nil {
+		if err.Error() == "redis: nil" {
+			return "", nil
+		}
+		return "", err
+	}
+	return val, nil
+}
+
 // ============================================================================
 // SSO Login Presence
 //
@@ -1291,30 +1313,38 @@ func PopPendingLoginEvent(appID, userID string) (string, error) {
 // Key layout: sso:presence:{appID}:{userID}  →  "{groupID}"
 // ============================================================================
 
-const loginPresenceTTL = 24 * time.Hour
+const loginPresenceTTL = 1 * time.Hour
 
 // SetLoginPresence records that userID is currently logged in to appID as part
-// of groupID.  The key is user-scoped so that multiple users can have active
-// presence records for the same app simultaneously.
-// The key is refreshed (rolling TTL) on every call so it stays alive for as
-// long as the session is actively used.
-func SetLoginPresence(appID, userID, groupID string) error {
+// of groupID, together with the device fingerprint.  The key is user-scoped so
+// that multiple users can have active presence records for the same app
+// simultaneously.  The key is refreshed (rolling TTL) on every call so it
+// stays alive for as long as the session is actively used.
+func SetLoginPresence(appID, userID, groupID, deviceID string) error {
 	key := fmt.Sprintf("sso:presence:%s:%s", appID, userID)
-	return Rdb.Set(ctx, key, groupID, loginPresenceTTL).Err()
+	value := fmt.Sprintf("%s|%s", groupID, deviceID)
+	return Rdb.Set(ctx, key, value, loginPresenceTTL).Err()
 }
 
-// GetLoginPresence returns the groupID stored by SetLoginPresence for the given
-// appID+userID, or ("", nil) when no presence record exists.
-func GetLoginPresence(appID, userID string) (groupID string, err error) {
+// GetLoginPresence returns the groupID and deviceID stored by SetLoginPresence
+// for the given appID+userID, or ("", "", nil) when no presence record exists.
+// Backward-compatible: old records stored without a deviceID (before the device
+// scoping change) return the groupID with an empty deviceID.
+func GetLoginPresence(appID, userID string) (groupID, deviceID string, err error) {
 	key := fmt.Sprintf("sso:presence:%s:%s", appID, userID)
 	val, redisErr := Rdb.Get(ctx, key).Result()
 	if redisErr != nil {
 		if redisErr.Error() == "redis: nil" {
-			return "", nil
+			return "", "", nil
 		}
-		return "", redisErr
+		return "", "", redisErr
 	}
-	return val, nil
+	parts := strings.SplitN(val, "|", 2)
+	groupID = parts[0]
+	if len(parts) > 1 {
+		deviceID = parts[1]
+	}
+	return groupID, deviceID, nil
 }
 
 // DeleteLoginPresence removes the login presence record for appID+userID.
@@ -1322,6 +1352,29 @@ func GetLoginPresence(appID, userID string) (groupID string, err error) {
 func DeleteLoginPresence(appID, userID string) error {
 	key := fmt.Sprintf("sso:presence:%s:%s", appID, userID)
 	return Rdb.Del(ctx, key).Err()
+}
+
+// StorePresenceDeviceMapping maps a deviceID to the userID within a session group
+// so that the SSE StreamEvents handler can discover which user is logged in on this
+// device even without a user_id query parameter (e.g. when the client has no
+// cached_user_profile on the current origin).
+func StorePresenceDeviceMapping(groupID, deviceID, userID string) error {
+	key := fmt.Sprintf("sso:presence_d:%s:%s", groupID, deviceID)
+	return Rdb.Set(ctx, key, userID, loginPresenceTTL).Err()
+}
+
+// GetPresenceUserByDevice returns the userID mapped to the given
+// groupID+deviceID, or ("", nil) if there is none.
+func GetPresenceUserByDevice(groupID, deviceID string) (string, error) {
+	key := fmt.Sprintf("sso:presence_d:%s:%s", groupID, deviceID)
+	val, err := Rdb.Get(ctx, key).Result()
+	if err != nil {
+		if err.Error() == "redis: nil" {
+			return "", nil
+		}
+		return "", err
+	}
+	return val, nil
 }
 
 // StorePendingLogoutEvent stores a per-app-per-user peer_logout signal in Redis

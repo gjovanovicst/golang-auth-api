@@ -16,6 +16,7 @@ import (
 	redisclient "github.com/gjovanovicst/auth_api/internal/redis"
 	"github.com/gjovanovicst/auth_api/internal/twofa"
 	userimport "github.com/gjovanovicst/auth_api/internal/user"
+	"github.com/gjovanovicst/auth_api/internal/webhook"
 	"github.com/gjovanovicst/auth_api/pkg/dto"
 	"github.com/gjovanovicst/auth_api/pkg/models"
 	"github.com/google/uuid"
@@ -28,6 +29,7 @@ type Handler struct {
 	IPRuleEvaluator   *geoip.IPRuleEvaluator         // IP rule evaluator for cache invalidation (nil = disabled)
 	TrustedDeviceRepo *twofa.TrustedDeviceRepository // Optional: trusted device management (nil = disabled)
 	GeoIPService      *geoip.Service                 // GeoIP service for IP access checks (nil = disabled)
+	WebhookService    *webhook.Service               // Webhook dispatch for user deletion events (nil = disabled)
 }
 
 func NewHandler(r *Repository, emailService *email.Service) *Handler {
@@ -2009,4 +2011,104 @@ func (h *Handler) GetUsersByIDs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": profiles})
+}
+
+// AdminUpdateUser handles PATCH /admin/users/:id
+// Updates allowed user profile fields (name, first_name, last_name, locale) by admin.
+// Email and password are intentionally excluded — email requires verification flow,
+// and password changes require the current password.
+// @Summary Update a user
+// @Description Update allowed profile fields for a user by admin
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Param   id       path      string                      true  "User ID"
+// @Param   user     body      dto.AdminUpdateUserRequest   true  "Fields to update"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/users/{id} [patch]
+func (h *Handler) AdminUpdateUser(c *gin.Context) {
+	id := c.Param("id")
+
+	var req dto.AdminUpdateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.FirstName != nil {
+		updates["first_name"] = *req.FirstName
+	}
+	if req.LastName != nil {
+		updates["last_name"] = *req.LastName
+	}
+	if req.Locale != nil {
+		updates["locale"] = *req.Locale
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: "No fields to update"})
+		return
+	}
+
+	if err := h.Repo.AdminUpdateUser(id, updates); err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to update user"})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "User updated"})
+}
+
+// AdminDeleteUser handles DELETE /admin/users/:id?archive_mode=purge|archive
+// Deletes a user by admin, archiving their data and dispatching a user.deleted webhook.
+// @Summary Delete a user
+// @Description Delete a user with optional GDPR-compliant archival
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Param   id            path      string  true  "User ID"
+// @Param   archive_mode  query     string  false "Archive mode: 'purge' (GDPR, default) or 'archive'"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 404 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Security AdminApiKey
+// @Router /admin/users/{id} [delete]
+func (h *Handler) AdminDeleteUser(c *gin.Context) {
+	id := c.Param("id")
+	archiveMode := c.DefaultQuery("archive_mode", "purge")
+	if archiveMode != "archive" && archiveMode != "purge" {
+		archiveMode = "purge"
+	}
+
+	// Fetch user first to get AppID for webhook dispatch
+	userDetail, err := h.Repo.GetUserDetailByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, dto.ErrorResponse{Error: "User not found"})
+		return
+	}
+
+	deletedBy := "" // populated from GUI context; REST API uses empty string
+
+	archived, err := h.Repo.AdminDeleteUser(id, deletedBy, archiveMode)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "Failed to delete user"})
+		return
+	}
+
+	// Dispatch user.deleted webhook event (non-blocking)
+	if h.WebhookService != nil {
+		h.WebhookService.Dispatch(userDetail.AppID, "user.deleted", map[string]interface{}{
+			"user_id":      archived.UserID.String(),
+			"email":        archived.Email,
+			"archive_mode": archived.ArchiveMode,
+		})
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "User deleted"})
 }

@@ -7283,3 +7283,155 @@ func (h *GUIHandler) SessionGroupRemoveApp(c *gin.Context) {
 	c.Request.URL.Path = "/gui/session-groups/" + groupID + "/apps"
 	h.SessionGroupApps(c)
 }
+
+// ============================================================
+// User Edit (Admin GUI)
+// ============================================================
+
+// UserEditForm returns an inline edit form HTML fragment for HTMX.
+// GET /gui/users/:id/edit
+func (h *GUIHandler) UserEditForm(c *gin.Context) {
+	id := c.Param("id")
+
+	detail, err := h.Repo.GetUserDetailByID(id)
+	if err != nil {
+		c.HTML(http.StatusNotFound, "error_alert", gin.H{"Error": "User not found"})
+		return
+	}
+
+	c.HTML(http.StatusOK, "user_edit_form", detail)
+}
+
+// UserUpdate handles the admin user update form submission (HTMX).
+// PUT /gui/users/:id
+func (h *GUIHandler) UserUpdate(c *gin.Context) {
+	id := c.Param("id")
+
+	updates := make(map[string]interface{})
+
+	if name := strings.TrimSpace(c.PostForm("name")); name != "" {
+		updates["name"] = name
+	}
+	if fn := strings.TrimSpace(c.PostForm("first_name")); fn != "" {
+		updates["first_name"] = fn
+	}
+	if ln := strings.TrimSpace(c.PostForm("last_name")); ln != "" {
+		updates["last_name"] = ln
+	}
+	if loc := strings.TrimSpace(c.PostForm("locale")); loc != "" {
+		updates["locale"] = loc
+	}
+
+	if len(updates) == 0 {
+		c.String(http.StatusBadRequest, `<div class="alert alert-warning py-2 small">No changes made.</div>`)
+		return
+	}
+
+	if err := h.Repo.AdminUpdateUser(id, updates); err != nil {
+		c.String(http.StatusInternalServerError, `<div class="alert alert-danger py-2 small">Failed to update user.</div>`)
+		return
+	}
+
+	// Trigger refresh of the detail panel so it shows the new values
+	c.Header("HX-Trigger", "userDetailRefresh")
+	c.String(http.StatusOK, `<div class="alert alert-success py-2 small">User updated successfully.</div>`)
+}
+
+// ============================================================
+// User Delete (Admin GUI)
+// ============================================================
+
+// UserDeleteConfirm returns a delete confirmation modal body for HTMX.
+// GET /gui/users/:id/delete
+func (h *GUIHandler) UserDeleteConfirm(c *gin.Context) {
+	id := c.Param("id")
+
+	detail, err := h.Repo.GetUserDetailByID(id)
+	if err != nil {
+		c.HTML(http.StatusNotFound, "error_alert", gin.H{"Error": "User not found"})
+		return
+	}
+
+	c.HTML(http.StatusOK, "user_delete_confirm", detail)
+}
+
+// UserDelete handles admin-level user deletion (HTMX).
+// DELETE /gui/users/:id
+// Expects form fields: confirm_email, archive_mode
+func (h *GUIHandler) UserDelete(c *gin.Context) {
+	id := c.Param("id")
+	confirmEmail := strings.TrimSpace(c.Query("confirm_email"))
+	archiveMode := c.Query("archive_mode")
+	if archiveMode != "archive" {
+		archiveMode = "purge"
+	}
+
+	// Fetch user to validate confirmation email
+	detail, err := h.Repo.GetUserDetailByID(id)
+	if err != nil {
+		c.HTML(http.StatusNotFound, "error_alert", gin.H{"Error": "User not found"})
+		return
+	}
+
+	if confirmEmail != detail.Email {
+		c.String(http.StatusBadRequest,
+			`<div class="alert alert-danger py-2 small">Email does not match. Deletion cancelled.</div>`)
+		return
+	}
+
+	// Revoke all sessions before deletion (same approach as deactivation)
+	appID := detail.AppID.String()
+	maxTokenLifetime := 30 * 24 * time.Hour
+	if rErr := redis.BlacklistAllUserTokens(appID, id, maxTokenLifetime); rErr != nil {
+		fmt.Printf("Warning: Failed to blacklist tokens for deleted user %s: %v\n", id, rErr)
+	}
+	currentRefreshToken, rErr := redis.GetRefreshToken(appID, id)
+	if rErr == nil && currentRefreshToken != "" {
+		if rErr := redis.RevokeRefreshToken(appID, id, currentRefreshToken); rErr != nil {
+			fmt.Printf("Warning: Failed to revoke refresh token for deleted user %s: %v\n", id, rErr)
+		}
+	}
+	// Also clear group-wide blacklists if available
+	if h.GroupRevoker != nil {
+		h.GroupRevoker.ClearGroupUserBlacklist(appID, id)
+	}
+
+	deletedBy := getAdminUsername(c)
+
+	archived, err := h.Repo.AdminDeleteUser(id, deletedBy, archiveMode)
+	if err != nil {
+		log.Printf("ERROR: Failed to delete user %s: %v", id, err)
+		c.String(http.StatusInternalServerError,
+			`<div class="alert alert-danger py-2 small">Failed to delete user.</div>`)
+		return
+	}
+
+	// Dispatch user.deleted webhook event (non-blocking)
+	if h.WebhookService != nil {
+		h.WebhookService.Dispatch(detail.AppID, "user.deleted", map[string]interface{}{
+			"user_id":      archived.UserID.String(),
+			"email":        archived.Email,
+			"archive_mode": archived.ArchiveMode,
+		})
+	}
+
+	// Log the deletion event
+	if userUUID, parseErr := uuid.Parse(id); parseErr == nil {
+		logService.LogAccountDeletion(detail.AppID, userUUID, c.ClientIP(), c.Request.UserAgent())
+	}
+
+	// Trigger list refresh and close modal
+	c.Header("HX-Trigger-After-Swap", "userDeleted")
+
+	// Return success message in the modal body; the userDeleted event handler
+	// will close the modal and refresh the user list.
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
+		`<div class="modal-body text-center py-4">`+
+			`<div class="mb-3"><i class="bi bi-check-circle-fill text-success fs-1"></i></div>`+
+			`<h5>User Deleted</h5>`+
+			`<p class="text-muted small mb-0">The user account has been permanently deleted.</p>`+
+			`</div>`+
+			`<div class="modal-footer border-0 justify-content-center">`+
+			`<button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>`+
+			`</div>`))
+}

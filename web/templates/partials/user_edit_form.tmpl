@@ -1,0 +1,53 @@
+{{define "user_edit_form"}}
+<div id="user-edit-form-container-{{.ID}}" class="card border-0 shadow-sm border-start border-warning border-3 mb-3">
+    <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <h6 class="fw-bold mb-0">
+                <i class="bi bi-pencil-square me-2"></i>Edit User
+            </h6>
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    onclick="document.getElementById('user-edit-form-container-{{.ID}}').remove();">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+        <form hx-put="/gui/users/{{.ID}}"
+              hx-target="#user-edit-result-{{.ID}}"
+              hx-swap="innerHTML">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label small fw-semibold">Full Name</label>
+                    <input type="text" name="name" class="form-control form-control-sm"
+                           value="{{.Name}}" maxlength="255" placeholder="Full display name">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">First Name</label>
+                    <input type="text" name="first_name" class="form-control form-control-sm"
+                           value="{{.FirstName}}" maxlength="100" placeholder="First name">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">Last Name</label>
+                    <input type="text" name="last_name" class="form-control form-control-sm"
+                           value="{{.LastName}}" maxlength="100" placeholder="Last name">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">Locale</label>
+                    <input type="text" name="locale" class="form-control form-control-sm"
+                           value="{{.Locale}}" maxlength="10" placeholder="en-US">
+                </div>
+                <div class="col-12">
+                    <div id="user-edit-result-{{.ID}}"></div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-sm btn-primary">
+                            <i class="bi bi-save me-1"></i>Save
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="document.getElementById('user-edit-form-container-{{.ID}}').remove();">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{{end}}

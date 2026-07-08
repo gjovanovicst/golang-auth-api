@@ -82,6 +82,17 @@
     </div>
 </div>
 
+<!-- Delete user confirmation modal -->
+<div class="modal fade" id="deleteUserModal" tabindex="-1" aria-labelledby="deleteUserModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div id="delete-user-modal-body">
+                <!-- Populated by HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Delete passkey confirmation modal -->
 <div class="modal fade" id="deletePasskeyModal" tabindex="-1" aria-labelledby="deletePasskeyModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -177,6 +188,20 @@
     // After a successful import, refresh the user list
     document.body.addEventListener('userImportComplete', function() {
         htmx.ajax('GET', getUserListURL(1), {target: '#user-table', swap: 'innerHTML'});
+    });
+
+    // After a successful user deletion, close the modal and refresh the user list
+    document.body.addEventListener('userDeleted', function() {
+        var modal = bootstrap.Modal.getInstance(document.getElementById('deleteUserModal'));
+        if (modal) modal.hide();
+        htmx.ajax('GET', getUserListURL(1), {target: '#user-table', swap: 'innerHTML'});
+    });
+
+    // After a successful user update, refresh the detail panel
+    document.body.addEventListener('userDetailRefresh', function() {
+        // The detail panel refresh is triggered client-side by the user clicking View again,
+        // or we can detect the active user detail and reload it.
+        // For now, the HX-Trigger on the update response will handle inline updates.
     });
 
     // Open the import modal with the current app_id injected into the HTMX URL

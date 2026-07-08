@@ -521,17 +521,19 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 			log.LogTokenRefresh(appIDUUID, userUUID, ipAddress, userAgent)
 
 			// Roll the SSO login-presence TTL so the record stays alive for as
-			// long as the session continues to be used (rolling 24 h window).
-			if groupID, presenceErr := redis.GetLoginPresence(appIDUUID.String(), userID); presenceErr == nil && groupID != "" {
-				_ = redis.SetLoginPresence(appIDUUID.String(), userID, groupID)
+			// long as the session continues to be used (rolling 1 h window).
+			if groupID, _, presenceErr := redis.GetLoginPresence(appIDUUID.String(), userID); presenceErr == nil && groupID != "" {
+				deviceID := util.DeviceFingerprint(c)
+				_ = redis.SetLoginPresence(appIDUUID.String(), userID, groupID, deviceID)
+				_ = redis.StorePresenceDeviceMapping(groupID, deviceID, userID)
 			}
 		}
-	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"access_token":  newAccessToken,
-		"refresh_token": newRefreshToken,
-	})
+		c.JSON(http.StatusOK, gin.H{
+			"access_token":  newAccessToken,
+			"refresh_token": newRefreshToken,
+		})
+	}
 }
 
 // @Summary Request password reset

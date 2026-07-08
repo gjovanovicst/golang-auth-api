@@ -302,8 +302,11 @@ func (h *Handler) Exchange(c *gin.Context) {
 	// Record that the user is now logged in to the target app so that further
 	// peer apps opened later can receive an on-demand peer_login event via the
 	// presence-based fallback in StreamEvents.
-	if presenceErr := redis.SetLoginPresence(targetAppID, targetUser.ID.String(), groupID); presenceErr != nil {
+	exchangeDeviceID := util.DeviceFingerprint(c)
+	if presenceErr := redis.SetLoginPresence(targetAppID, targetUser.ID.String(), groupID, exchangeDeviceID); presenceErr != nil {
 		log.Printf("[SSO] Exchange: failed to set login presence for target app %s: %v", targetAppID, presenceErr)
+	} else {
+		_ = redis.StorePresenceDeviceMapping(groupID, exchangeDeviceID, targetUser.ID.String())
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -394,8 +397,10 @@ func (h *Handler) PublishLoginToGroup(sourceAppID, userID, deviceID string) {
 	// Record that this user is currently logged in to the source app so that
 	// peer apps opening an SSE connection long after the login (past the 90 s
 	// pending-event window) can still receive an on-demand peer_login event.
-	if err := redis.SetLoginPresence(sourceAppID, userID, groupID); err != nil {
+	if err := redis.SetLoginPresence(sourceAppID, userID, groupID, deviceID); err != nil {
 		log.Printf("[SSO] PublishLoginToGroup: failed to set login presence for app %s: %v", sourceAppID, err)
+	} else {
+		_ = redis.StorePresenceDeviceMapping(groupID, deviceID, userID)
 	}
 
 	peers, err := h.AdminRepo.GetPeersForApp(sourceAppID)
@@ -424,9 +429,15 @@ func (h *Handler) PublishLoginToGroup(sourceAppID, userID, deviceID string) {
 		// Store for reconnecting clients BEFORE publishing so there is no window
 		// where a client reconnects, misses the pub/sub message, and finds no pending entry.
 		if err := redis.StorePendingLoginEvent(peer.AppID, userID, string(payload)); err != nil {
-			log.Printf("[SSO] PublishLoginToGroup: failed to store pending login for peer %s: %v", peer.AppID, err)
+		log.Printf("[SSO] PublishLoginToGroup: failed to store pending login for peer %s: %v", peer.AppID, err)
 		}
-		if err := redis.PublishSSOEvent(groupID, string(payload)); err != nil {
+		// Also store a deviceID→userID mapping so the SSE StreamEvents handler
+			// can find this pending event by device fingerprint when the client does
+			// not provide a user_id (e.g. no cached_user_profile on that origin).
+			if err := redis.StorePendingLoginDeviceMapping(peer.AppID, deviceID, userID); err != nil {
+				log.Printf("[SSO] PublishLoginToGroup: failed to store pending login device mapping for peer %s: %v", peer.AppID, err)
+			}
+			if err := redis.PublishSSOEvent(groupID, string(payload)); err != nil {
 			log.Printf("[SSO] PublishLoginToGroup: failed to publish event for peer %s: %v", peer.AppID, err)
 		}
 	}
@@ -554,6 +565,23 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 	// the same browser/deviceID would leak across SSE connections.
 	userID := c.Query("user_id")
 
+	// If the client did not provide a user_id (e.g. no cached_user_profile on
+	// this origin), try to discover the user by device fingerprint.  This
+	// allows cross-app SSO to work when the user opens a peer app for the
+	// first time and has no stored identity on that origin.
+	if userID == "" && sseDeviceID != "" {
+		// 1. Try pending login device mapping (90 s TTL, set on recent login).
+		if deviceUserID, err := redis.PopPendingLoginDeviceMapping(appID, sseDeviceID); err == nil && deviceUserID != "" {
+			userID = deviceUserID
+		}
+		// 2. Fall back to presence device mapping (1 h TTL, refreshed on token refresh).
+		if userID == "" {
+			if deviceUserID, err := redis.GetPresenceUserByDevice(groupID, sseDeviceID); err == nil && deviceUserID != "" {
+				userID = deviceUserID
+			}
+		}
+	}
+
 	// Replay any pending login event that was published while this client was
 	// disconnected. Only replay if the device fingerprint matches AND the
 	// userID matches (when provided).
@@ -602,11 +630,20 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 				if peerAppID == appID {
 					continue
 				}
-				peerGroupID, presErr := redis.GetLoginPresence(peerAppID, userID)
+				peerGroupID, presenceDeviceID, presErr := redis.GetLoginPresence(peerAppID, userID)
 				if presErr != nil || peerGroupID != groupID {
-					continue
+				 continue
 				}
-				// Found a peer with an active login presence for this user —
+				// Only auto-login if the presence was set by the same device.
+				// Without this check, a stale cached_user_profile from browser data
+				// import in a different browser (different deviceID) would cause
+				// auto-login as the wrong user.
+				if presenceDeviceID != "" && presenceDeviceID != sseDeviceID {
+				log.Printf("[SSO] StreamEvents: presence-based fallback skipped — device mismatch for user %s (presence=%s, sse=%s)",
+				userID, presenceDeviceID, sseDeviceID)
+				continue
+				}
+				// Found a peer with an active login presence for this user on this device —
 				// generate a single-use SSO token scoped to the requesting app.
 				token := uuid.New().String()
 				if tokErr := redis.SetSSOToken(token, groupID, peerAppID, userID); tokErr != nil {
@@ -661,14 +698,13 @@ func (h *Handler) StreamEvents(c *gin.Context) {
 			if evt.DeviceID != "" && evt.DeviceID != sseDeviceID {
 				continue
 			}
-			// peer_logout events are user-scoped when the SSE connection
-			// provides a user_id. This prevents session logout leakage
+			// peer_login and peer_logout events are user-scoped when the SSE
+			// connection provides a user_id. This prevents session leakage
 			// between different users sharing the same browser/device.
-			// peer_login events are NOT filtered by user ID because the
-			// receiving client may not yet be authenticated (auto-login
-			// use case); the SSO token exchange provides its own security
-			// by verifying the source user's identity.
-			if evt.Type == "peer_logout" && userID != "" && evt.UserID != "" && evt.UserID != userID {
+			// When the client is unauthenticated (no user_id), events are
+			// still delivered; the SSO token exchange provides its own
+			// security by verifying the source user's identity.
+			if userID != "" && evt.UserID != "" && evt.UserID != userID {
 				continue
 			}
 			if !writeAndFlush(msg.Payload) {

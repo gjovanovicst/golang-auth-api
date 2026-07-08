@@ -97,3 +97,14 @@ type AppLoginConfigResponse struct {
 	PwRequireDigit  bool `json:"pw_require_digit"`  // Require at least one digit
 	PwRequireSymbol bool `json:"pw_require_symbol"` // Require at least one special character
 }
+
+// AdminUpdateUserRequest represents the payload for PATCH /admin/users/:id.
+// All fields are optional — only the provided non-nil fields are updated.
+// Email and password are intentionally excluded (email requires verification,
+// password changes require the current password).
+type AdminUpdateUserRequest struct {
+	Name      *string `json:"name,omitempty"`
+	FirstName *string `json:"first_name,omitempty"`
+	LastName  *string `json:"last_name,omitempty"`
+	Locale    *string `json:"locale,omitempty"`
+}

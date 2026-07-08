@@ -600,8 +600,6 @@ type UserListItem struct {
 	Email              string     `json:"email"`
 	Name               string     `json:"name"`
 	AppID              uuid.UUID  `json:"app_id"`
-	AppName            string     `json:"app_name"`
-	TenantName         string     `json:"tenant_name"`
 	IsActive           bool       `json:"is_active"`
 	EmailVerified      bool       `json:"email_verified"`
 	TwoFAEnabled       bool       `json:"two_fa_enabled"`
@@ -656,9 +654,7 @@ func (r *Repository) ListUsersWithDetails(page, pageSize int, appID, search stri
 
 	// Build base conditions for reuse in both count and data queries
 	applyFilters := func(q *gorm.DB) *gorm.DB {
-		q = q.Joins("LEFT JOIN applications ON applications.id = users.app_id").
-			Joins("LEFT JOIN tenants ON tenants.id = applications.tenant_id").
-			Joins("LEFT JOIN (SELECT user_id, COUNT(*) as count FROM social_accounts GROUP BY user_id) sa_count ON sa_count.user_id = users.id")
+		q = q.Joins("LEFT JOIN (SELECT user_id, COUNT(*) as count FROM social_accounts GROUP BY user_id) sa_count ON sa_count.user_id = users.id")
 		if appID != "" {
 			q = q.Where("users.app_id = ?", appID)
 		}
@@ -678,8 +674,6 @@ func (r *Repository) ListUsersWithDetails(page, pageSize int, appID, search stri
 	// Fetch paginated results
 	dataQuery := applyFilters(r.DB.Model(&models.User{}).
 		Select(`users.id, users.email, users.name, users.app_id,
-			applications.name as app_name,
-			COALESCE(tenants.name, '') as tenant_name,
 			users.is_active, users.email_verified, users.two_fa_enabled,
 			(users.password_hash != '') as has_password,
 			COALESCE(sa_count.count, 0) as social_account_count,
@@ -786,6 +780,91 @@ func (r *Repository) CountUsersByStatus() (*UserStatusCounts, error) {
 	}
 
 	return &counts, nil
+}
+
+// AdminUpdateUser updates allowed profile fields for a user by admin.
+// Only the caller controls which fields go into the updates map —
+// typically name, first_name, last_name, and locale.
+func (r *Repository) AdminUpdateUser(id string, updates map[string]interface{}) error {
+	return r.DB.Model(&models.User{}).Where("id = ?", id).Updates(updates).Error
+}
+
+// AdminDeleteUser performs admin-level user deletion within a transaction:
+//  1. Fetches the user with social accounts for archival metadata
+//  2. Creates an archived_user record (anonymized if archiveMode = "purge")
+//  3. Cascade-deletes related rows: social_accounts, user_roles,
+//     trusted_devices, web_authn_credentials, activity_logs
+//  4. Hard-deletes the user row
+//
+// Returns the created ArchivedUser record for webhook payload construction.
+func (r *Repository) AdminDeleteUser(id, deletedBy, archiveMode string) (*models.ArchivedUser, error) {
+	var archived *models.ArchivedUser
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		// 1. Fetch the user with social accounts
+		var user models.User
+		if err := tx.Preload("SocialAccounts").First(&user, "id = ?", id).Error; err != nil {
+			return err
+		}
+
+		// 2. Build social_providers string
+		providers := make([]string, 0, len(user.SocialAccounts))
+		for _, sa := range user.SocialAccounts {
+			providers = append(providers, sa.Provider)
+		}
+
+		// 3. Create archived_user record
+		archived = &models.ArchivedUser{
+			UserID:          user.ID,
+			AppID:           user.AppID,
+			Email:           user.Email,
+			Name:            user.Name,
+			FirstName:       user.FirstName,
+			LastName:        user.LastName,
+			Locale:          user.Locale,
+			EmailVerified:   user.EmailVerified,
+			IsActive:        user.IsActive,
+			TwoFAEnabled:    user.TwoFAEnabled,
+			HasPassword:     user.PasswordHash != "",
+			SocialProviders: strings.Join(providers, ","),
+			RegisteredAt:    user.CreatedAt,
+			DeletedAt:       time.Now().UTC(),
+			DeletedBy:       deletedBy,
+			ArchiveMode:     archiveMode,
+		}
+
+		if archiveMode == "purge" {
+			// Anonymize personal data for GDPR compliance
+			archived.Email = "deleted_" + id[:8] + "@anonymous.invalid"
+			archived.Name = ""
+			archived.FirstName = ""
+			archived.LastName = ""
+		}
+
+		if err := tx.Create(archived).Error; err != nil {
+			return err
+		}
+
+		// 4. Cascade delete related rows
+		if err := tx.Exec("DELETE FROM social_accounts WHERE user_id = ?", id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM user_roles WHERE user_id = ?", id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM trusted_devices WHERE user_id = ?", id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM web_authn_credentials WHERE user_id = ?", id).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM activity_logs WHERE user_id = ?", id).Error; err != nil {
+			return err
+		}
+
+		// 5. Hard-delete the user row
+		return tx.Where("id = ?", id).Delete(&models.User{}).Error
+	})
+	return archived, err
 }
 
 // ============================================================

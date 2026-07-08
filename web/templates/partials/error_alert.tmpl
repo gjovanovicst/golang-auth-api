@@ -1,0 +1,6 @@
+{{define "error_alert"}}
+<div class="alert alert-danger alert-dismissible fade show" role="alert">
+    {{if .Error}}{{.Error}}{{else}}An error occurred.{{end}}
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+</div>
+{{end}}

@@ -315,7 +315,8 @@ func main() {
 	// Wire admin lookup for passkey discoverable login
 	webauthnService.AdminLookup = accountRepo.GetByID
 
-	// Wire WebhookService into admin GUI handler
+	// Wire WebhookService into admin handlers
+	adminHandler.WebhookService = webhookService
 	guiHandler.WebhookService = webhookService
 	webauthnHandler.WebhookService = webhookService
 
@@ -684,6 +685,8 @@ func main() {
 		adminRoutes.GET("/users/export", adminHandler.ExportUsers)
 		adminRoutes.POST("/users/import", adminHandler.ImportUsers)
 		adminRoutes.POST("/users/by-ids", adminHandler.GetUsersByIDs)
+		adminRoutes.PATCH("/users/:id", adminHandler.AdminUpdateUser)
+		adminRoutes.DELETE("/users/:id", adminHandler.AdminDeleteUser)
 
 		// Trusted Device Management (Admin)
 		adminRoutes.GET("/users/:id/trusted-devices", adminHandler.AdminListTrustedDevices)
@@ -807,6 +810,10 @@ func main() {
 			guiAuth.DELETE("/users/passkeys/:id", guiHandler.PasskeyDelete)
 			guiAuth.DELETE("/users/:id/trusted-devices/:device_id", guiHandler.UserRevokeTrustedDevice)
 			guiAuth.DELETE("/users/:id/trusted-devices", guiHandler.UserRevokeAllTrustedDevices)
+			guiAuth.GET("/users/:id/edit", guiHandler.UserEditForm)
+			guiAuth.PUT("/users/:id", guiHandler.UserUpdate)
+			guiAuth.GET("/users/:id/delete", guiHandler.UserDeleteConfirm)
+			guiAuth.DELETE("/users/:id", guiHandler.UserDelete)
 
 			// Activity logs viewer
 			guiAuth.GET("/logs", guiHandler.LogsPage)

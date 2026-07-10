@@ -82,6 +82,18 @@ func (s *ExpiryService) Start() {
 		return
 	}
 
+	// Clean up any orphaned session_meta keys left over from incomplete session
+	// deletions (e.g. DeleteAllUserSessions before the session_meta cleanup fix).
+	// This MUST run before the scanners start, otherwise the first keyspace
+	// notification or periodic scan for an orphaned key will trigger a cascading
+	// group-wide revocation of every active session for affected users.
+	cleaned, err := redis.CleanOrphanedSessionMetaKeys()
+	if err != nil {
+		log.Printf("[SessionGroup] Warning: orphaned session_meta cleanup failed: %v", err)
+	} else if cleaned > 0 {
+		log.Printf("[SessionGroup] Cleaned up %d orphaned session_meta keys at startup", cleaned)
+	}
+
 	s.isRunning = true
 
 	// Start keyspace notification listener if enabled
@@ -162,6 +174,26 @@ func (s *ExpiryService) handleExpiredKey(key string) {
 
 	log.Printf("[SessionGroup] Session expired: app=%s, user=%s, session=%s", appID, userID, sessionID)
 
+	// Defence-in-depth: before triggering a group-wide revocation, verify that the
+	// corresponding session hash is genuinely expired. If the session hash still has a
+	// substantial TTL, the session_meta key expiry was spurious (TTL mismatch, manual
+	// deletion, or a Redis edge case) and we MUST skip revocation to avoid killing
+	// active user sessions across all apps in the group.
+	sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+	if sessionTTL, ttlErr := redis.Rdb.TTL(context.Background(), sessionKey).Result(); ttlErr == nil {
+		// sessionTTL > 1 min → session is still alive, skip (spurious meta expiry)
+		// sessionTTL <= 0  → session genuinely expired or already gone, proceed
+		if sessionTTL > time.Minute {
+			log.Printf("[SessionGroup] SKIPPING group revocation: session hash %s still has %v TTL — spurious session_meta expiry", sessionKey, sessionTTL)
+			return
+		}
+		if sessionTTL > 0 {
+			log.Printf("[SessionGroup] Session hash %s has only %v remaining — proceeding with group revocation", sessionKey, sessionTTL)
+		} else {
+			log.Printf("[SessionGroup] Session hash %s is gone (TTL=%v) — proceeding with group revocation", sessionKey, sessionTTL)
+		}
+	}
+
 	// Check if this app belongs to a session group with GlobalLogout enabled
 	shouldRevoke, group := s.handler.ShouldRevokeGroupSessions(appID)
 	if !shouldRevoke || group == nil {
@@ -182,8 +214,10 @@ func (s *ExpiryService) handleExpiredKey(key string) {
 
 // periodicScanner periodically scans for expired session_meta keys
 func (s *ExpiryService) periodicScanner() {
-	// Run initial scan after a short delay
-	time.Sleep(30 * time.Second)
+	// Delay the initial scan to give the server time to stabilise after startup.
+	// Before this was 30 s, which could race with the very first login request
+	// if session_meta keys from a prior run persisted in Redis.
+	time.Sleep(2 * time.Minute)
 	s.scanForExpiredSessions()
 
 	for {

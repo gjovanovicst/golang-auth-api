@@ -287,13 +287,14 @@ func main() {
 	// The SSO pub/sub publish is fire-and-forget and can stay in a goroutine.
 	clearBlacklist := func(appID, userID string) {
 		sessionGroupRevoker.ClearGroupUserBlacklist(appID, userID)
-		// Clear any stale pending logout event for the source app so the SSE
-		// replay in StreamEvents does not deliver a peer_logout from a previous
-		// session to the newly logged-in client. This MUST run synchronously
-		// before the login response is returned, otherwise the client's SSE
-		// connection (established immediately on page load) beats the goroutine
-		// in PublishLoginToGroup and replays the old logout event first.
-		_ = redis.DeletePendingLogoutEvent(appID, userID)
+		// Clear ALL pending logout events for this user across every app.
+		// Previously only the source-app event was deleted here; peer-app
+		// events were cleared inside the PublishLoginToGroup goroutine,
+		// which races with the browser's SSE connect on page load.  The
+		// SCAN-based sweep guarantees that no stale peer_logout can be
+		// replayed to the freshly authenticated client, regardless of how
+		// quickly the browser opens the SSE connection after the redirect.
+		_ = redis.DeleteAllPendingLogoutEvents(userID)
 	}
 	publishLogin := func(appID, userID, deviceID string) {
 		ssoHandler.PublishLoginToGroup(appID, userID, deviceID)

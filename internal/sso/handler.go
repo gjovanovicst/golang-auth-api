@@ -225,6 +225,18 @@ func (h *Handler) Exchange(c *gin.Context) {
 		log.Printf("[SSO] Warning: failed to delete consumed SSO token: %v", delErr)
 	}
 
+	// Reject if the requesting app is the source app that created this token.
+	// SSO tokens are minted by PublishLoginToGroup for PEER apps only — the
+	// source app already has a session from the regular login and must not
+	// exchange its own SSO token.  Without this check the source app's SSE
+	// connection receives the peer_login event it published (Redis pub/sub
+	// broadcasts to the whole group) and creates a duplicate session.
+	if targetAppID == sourceAppID {
+		log.Printf("[SSO] Exchange rejected: target app %s is the same as source app %s (duplicate session prevention)", targetAppID, sourceAppID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot exchange token for the source application"})
+		return
+	}
+
 	// Validate that the target app is in the same session group.
 	groupApps, err := h.AdminRepo.GetAppsInSessionGroup(groupID)
 	if err != nil {
@@ -277,6 +289,20 @@ func (h *Handler) Exchange(c *gin.Context) {
 		}
 	}
 	accessTTL, refreshTTL := resolveTokenTTLs(appPtr)
+
+	// Clear any stale user-wide token blacklist for the target user in the target app
+	// before creating the new session. Without this, a blacklist entry left over from
+	// a previous session-group revocation (or an admin-triggered forced logout) would
+	// cause the very first API call after the SSO exchange to return 401, triggering
+	// the frontend's "Session Expired" modal within seconds of login.
+	//
+	// The source-app login already calls ClearGroupUserBlacklist which scans and
+	// clears all app:*:blacklist_user:{userID} keys globally, but this defence is
+	// deliberately duplicated here so the SSO exchange is independently safe.
+	if clearErr := redis.ClearUserTokenBlacklist(targetAppID, targetUser.ID.String()); clearErr != nil {
+		log.Printf("[SSO] Exchange: failed to clear token blacklist for target app %s user %s: %v",
+			targetAppID, targetUser.ID.String(), clearErr)
+	}
 
 	// Look up roles for the target-app user.
 	var roles []string

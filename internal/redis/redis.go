@@ -503,6 +503,11 @@ func DeleteAllUserSessions(appID, userID, exceptSessionID string) error {
 		// Remove from app-level session index
 		appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
 		Rdb.SRem(ctx, appIndexKey, sid)
+		// Delete the session_meta key so it does not become an orphan that
+		// later expires via keyspace notification and triggers a cascading
+		// group-wide revocation of the user's brand-new replacement session.
+		metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sid)
+		Rdb.Del(ctx, metaKey)
 	}
 
 	// Clean up the index
@@ -536,6 +541,10 @@ func DeleteUserSessionsByDevice(appID, userID, deviceID string) error {
 				Rdb.Del(ctx, sessionKey)
 				appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
 				Rdb.SRem(ctx, appIndexKey, sid)
+				// Clean up session_meta to prevent orphaned keys from
+				// triggering cascading group revocations on expiry.
+				metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sid)
+				Rdb.Del(ctx, metaKey)
 			}
 			continue
 		}
@@ -543,6 +552,9 @@ func DeleteUserSessionsByDevice(appID, userID, deviceID string) error {
 			Rdb.Del(ctx, sessionKey)
 			appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
 			Rdb.SRem(ctx, appIndexKey, sid)
+			// Clean up session_meta to prevent orphaned keys.
+			metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sid)
+			Rdb.Del(ctx, metaKey)
 		}
 	}
 	if deviceID == "" {
@@ -1411,6 +1423,33 @@ func DeletePendingLogoutEvent(appID, userID string) error {
 	return Rdb.Del(ctx, key).Err()
 }
 
+// DeleteAllPendingLogoutEvents removes every sso:pending_logout:* key for the
+// given userID across ALL applications. This is called synchronously during
+// login (via SyncLoginFunc) so that stale peer_logout events from a previous
+// session are guaranteed to be cleared BEFORE the browser receives the login
+// redirect and opens an SSE connection — avoiding a race where the SSE replays
+// a stale logout and immediately kills the brand-new session.
+func DeleteAllPendingLogoutEvents(userID string) error {
+	pattern := fmt.Sprintf("sso:pending_logout:*:%s", userID)
+	var cursor uint64
+	for {
+		keys, nextCursor, err := Rdb.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			if err := Rdb.Del(ctx, keys...).Err(); err != nil {
+				return err
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
+}
+
 // SubscribeSSOEvents subscribes to the SSO event channel for a session group
 // and returns the *redis.PubSub handle. Callers are responsible for closing it.
 // Uses the dedicated pubsub client so subscriptions never contend with the
@@ -1442,6 +1481,38 @@ func ParseSessionMetaKey(metaKey string) (appID, userID, sessionID string, err e
 	}
 
 	return parts[0], parts[1], parts[2], nil
+}
+
+// CleanOrphanedSessionMetaKeys scans all session_meta:* keys and deletes any whose
+// corresponding session hash (app:{appID}:session:{sessionID}) no longer exists.
+// This prevents orphaned keys from expiring via keyspace notification and triggering
+// cascading group-wide session revocations long after the original session was deleted.
+// Called once at startup and periodically by the expiry service.
+func CleanOrphanedSessionMetaKeys() (cleaned int, err error) {
+	var cursor uint64
+	for {
+		keys, nextCursor, scanErr := Rdb.Scan(ctx, cursor, "session_meta:*", 100).Result()
+		if scanErr != nil {
+			return cleaned, scanErr
+		}
+		for _, metaKey := range keys {
+			appID, _, sessionID, parseErr := ParseSessionMetaKey(metaKey)
+			if parseErr != nil {
+				continue
+			}
+			sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+			exists, _ := Rdb.Exists(ctx, sessionKey).Result()
+			if exists == 0 {
+				Rdb.Del(ctx, metaKey)
+				cleaned++
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	return cleaned, nil
 }
 
 // GetExpiredSessionMetaKeys returns all session_meta keys that have expired (TTL <= 0)

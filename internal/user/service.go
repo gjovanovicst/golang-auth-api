@@ -356,7 +356,7 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent, dev
 	if appLoaded {
 		appPtr = &app
 	}
-	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, "", appPtr)
+	accessToken, refreshToken, sessionID, appErr := s.createSession(appID.String(), user.ID.String(), ip, userAgent, deviceID, appPtr)
 	if appErr != nil {
 		return nil, appErr
 	}
@@ -471,11 +471,41 @@ func (s *Service) LogoutUser(appID, userID, sessionID, refreshToken, accessToken
 
 // createSession creates a new session via the session service, or falls back to legacy token storage.
 func (s *Service) createSession(appID, userID, ip, userAgent, deviceID string, app *models.Application) (accessToken, refreshToken, sessionID string, appErr *errors.AppError) {
+	// Proactively clean up stale session artifacts before creating a new session.
+	// Orphaned session_meta keys from prior expired sessions can later fire (via
+	// keyspace notification or periodic scanner) and trigger cascading group-wide
+	// revocation that kills this brand-new session. Cleaning them up here prevents
+	// that race window entirely.
+	if cleaned, cleanErr := redis.CleanupStaleUserSessions(appID, userID); cleanErr != nil {
+		log.Printf("Warning: stale session cleanup failed for user %s in app %s: %v", userID, appID, cleanErr)
+	} else if cleaned > 0 {
+		log.Printf("Cleaned up %d stale session artifacts for user %s in app %s before login", cleaned, userID, appID)
+	}
+
 	roles := s.getUserRoles(appID, userID)
 	accessTTL, refreshTTL := ResolveTokenTTLs(app)
 
+	var newSessionID string
 	if s.SessionService != nil {
-		return s.SessionService.CreateSession(appID, userID, ip, userAgent, deviceID, roles, accessTTL, refreshTTL)
+		accessToken, refreshToken, sessionID, appErr := s.SessionService.CreateSession(appID, userID, ip, userAgent, deviceID, roles, accessTTL, refreshTTL)
+		if appErr != nil {
+			return "", "", "", appErr
+		}
+		newSessionID = sessionID
+
+		// AFTER creating the new session, revoke any other session for the same
+		// user+app+device. Running this after creation (rather than before) avoids
+		// a race where two concurrent login requests both pass the dedup check
+		// before either creates a session, resulting in duplicates. By deleting
+		// only OTHER sessions (excluding the one just created), the current
+		// session is always preserved.
+		if deviceID != "" {
+			if err := redis.DeleteUserSessionsByDeviceExcept(appID, userID, deviceID, newSessionID); err != nil {
+				log.Printf("Warning: device-scoped session dedup failed for user %s: %v", userID, err)
+			}
+		}
+
+		return accessToken, refreshToken, newSessionID, nil
 	}
 
 	// Legacy fallback: generate tokens without session tracking

@@ -21,6 +21,7 @@ type ExpiryService struct {
 	isRunning        bool
 	useKeyspaceNotif bool
 	scanInterval     time.Duration
+	scanCount        int64 // incremented each scan cycle, used for periodic orphan cleanup
 }
 
 // Config holds configuration for the expiry service
@@ -175,22 +176,51 @@ func (s *ExpiryService) handleExpiredKey(key string) {
 	log.Printf("[SessionGroup] Session expired: app=%s, user=%s, session=%s", appID, userID, sessionID)
 
 	// Defence-in-depth: before triggering a group-wide revocation, verify that the
-	// corresponding session hash is genuinely expired. If the session hash still has a
-	// substantial TTL, the session_meta key expiry was spurious (TTL mismatch, manual
-	// deletion, or a Redis edge case) and we MUST skip revocation to avoid killing
-	// active user sessions across all apps in the group.
+	// corresponding session hash is genuinely expiring right now. If the session hash
+	// still has a substantial TTL, the session_meta key expiry was spurious (TTL
+	// mismatch, manual deletion, or a Redis edge case) and we MUST skip revocation to
+	// avoid killing active user sessions across all apps in the group.
+	//
+	// Redis TTL semantics:
+	//   > 0  → key is alive with remaining TTL
+	//   = 0  → key exists but has no remaining TTL (expiring right now)
+	//   = -1 → key exists but has NO expiry set (persistent/anomalous)
+	//   = -2 → key does not exist (already cleanly expired or explicitly deleted)
+	//
+	// Only TTL == 0 (genuinely expiring right now) should trigger group revocation.
+	// TTL == -2 means the session was already cleaned up — revoking the user's other
+	// sessions at this point would kill brand-new active sessions created after the
+	// stale session expired naturally.
 	sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
 	if sessionTTL, ttlErr := redis.Rdb.TTL(context.Background(), sessionKey).Result(); ttlErr == nil {
-		// sessionTTL > 1 min → session is still alive, skip (spurious meta expiry)
-		// sessionTTL <= 0  → session genuinely expired or already gone, proceed
+		// TTL == -2: key does not exist — session was already cleanly expired or
+		// explicitly revoked. There is nothing left to revoke, and proceeding would
+		// kill the user's brand-new active sessions in peer apps.
+		if sessionTTL == -2 {
+			log.Printf("[SessionGroup] SKIPPING group revocation: session hash %s does not exist — session already cleanly expired/revoked", sessionKey)
+			// Clean up the orphaned session_meta key so it doesn't fire again
+			redis.Rdb.Del(context.Background(), key)
+			return
+		}
+		// TTL == -1: key exists but has no expiry set. This is anomalous for session
+		// keys (they always get a TTL at creation). Treat as a spurious notification.
+		if sessionTTL == -1 {
+			log.Printf("[SessionGroup] SKIPPING group revocation: session hash %s has no TTL (persistent key — anomaly)", sessionKey)
+			return
+		}
+		// TTL > 1 min: session is still alive — spurious session_meta expiry
+		// (TTL mismatch between session_meta and session hash).
 		if sessionTTL > time.Minute {
 			log.Printf("[SessionGroup] SKIPPING group revocation: session hash %s still has %v TTL — spurious session_meta expiry", sessionKey, sessionTTL)
 			return
 		}
+		// TTL is between 0 and 1 minute: session genuinely expiring within the
+		// threshold. Proceed with group revocation.
 		if sessionTTL > 0 {
 			log.Printf("[SessionGroup] Session hash %s has only %v remaining — proceeding with group revocation", sessionKey, sessionTTL)
 		} else {
-			log.Printf("[SessionGroup] Session hash %s is gone (TTL=%v) — proceeding with group revocation", sessionKey, sessionTTL)
+			// TTL == 0: just expired, proceed
+			log.Printf("[SessionGroup] Session hash %s TTL=0 (just expired) — proceeding with group revocation", sessionKey)
 		}
 	}
 
@@ -230,11 +260,18 @@ func (s *ExpiryService) periodicScanner() {
 	}
 }
 
-// scanForExpiredSessions scans Redis for expired session_meta keys and processes them
+// scanForExpiredSessions scans Redis for expired session_meta keys and processes them.
+// Every 6th scan (≈30 min at the default 5 min interval) it also runs a full orphan
+// cleanup to remove any session_meta keys whose session hash was deleted without
+// cleaning up the meta key — a belt-and-suspenders complement to the per-scan
+// proactive cleanup inside GetExpiredSessionMetaKeys.
 func (s *ExpiryService) scanForExpiredSessions() {
 	if !s.isRunning {
 		return
 	}
+
+	// Track scan count for periodic full orphan cleanup
+	scanCount := s.incrementScanCount()
 
 	log.Println("[SessionGroup] Starting periodic scan for expired sessions...")
 	startTime := time.Now()
@@ -247,23 +284,42 @@ func (s *ExpiryService) scanForExpiredSessions() {
 
 	if len(expiredKeys) == 0 {
 		log.Printf("[SessionGroup] No expired sessions found (scan took %v)", time.Since(startTime))
-		return
+	} else {
+		log.Printf("[SessionGroup] Found %d expired sessions", len(expiredKeys))
+
+		processed := 0
+		for _, key := range expiredKeys {
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
+				s.handleExpiredKey(key)
+				processed++
+			}
+		}
+
+		log.Printf("[SessionGroup] Processed %d expired sessions (scan took %v)", processed, time.Since(startTime))
 	}
 
-	log.Printf("[SessionGroup] Found %d expired sessions", len(expiredKeys))
-
-	processed := 0
-	for _, key := range expiredKeys {
-		select {
-		case <-s.ctx.Done():
-			return
-		default:
-			s.handleExpiredKey(key)
-			processed++
+	// Every 6th scan (≈30 min), run a full orphan cleanup as belt-and-suspenders.
+	// GetExpiredSessionMetaKeys already handles -1 TTL orphans inline, but a full
+	// sweep catches any remaining edge cases (e.g. session_meta keys with positive
+	// TTL whose session hash was explicitly deleted without cleaning the meta key).
+	if scanCount%6 == 0 {
+		if cleaned, cleanErr := redis.CleanOrphanedSessionMetaKeys(); cleanErr != nil {
+			log.Printf("[SessionGroup] Periodic orphan cleanup failed: %v", cleanErr)
+		} else if cleaned > 0 {
+			log.Printf("[SessionGroup] Periodic orphan cleanup: removed %d orphaned session_meta keys", cleaned)
 		}
 	}
+}
 
-	log.Printf("[SessionGroup] Processed %d expired sessions (scan took %v)", processed, time.Since(startTime))
+// incrementScanCount atomically increments and returns the scan counter.
+func (s *ExpiryService) incrementScanCount() int64 {
+	// scanCount is only accessed from the single periodicScanner goroutine,
+	// so a plain increment is safe without atomic operations.
+	s.scanCount++
+	return s.scanCount
 }
 
 // ForceScan triggers an immediate scan for expired sessions

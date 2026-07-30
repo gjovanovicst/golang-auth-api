@@ -486,6 +486,47 @@ func GetUserSessionIDs(appID, userID string) ([]string, error) {
 	return validIDs, nil
 }
 
+// CleanupStaleUserSessions removes all stale session artifacts for a user in an app.
+// A session is stale when its session hash no longer exists in Redis (expired naturally
+// or explicitly deleted) but its ID still lingers in the user_sessions index set or an
+// orphaned session_meta key remains. This function:
+//   - Removes stale session IDs from the user_sessions index set
+//   - Removes stale session IDs from the all_sessions index set
+//   - Deletes orphaned session_meta keys
+//
+// Called at login time before creating a new session, so that orphaned session_meta
+// keys from prior expired sessions cannot later fire (via keyspace notification or
+// periodic scanner) and trigger cascading group-wide revocation via handleExpiredKey.
+func CleanupStaleUserSessions(appID, userID string) (cleaned int, err error) {
+	indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+	sessionIDs, smErr := Rdb.SMembers(ctx, indexKey).Result()
+	if smErr != nil {
+		// Redis returns an empty set (not an error) when the key doesn't exist,
+		// but if the key is not a set, SMembers returns WRONGTYPE. In that case
+		// or any other error, treat as "nothing to clean".
+		if strings.Contains(smErr.Error(), "nil") || strings.Contains(smErr.Error(), "WRONGTYPE") {
+			return 0, nil
+		}
+		return 0, smErr
+	}
+
+	appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+
+	for _, sid := range sessionIDs {
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		exists, _ := Rdb.Exists(ctx, sessionKey).Result()
+		if exists == 0 {
+			// Session hash is gone — clean up all related artifacts
+			Rdb.SRem(ctx, indexKey, sid)
+			Rdb.SRem(ctx, appIndexKey, sid)
+			metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sid)
+			Rdb.Del(ctx, metaKey)
+			cleaned++
+		}
+	}
+	return cleaned, nil
+}
+
 // DeleteAllUserSessions removes all sessions for a user except the one specified by exceptSessionID.
 // If exceptSessionID is empty, all sessions are removed.
 func DeleteAllUserSessions(appID, userID, exceptSessionID string) error {
@@ -523,6 +564,41 @@ func DeleteAllUserSessions(appID, userID, exceptSessionID string) error {
 	return nil
 }
 
+// DeleteUserSessionsByDeviceExcept deletes sessions for a user in an app whose
+// device_id matches the given deviceID, EXCEPT the session identified by
+// exceptSessionID. Use this after creating a new session to clean up any prior
+// session on the same device without deleting the one just created.
+func DeleteUserSessionsByDeviceExcept(appID, userID, deviceID, exceptSessionID string) error {
+	if deviceID == "" {
+		return nil
+	}
+	sessionIDs, err := GetUserSessionIDs(appID, userID)
+	if err != nil {
+		return err
+	}
+	for _, sid := range sessionIDs {
+		if sid == exceptSessionID {
+			continue
+		}
+		sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sid)
+		did, err := Rdb.HGet(ctx, sessionKey, "device_id").Result()
+		if err != nil {
+			continue
+		}
+		if did == deviceID {
+			Rdb.Del(ctx, sessionKey)
+			appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
+			Rdb.SRem(ctx, appIndexKey, sid)
+			metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sid)
+			Rdb.Del(ctx, metaKey)
+			// Also remove from the user_sessions index set
+			indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+			Rdb.SRem(ctx, indexKey, sid)
+		}
+	}
+	return nil
+}
+
 // DeleteUserSessionsByDevice deletes sessions for a user in an app, but only
 // those whose device_id field matches the given deviceID. Sessions with an
 // empty device_id are only deleted during broadcast revocation (deviceID="").
@@ -541,6 +617,8 @@ func DeleteUserSessionsByDevice(appID, userID, deviceID string) error {
 				Rdb.Del(ctx, sessionKey)
 				appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
 				Rdb.SRem(ctx, appIndexKey, sid)
+				indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+				Rdb.SRem(ctx, indexKey, sid)
 				// Clean up session_meta to prevent orphaned keys from
 				// triggering cascading group revocations on expiry.
 				metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sid)
@@ -552,6 +630,8 @@ func DeleteUserSessionsByDevice(appID, userID, deviceID string) error {
 			Rdb.Del(ctx, sessionKey)
 			appIndexKey := fmt.Sprintf("app:%s:all_sessions", appID)
 			Rdb.SRem(ctx, appIndexKey, sid)
+			indexKey := fmt.Sprintf("app:%s:user_sessions:%s", appID, userID)
+			Rdb.SRem(ctx, indexKey, sid)
 			// Clean up session_meta to prevent orphaned keys.
 			metaKey := fmt.Sprintf("session_meta:%s:%s:%s", appID, userID, sid)
 			Rdb.Del(ctx, metaKey)
@@ -1515,7 +1595,10 @@ func CleanOrphanedSessionMetaKeys() (cleaned int, err error) {
 	return cleaned, nil
 }
 
-// GetExpiredSessionMetaKeys returns all session_meta keys that have expired (TTL <= 0)
+// GetExpiredSessionMetaKeys returns all session_meta keys that have expired (TTL <= 0).
+// As a side effect, it also proactively cleans up orphaned session_meta keys whose
+// corresponding session hash no longer exists, preventing them from accumulating and
+// later triggering spurious group-wide revocation.
 func GetExpiredSessionMetaKeys() ([]string, error) {
 	var expiredKeys []string
 
@@ -1538,14 +1621,32 @@ func GetExpiredSessionMetaKeys() ([]string, error) {
 			// Redis TTL semantics:
 			//   > 0  → key is alive with remaining TTL (skip)
 			//  == -1 → key exists but has NO expiry (persistent/orphaned key — skip,
-			//           do NOT treat as expired; keyspace notifications handle true expiry)
+			//           do NOT treat as expired). Proactively check if the session hash
+			//           is gone and clean up the orphan silently.
 			//  == -2 → key does not exist (SCAN won't return these)
-			// We deliberately exclude -1 (no-TTL) keys because treating them as expired
-			// was causing all sessions to be revoked immediately after server restart or
-			// after any session_meta key was created without an expiry.
-			if ttl == 0 {
-				expiredKeys = append(expiredKeys, key)
+			// We deliberately exclude -1 (no-TTL) keys from the expired list because
+			// treating them as expired was causing all sessions to be revoked immediately
+			// after server restart or after any session_meta key was created without an
+			// expiry.
+			if ttl > 0 {
+				continue // still alive
 			}
+			if ttl == -1 {
+				// Persistent key without expiry — check if the session hash is still
+				// alive. If the hash is gone, clean up this orphan silently without
+				// triggering group revocation.
+				appID, _, sessionID, parseErr := ParseSessionMetaKey(key)
+				if parseErr == nil {
+					sessionKey := fmt.Sprintf("app:%s:session:%s", appID, sessionID)
+					exists, _ := Rdb.Exists(ctx, sessionKey).Result()
+					if exists == 0 {
+						Rdb.Del(ctx, key)
+					}
+				}
+				continue // never treat no-TTL keys as expired
+			}
+			// ttl == 0: genuinely expiring right now
+			expiredKeys = append(expiredKeys, key)
 		}
 
 		if cursor == 0 {

@@ -286,6 +286,16 @@ func main() {
 	// revocation blacklist entry before the client even makes its first API call.
 	// The SSO pub/sub publish is fire-and-forget and can stay in a goroutine.
 	clearBlacklist := func(appID, userID string) {
+		// Proactively clean stale session artifacts (orphaned session_meta keys,
+		// stale index set entries) so they cannot later fire via keyspace
+		// notification or periodic scanner and trigger cascading group-wide
+		// revocation that kills the brand-new session being created right now.
+		if cleaned, err := redis.CleanupStaleUserSessions(appID, userID); err != nil {
+			log.Printf("Warning: stale session cleanup failed for user %s in app %s: %v", userID, appID, err)
+		} else if cleaned > 0 {
+			log.Printf("Cleaned %d stale session artifacts for user %s in app %s before login", cleaned, userID, appID)
+		}
+
 		sessionGroupRevoker.ClearGroupUserBlacklist(appID, userID)
 		// Clear ALL pending logout events for this user across every app.
 		// Previously only the source-app event was deleted here; peer-app

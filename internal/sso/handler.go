@@ -322,6 +322,16 @@ func (h *Handler) Exchange(c *gin.Context) {
 		return
 	}
 
+	// AFTER creating the new session, revoke any other session for the same
+	// user+app+device. Running this after creation avoids a race where two
+	// concurrent requests both pass the dedup check before either creates a
+	// session. Only OTHER sessions (not the one just created) are deleted.
+	if deviceID != "" {
+		if err := redis.DeleteUserSessionsByDeviceExcept(targetAppID, targetUser.ID.String(), deviceID, sessionID); err != nil {
+			log.Printf("[SSO] Exchange: device-scoped session dedup failed: %v", err)
+		}
+	}
+
 	log.Printf("[SSO] Exchange: user %s (source app %s) -> target app %s, session %s",
 		sourceUser.Email, sourceAppID, targetAppID, sessionID)
 

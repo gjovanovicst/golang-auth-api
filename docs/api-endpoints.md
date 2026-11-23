@@ -118,6 +118,7 @@ For detailed request/response schemas, see [API.md](API.md).
 | `/phone/status` | GET | Get phone number status | Yes |
 | `/2fa/sms/enable` | POST | Enable SMS-based 2FA | Yes |
 | `/2fa/sms/resend` | POST | Resend SMS 2FA code during login | No |
+| `/2fa/sms/recovery/send` | POST | Send a one-time SMS **recovery** code during login (fallback when the primary 2FA method is unavailable) | No |
 
 ### Backup Email 2FA
 
@@ -355,6 +356,23 @@ For detailed request/response schemas, see [API.md](API.md).
 5. POST /2fa/login-verify      --> Submit SMS OTP code --> Get full JWT tokens
    (or POST /2fa/sms/resend   --> Resend SMS code if not received)
 ```
+
+### SMS recovery (fallback for a different primary 2FA method)
+
+Use this when the user still has their password but lost access to their primary
+second factor (e.g. the authenticator app). Requires `sms_2fa_enabled` on the
+application, a configured SMS provider, 2FA active on the user and a verified
+phone number. The `/login` response sets `sms_recovery_available: true` when all
+of those hold.
+
+```
+1. POST /login                    --> { requires_2fa: true, method: "totp", temp_token, sms_recovery_available: true }
+2. POST /2fa/sms/recovery/send    --> { temp_token }  (code valid 5 minutes)
+3. POST /2fa/login-verify         --> { temp_token, method: "sms_recovery", code } --> Get full JWT tokens
+```
+
+The code is single-use, compared in constant time and logged as
+`RECOVERY_CODE_USED` with `details.method = "sms_recovery"`.
 
 ### OIDC Authorization Code Flow
 

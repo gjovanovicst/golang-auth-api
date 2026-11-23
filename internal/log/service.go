@@ -474,6 +474,17 @@ func LogRecoveryCodeUsed(appID, userID uuid.UUID, ipAddress, userAgent string) {
 	GetLogService().LogActivity(appID, userID, EventRecoveryCodeUsed, ipAddress, userAgent, nil)
 }
 
+// LogSMSRecoveryCodeUsed logs when a one-time SMS recovery code is used during login,
+// i.e. when the user bypassed their primary 2FA method via the SMS fallback channel.
+// The event type is the same as recovery-code usage so existing dashboards/alerts keep
+// working; the details field distinguishes the two flows.
+func LogSMSRecoveryCodeUsed(appID, userID uuid.UUID, ipAddress, userAgent string) {
+	details := map[string]interface{}{
+		"method": "sms_recovery",
+	}
+	GetLogService().LogActivity(appID, userID, EventRecoveryCodeUsed, ipAddress, userAgent, details)
+}
+
 // LogRecoveryCodeGenerate logs when new recovery codes are generated
 func LogRecoveryCodeGenerate(appID, userID uuid.UUID, ipAddress, userAgent string) {
 	GetLogService().LogActivity(appID, userID, EventRecoveryCodeGen, ipAddress, userAgent, nil)

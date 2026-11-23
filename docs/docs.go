@@ -856,6 +856,69 @@ const docTemplate = `{
                 }
             }
         },
+        "/2fa/sms/recovery/send": {
+            "post": {
+                "description": "Send a one-time recovery code via SMS during login. This is a fallback for\nusers whose primary 2FA method (e.g. an authenticator app) is unavailable.\nRequires: SMS 2FA enabled for the application, a configured SMS provider,\n2FA active on the user, and a verified phone number. The code is valid for\n5 minutes and must be submitted to POST /2fa/login-verify with method=\"sms_recovery\".",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "2FA"
+                ],
+                "summary": "Send an SMS recovery code",
+                "parameters": [
+                    {
+                        "description": "Temporary login token",
+                        "name": "recovery",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "temp_token": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.MessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/2fa/sms/resend": {
             "post": {
                 "description": "Resend a new SMS 2FA verification code to the user's phone during login",
@@ -9850,6 +9913,10 @@ const docTemplate = `{
                     "description": "Human-readable label for the trusted device",
                     "type": "string"
                 },
+                "method": {
+                    "description": "Method optionally forces how the submitted code is verified. Leave empty to use the\nuser's primary 2FA method. \"sms_recovery\" verifies a one-time code sent to the user's\nverified phone number via POST /2fa/sms/recovery/send.",
+                    "type": "string"
+                },
                 "recovery_code": {
                     "type": "string"
                 },
@@ -9910,6 +9977,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "requires_2fa": {
+                    "type": "boolean"
+                },
+                "sms_recovery_available": {
+                    "description": "SMSRecoveryAvailable is true when the user can bypass the primary 2FA method by\nrequesting a one-time code via SMS (POST /2fa/sms/recovery/send). Requires the app\nto have SMS 2FA enabled, a configured SMS provider, and a verified phone number.",
                     "type": "boolean"
                 },
                 "temp_token": {

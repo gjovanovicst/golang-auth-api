@@ -53,6 +53,9 @@ func MigrateDatabase() {
 	// NOTE: For critical migrations (like adding NOT NULL columns to existing tables),
 	// use manually applied SQL migrations via scripts/migrate.sh BEFORE running the app.
 	err := DB.AutoMigrate(
+		&models.Tenant{},              // Multi-tenancy root (must precede Application)
+		&models.Application{},         // Applications/tenants (referenced by many models)
+		&models.OAuthProviderConfig{}, // Per-app OAuth provider credentials
 		&models.User{},
 		&models.SocialAccount{},
 		&models.ActivityLog{},

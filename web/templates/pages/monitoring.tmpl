@@ -16,8 +16,7 @@
 <div id="monitoring-health"
      hx-get="/gui/monitoring/health"
      hx-trigger="load, every 30s"
-     hx-swap="innerHTML"
-     hx-on::after-settle="document.getElementById('monitoring-last-updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString()">
+     hx-swap="innerHTML">
     <!-- Loading placeholder -->
     <div class="card border-0 shadow-sm mb-4">
         <div class="card-header bg-body-tertiary border-bottom">
@@ -33,6 +32,13 @@
         </div>
     </div>
 </div>
+<script>
+(function() {
+    document.getElementById('monitoring-health').addEventListener('htmx:afterSettle', function() {
+        document.getElementById('monitoring-last-updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+    });
+})();
+</script>
 
 <!-- Metrics (auto-refresh every 30s) -->
 <div id="monitoring-metrics"

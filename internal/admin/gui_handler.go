@@ -3440,7 +3440,7 @@ func (h *GUIHandler) EmailTemplatePreview(c *gin.Context) {
         </button>
     </div>
     <div class="card-body p-0">
-        <iframe srcdoc="%s" style="width:100%%;min-height:400px;border:none;" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
+        <iframe srcdoc="%s" style="width:100%%;min-height:400px;border:none;" sandbox="allow-scripts allow-forms allow-popups"></iframe>
     </div>
 </div>`, renderedSubject, escapedHTML))
 }

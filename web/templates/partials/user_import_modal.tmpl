@@ -9,7 +9,7 @@
       hx-encoding="multipart/form-data"
       hx-target="#import-result-container"
       hx-swap="innerHTML"
-      hx-on::after-request="if(event.detail.successful && document.querySelector('#import-result-container .alert-success')) htmx.trigger(document.body, 'userImportComplete')">
+      id="user-import-form">
     <div class="modal-body">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="app_id"     value="{{.AppID}}">
@@ -61,6 +61,18 @@
         </button>
     </div>
 </form>
+<script>
+(function() {
+    var form = document.getElementById('user-import-form');
+    if (form) {
+        form.addEventListener('htmx:afterRequest', function(event) {
+            if (event.detail.successful && document.querySelector('#import-result-container .alert-success')) {
+                htmx.trigger(document.body, 'userImportComplete');
+            }
+        });
+    }
+})();
+</script>
 {{end}}
 
 {{define "user_import_result"}}

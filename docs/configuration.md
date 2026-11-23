@@ -224,6 +224,12 @@ SMS_TWILIO_FROM_NUMBER=+15551234567   # Your Twilio phone number
 
 If `SMS_PROVIDER` is empty or not set, SMS sending is disabled and the SMS 2FA option is unavailable.
 
+The same settings also power **SMS recovery** (`POST /2fa/sms/recovery/send`): a user whose
+primary 2FA method is something else (e.g. a TOTP authenticator) can request a one-time code
+by SMS during login. Recovery additionally requires the application's `sms_2fa_enabled`
+switch to be on and the user to have a verified phone number; otherwise the login response
+reports `sms_recovery_available: false`.
+
 ---
 
 ## Session Groups

@@ -2,6 +2,7 @@ package twofa
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
@@ -578,6 +579,96 @@ func (s *Service) VerifySMS2FACode(appID uuid.UUID, userID, code string) *errors
 	}
 	if err := redis.Delete2FASMSCode(appID.String(), userID); err != nil {
 		log.Printf("Warning: Failed to delete SMS 2FA code for user %s: %v", userID, err)
+	}
+	return nil
+}
+
+// ============================================================================
+// SMS recovery — fallback when the primary 2FA method is unavailable
+// ============================================================================
+
+// isSMSRecoveryAllowed reports whether the application allows SMS as a recovery
+// channel. It is intentionally broader than isSMS2FAAllowed: the user's primary
+// method stays unchanged (usually TOTP), SMS is only offered as a fallback.
+// The app-level SMS2FAEnabled switch acts as the "SMS channel enabled" flag.
+func (s *Service) isSMSRecoveryAllowed(appID uuid.UUID) bool {
+	if s.SMSSender == nil {
+		return false
+	}
+	var app models.Application
+	if err := s.DB.Select("sms_2fa_enabled").First(&app, "id = ?", appID).Error; err != nil {
+		return false
+	}
+	return app.SMS2FAEnabled
+}
+
+// SMSRecoveryAvailable reports whether the given user can currently use SMS
+// recovery: SMS must be enabled for the app (and configured), the user must have
+// 2FA active, and must have a verified phone number on file.
+func (s *Service) SMSRecoveryAvailable(appID uuid.UUID, userID string) bool {
+	if !s.isSMSRecoveryAllowed(appID) {
+		return false
+	}
+	usr, err := s.UserRepo.GetUserByID(userID)
+	if err != nil || usr == nil || !usr.TwoFAEnabled {
+		return false
+	}
+	return usr.PhoneVerified && usr.PhoneNumber != ""
+}
+
+// SendSMSRecoveryCode generates a one-time recovery code, stores it in Redis
+// (5-minute TTL) and sends it to the user's verified phone number.
+func (s *Service) SendSMSRecoveryCode(appID uuid.UUID, userID string) *errors.AppError {
+	if s.SMSSender == nil {
+		return errors.NewAppError(errors.ErrInternal, "SMS service is not configured")
+	}
+	if !s.isSMSRecoveryAllowed(appID) {
+		return errors.NewAppError(errors.ErrForbidden, "SMS recovery is not available for this application")
+	}
+
+	usr, err := s.UserRepo.GetUserByID(userID)
+	if err != nil {
+		return errors.NewAppError(errors.ErrNotFound, "User not found")
+	}
+	if !usr.TwoFAEnabled {
+		return errors.NewAppError(errors.ErrBadRequest, "2FA is not enabled for this user")
+	}
+	if !usr.PhoneVerified || usr.PhoneNumber == "" {
+		return errors.NewAppError(errors.ErrBadRequest, "No verified phone number on file")
+	}
+
+	code := generate6DigitCode()
+	if err := redis.Set2FASMSRecoveryCode(appID.String(), userID, code); err != nil {
+		return errors.NewAppError(errors.ErrInternal, "Failed to store SMS recovery code")
+	}
+
+	body := fmt.Sprintf("Your account recovery code is: %s  (expires in 5 minutes)", code)
+	if err := s.SMSSender.Send(usr.PhoneNumber, body); err != nil {
+		log.Printf("Error sending SMS recovery code to %s: %v", usr.PhoneNumber, err)
+		return errors.NewAppError(errors.ErrInternal, "Failed to send SMS recovery code")
+	}
+
+	if s.WebhookService != nil {
+		s.WebhookService.Dispatch(appID, "2fa.sms_recovery.sent", map[string]interface{}{
+			"user_id": userID,
+		})
+	}
+
+	return nil
+}
+
+// VerifySMSRecoveryCode verifies a code issued by SendSMSRecoveryCode.
+// The code is single-use and compared in constant time.
+func (s *Service) VerifySMSRecoveryCode(appID uuid.UUID, userID, code string) *errors.AppError {
+	storedCode, err := redis.Get2FASMSRecoveryCode(appID.String(), userID)
+	if err != nil || storedCode == "" {
+		return errors.NewAppError(errors.ErrUnauthorized, "Invalid or expired SMS recovery code")
+	}
+	if subtle.ConstantTimeCompare([]byte(storedCode), []byte(code)) != 1 {
+		return errors.NewAppError(errors.ErrUnauthorized, "Invalid SMS recovery code")
+	}
+	if err := redis.Delete2FASMSRecoveryCode(appID.String(), userID); err != nil {
+		log.Printf("Warning: Failed to delete SMS recovery code for user %s: %v", userID, err)
 	}
 	return nil
 }

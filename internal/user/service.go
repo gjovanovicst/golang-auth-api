@@ -213,7 +213,7 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 	// Fail-open: if the query fails we treat all flags as safe defaults.
 	var app models.Application
 	appLoaded := s.DB.Select(
-		"two_fa_enabled, two_fa_required, pw_max_age_days, access_token_ttl_minutes, refresh_token_ttl_hours",
+		"two_fa_enabled, two_fa_required, sms_2fa_enabled, pw_max_age_days, access_token_ttl_minutes, refresh_token_ttl_hours",
 	).First(&app, "id = ?", appID).Error == nil
 
 	// Check if the user's password has expired (before issuing any session).
@@ -290,14 +290,23 @@ func (s *Service) LoginUser(appID uuid.UUID, email, password, ip, userAgent stri
 		// For passkey 2FA, no server-side action needed here — the client
 		// must call /2fa/passkey/begin + /2fa/passkey/finish using the temp token.
 
+		// SMS recovery is offered as a fallback when the primary method is something
+		// else (e.g. a lost authenticator). The client requests a code via
+		// POST /2fa/sms/recovery/send and submits it with method="sms_recovery".
+		smsRecoveryAvailable := appLoaded && app.SMS2FAEnabled &&
+			twoFAMethod != emailpkg.TwoFAMethodSMS &&
+			user.PhoneVerified && user.PhoneNumber != "" &&
+			s.SMSSender != nil
+
 		return &LoginResult{
 			RequiresTwoFA: true,
 			UserID:        user.ID,
 			TwoFAResponse: &dto.TwoFARequiredResponse{
-				RequiresTwoFA: true,
-				Message:       "2FA verification required",
-				TempToken:     tempToken,
-				Method:        twoFAMethod,
+				RequiresTwoFA:        true,
+				Message:              "2FA verification required",
+				TempToken:            tempToken,
+				Method:               twoFAMethod,
+				SMSRecoveryAvailable: smsRecoveryAvailable,
 			},
 		}, nil
 	}

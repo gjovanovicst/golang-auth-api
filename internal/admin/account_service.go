@@ -431,7 +431,7 @@ func (s *AccountService) ChangePassword(adminID, currentPassword, newPassword st
 		return fmt.Errorf("current password is incorrect")
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
 	if err != nil {
 		return fmt.Errorf("failed to hash new password: %w", err)
 	}

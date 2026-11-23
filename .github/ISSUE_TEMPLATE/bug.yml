@@ -1,0 +1,93 @@
+name: Bug report
+description: Report a reproducible defect in the API, Admin GUI or deployment
+title: "[bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities here.** See
+        [SECURITY.md](https://github.com/gjovanovicst/golang-auth-api/blob/main/SECURITY.md)
+        for private disclosure.
+
+        Redact tokens, passwords, API keys, cookies and customer data before pasting logs.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the defect.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Start with docker compose / native binary
+        2. Call POST /login with ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Release tag, image tag or the commit SHA you are running.
+      placeholder: "v1.0.0-alpha.7 / sha-1a2b3c4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - API (endpoints, middleware)
+        - Authentication (login, register, tokens)
+        - 2FA / passkeys
+        - Admin GUI
+        - Email / SMTP
+        - OIDC / SSO / session groups
+        - Multi-tenancy / RBAC
+        - Deployment (Docker, migrations, configuration)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Local — docker compose
+        - Local — native binary
+        - Staging
+        - Production
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Server logs, HTTP response or GUI errors. Redact secrets.
+      render: shell
+
+  - type: checkboxes
+    id: regression
+    attributes:
+      label: Regression
+      options:
+        - label: This worked in a previous version

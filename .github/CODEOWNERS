@@ -1,0 +1,17 @@
+# Code owners
+# Review requests are routed to these owners automatically.
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything in the repository.
+*                       @gjovanovicst
+
+# Security-sensitive areas — changes here also need the SECURITY.md checklist.
+/internal/auth/         @gjovanovicst
+/internal/middleware/   @gjovanovicst
+/internal/oidc/         @gjovanovicst
+/pkg/jwt/               @gjovanovicst
+/pkg/errors/            @gjovanovicst
+
+# Schema and release tooling.
+/migrations/            @gjovanovicst
+/.github/               @gjovanovicst

@@ -4,14 +4,18 @@ Thank you for your interest in contributing! We welcome pull requests, issues, a
 
 ## How to Contribute
 
-1. **Fork the repository** and create your branch from `main` or `develop`.
+1. **Fork the repository** and create your branch from `main`.
 2. **Clone your fork** and set up the project locally (see README for instructions).
 3. **Create a descriptive branch name** (e.g., `feature/social-login`, `fix/email-verification-bug`).
 4. **Make your changes** with clear, concise commits.
 5. **Test your changes** using `make test` or `go test ./...`.
 6. **Lint and format** your code: `make fmt` and `make lint`.
-7. **Push to your fork** and open a pull request (PR) against the `develop` branch.
-8. **Describe your PR** clearly, referencing any related issues.
+7. **Update [`CHANGELOG.md`](CHANGELOG.md)** under `## [Unreleased]` for any
+   user-visible change. Docs-only and CI-only PRs may use the `skip-changelog` label.
+8. **Push to your fork** and open a pull request against `main`, filling in the PR
+   template (What / Why / How tested / Risk and rollback).
+9. **Wait for the required checks** — `Test`, `Build`, `Security Scan` and
+   `changelog` must be green and the PR needs a maintainer review before merge.
 
 ## Code Style
 - Follow Go best practices and idioms.

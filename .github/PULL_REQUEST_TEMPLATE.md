@@ -1,28 +1,37 @@
 # Pull Request
 
-Thank you for your contribution!
+## What
 
-## Description
-Please include a summary of the change and which issue is fixed. Also include relevant motivation and context.
+<!-- What changes, in 1–3 bullets. Link the issue: Closes #123 -->
 
-Fixes # (issue)
+## Why
 
-## Type of change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation update
-- [ ] Other (please describe):
+<!-- The problem this solves and why now. Motivation, not a restatement of the diff. -->
+
+## How tested
+
+<!-- Commands, test names and the manual flow you verified. Be specific:
+  - `go test ./internal/twofa/`
+  - `make check`
+  - manual: registered a user, enabled TOTP, completed /2fa/login-verify
+-->
+
+## Risk and rollback
+
+- **Risk:** low | medium | high — <!-- what can break, who is affected -->
+- **Rollback:** <!-- revert commit? reverse migration? feature flag? -->
+- **Breaking change:** yes | no — <!-- API/schema/behaviour; if yes, describe the migration path -->
+
+## Screenshot (UI changes)
+
+<!-- Before/after or a short recording. Delete this section for non-UI changes. -->
 
 ## Checklist
-- [ ] My code follows the style guidelines of this project
-- [ ] I have performed a self-review of my code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] New and existing unit tests pass locally with my changes
-- [ ] Any dependent changes have been merged and published in downstream modules
 
-## Additional context
-Add any other context or screenshots about the pull request here.
+- [ ] I read `AGENTS.md` / `CONTRIBUTING.md` and followed the project conventions
+- [ ] `CHANGELOG.md` has an entry under `## [Unreleased]` (or this PR has the `skip-changelog` label)
+- [ ] Documentation is updated when behaviour, configuration or the API changed
+- [ ] New/changed endpoints have Swagger annotations and `docs/` was regenerated
+- [ ] Database changes ship with a migration (and a rollback file)
+- [ ] `go build ./...` and `go vet ./...` pass; tests pass locally
+- [ ] Required checks are green (`Test`, `Build`, `Security Scan`, `changelog`)

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/gjovanovicst/golang-auth-api/blob/main/docs/README.md
+    about: Setup, configuration, API reference, multi-tenancy and Admin GUI docs.
+  - name: Security vulnerability
+    url: https://github.com/gjovanovicst/golang-auth-api/security/advisories/new
+    about: Report vulnerabilities privately — never as a public issue.
+  - name: Roadmap
+    url: https://github.com/gjovanovicst/golang-auth-api/blob/main/ROADMAP.md
+    about: Check what is already planned before opening a feature request.

@@ -27,6 +27,39 @@ A breaking change is any modification that requires action from users to maintai
 
 ---
 
+## OAuth State: Signed, Single-Use and Browser-Bound
+
+### Summary
+
+The OAuth `state` parameter is no longer an unsigned base64-encoded JSON blob. State
+tokens are now `v2.<payload>.<hmac>` tokens that are HMAC-SHA256 signed, expire after
+10 minutes, can be redeemed exactly once, and are bound to the browser that started the
+flow with an HttpOnly cookie.
+
+### Impact
+
+- **In-flight OAuth flows** started before the upgrade will fail and must be restarted
+  — unsigned/legacy states are rejected by design.
+- **Cross-site frontends** must send credentials when they start the flow
+  (`fetch(..., { credentials: 'include' })`) so the binding cookie is stored, and the
+  browser must be the same one that completes the provider redirect. If the frontend and
+  the Auth API are on different sites, keep `OAUTH_STATE_COOKIE_SAMESITE=none`
+  (the default) so the cookie is sent on cross-site requests.
+- **Non-browser clients** (mobile apps, server-side callers with their own HTTP stack)
+  that cannot keep the binding cookie should set `OAUTH_STATE_COOKIE_BINDING=false`.
+  Signature, expiry and single-use protection still apply in that mode, but the
+  login-CSRF protection provided by the cookie binding does not.
+
+### Action Required
+
+1. Configure `OAUTH_STATE_SECRET` (recommended; min 32 bytes) or keep a `JWT_SECRET` of
+   at least 32 bytes — the state signing key falls back to `JWT_SECRET`.
+2. Confirm your frontend sends cookies on the OAuth initiation request when it runs on a
+   different site than the API (`credentials: 'include'`), or explicitly opt out with
+   `OAUTH_STATE_COOKIE_BINDING=false`.
+
+---
+
 ## Multi-Tenancy Architecture
 
 ### Summary

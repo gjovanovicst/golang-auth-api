@@ -2,10 +2,14 @@ package social
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	stdlog "log"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -204,7 +208,7 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 	}
 
 	// Create secure state with redirect URI
-	state, err := CreateOAuthState(redirectURI, appID.String())
+	state, err := h.beginOAuthState(c, redirectURI, appID.String(), FlowLogin, "")
 	if err != nil {
 		stdlog.Printf("Invalid OAuth redirect URI for Google login: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -240,7 +244,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	}
 
 	// Parse and validate state
-	state, err := ParseOAuthState(encodedState)
+	state, err := h.completeOAuthState(c, encodedState)
 	if err != nil {
 		// Redirect to default with error
 		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
@@ -442,7 +446,7 @@ func (h *Handler) FacebookLogin(c *gin.Context) {
 	}
 
 	// Create secure state with redirect URI
-	state, err := CreateOAuthState(redirectURI, appID.String())
+	state, err := h.beginOAuthState(c, redirectURI, appID.String(), FlowLogin, "")
 	if err != nil {
 		stdlog.Printf("Invalid OAuth redirect URI for Facebook login: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -478,7 +482,7 @@ func (h *Handler) FacebookCallback(c *gin.Context) {
 	}
 
 	// Parse and validate state
-	state, err := ParseOAuthState(encodedState)
+	state, err := h.completeOAuthState(c, encodedState)
 	if err != nil {
 		// Redirect to default with error
 		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
@@ -679,7 +683,7 @@ func (h *Handler) GithubLogin(c *gin.Context) {
 	}
 
 	// Create secure state with redirect URI
-	state, err := CreateOAuthState(redirectURI, appID.String())
+	state, err := h.beginOAuthState(c, redirectURI, appID.String(), FlowLogin, "")
 	if err != nil {
 		stdlog.Printf("Invalid OAuth redirect URI for GitHub login: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -715,7 +719,7 @@ func (h *Handler) GithubCallback(c *gin.Context) {
 	}
 
 	// Parse and validate state
-	state, err := ParseOAuthState(encodedState)
+	state, err := h.completeOAuthState(c, encodedState)
 	if err != nil {
 		// Redirect to default with error
 		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
@@ -1019,7 +1023,7 @@ func (h *Handler) GoogleLink(c *gin.Context) {
 		redirectURI = GetDefaultRedirectURI()
 	}
 
-	state, err := CreateOAuthLinkState(redirectURI, appID.String(), userID.(string))
+	state, err := h.beginOAuthState(c, redirectURI, appID.String(), FlowLink, userID.(string))
 	if err != nil {
 		stdlog.Printf("Invalid OAuth redirect URI for Google link: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid redirect URI"})
@@ -1048,7 +1052,7 @@ func (h *Handler) GoogleLinkCallback(c *gin.Context) {
 		return
 	}
 
-	state, err := ParseOAuthState(encodedState)
+	state, err := h.completeOAuthState(c, encodedState)
 	if err != nil {
 		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
 		frontendURL := fmt.Sprintf("%s?error=%s", GetDefaultRedirectURI(), errorMsg)
@@ -1155,7 +1159,7 @@ func (h *Handler) FacebookLink(c *gin.Context) {
 		redirectURI = GetDefaultRedirectURI()
 	}
 
-	state, err := CreateOAuthLinkState(redirectURI, appID.String(), userID.(string))
+	state, err := h.beginOAuthState(c, redirectURI, appID.String(), FlowLink, userID.(string))
 	if err != nil {
 		stdlog.Printf("Invalid OAuth redirect URI for Facebook link: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid redirect URI"})
@@ -1184,7 +1188,7 @@ func (h *Handler) FacebookLinkCallback(c *gin.Context) {
 		return
 	}
 
-	state, err := ParseOAuthState(encodedState)
+	state, err := h.completeOAuthState(c, encodedState)
 	if err != nil {
 		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
 		frontendURL := fmt.Sprintf("%s?error=%s", GetDefaultRedirectURI(), errorMsg)
@@ -1291,7 +1295,7 @@ func (h *Handler) GithubLink(c *gin.Context) {
 		redirectURI = GetDefaultRedirectURI()
 	}
 
-	state, err := CreateOAuthLinkState(redirectURI, appID.String(), userID.(string))
+	state, err := h.beginOAuthState(c, redirectURI, appID.String(), FlowLink, userID.(string))
 	if err != nil {
 		stdlog.Printf("Invalid OAuth redirect URI for GitHub link: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid redirect URI"})
@@ -1320,7 +1324,7 @@ func (h *Handler) GithubLinkCallback(c *gin.Context) {
 		return
 	}
 
-	state, err := ParseOAuthState(encodedState)
+	state, err := h.completeOAuthState(c, encodedState)
 	if err != nil {
 		errorMsg := url.QueryEscape(fmt.Sprintf("Invalid state: %v", err))
 		frontendURL := fmt.Sprintf("%s?error=%s", GetDefaultRedirectURI(), errorMsg)
@@ -1433,4 +1437,141 @@ func (h *Handler) MergeConfirm(c *gin.Context) {
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 	})
+}
+
+// ============================================================================
+// OAuth state helpers
+//
+// The state parameter is the only thing that ties a provider callback back to
+// the flow that started it, so it must be unforgeable, single-use and bound to
+// the browser that started the flow:
+//
+//   - signature: state tokens are HMAC-SHA256 signed (see NewOAuthState), so a
+//     client cannot change app_id, redirect_uri, flow or user_id;
+//   - single use: the nonce is registered server-side and consumed on the
+//     callback, so a captured token cannot be replayed;
+//   - browser binding: the nonce is mirrored in an HttpOnly cookie and compared
+//     on the callback, which stops an attacker from redeeming a token they did
+//     not start (login CSRF and stolen-state replay).
+// ============================================================================
+
+// beginOAuthState mints a signed state token, registers its nonce for
+// single-use redemption, and binds it to the current browser.
+func (h *Handler) beginOAuthState(c *gin.Context, redirectURI, appID, flow, userID string) (string, error) {
+	token, state, err := NewOAuthState(redirectURI, appID, flow, userID)
+	if err != nil {
+		return "", err
+	}
+
+	if err := RegisterOAuthState(state); err != nil {
+		return "", fmt.Errorf("failed to register OAuth state: %w", err)
+	}
+
+	setOAuthStateCookie(c, state.Nonce)
+	return token, nil
+}
+
+// completeOAuthState verifies the state token and redeems it exactly once.
+func (h *Handler) completeOAuthState(c *gin.Context, encodedState string) (*OAuthState, error) {
+	state, err := ParseOAuthState(encodedState)
+	if err != nil {
+		return nil, err
+	}
+
+	if oauthStateCookieBindingEnabled() {
+		if err := verifyOAuthStateCookie(c, state.Nonce); err != nil {
+			return nil, err
+		}
+	}
+
+	consumed, err := ConsumeOAuthStateNonce(state.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("failed to consume OAuth state: %w", err)
+	}
+	if !consumed {
+		return nil, fmt.Errorf("state has already been used or was never issued")
+	}
+
+	clearOAuthStateCookie(c)
+	return state, nil
+}
+
+// setOAuthStateCookie stores the state nonce in a browser cookie.
+func setOAuthStateCookie(c *gin.Context, nonce string) {
+	secure, sameSite := oauthStateCookieAttrs()
+	http.SetCookie(c.Writer, &http.Cookie{ // #nosec G124 -- HttpOnly is always set; Secure/SameSite are configurable for cross-site frontends
+		Name:     oauthStateCookieName,
+		Value:    nonce,
+		Path:     "/",
+		MaxAge:   int(OAuthStateTTL / time.Second),
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: sameSite,
+	})
+}
+
+// clearOAuthStateCookie removes the binding cookie once the flow is finished.
+func clearOAuthStateCookie(c *gin.Context) {
+	secure, sameSite := oauthStateCookieAttrs()
+	http.SetCookie(c.Writer, &http.Cookie{ // #nosec G124 -- mirrors setOAuthStateCookie attributes
+		Name:     oauthStateCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: sameSite,
+	})
+}
+
+// verifyOAuthStateCookie checks that the callback belongs to the browser that
+// started the flow.
+func verifyOAuthStateCookie(c *gin.Context, nonce string) error {
+	value, err := c.Cookie(oauthStateCookieName)
+	if err != nil || value == "" {
+		return fmt.Errorf("state is not bound to this browser")
+	}
+	if subtle.ConstantTimeCompare([]byte(value), []byte(nonce)) != 1 {
+		return fmt.Errorf("state does not match this browser")
+	}
+	return nil
+}
+
+// oauthStateCookieBindingEnabled reports whether browser binding is enforced.
+// It defaults to true; OAUTH_STATE_COOKIE_BINDING=false is only meant for
+// non-browser clients (for example mobile apps with their own cookie jar).
+func oauthStateCookieBindingEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("OAUTH_STATE_COOKIE_BINDING"))
+	if raw == "" {
+		return true
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		return true
+	}
+	return enabled
+}
+
+// oauthStateCookieAttrs returns the Secure and SameSite attributes for the
+// binding cookie.
+//
+// OAUTH_STATE_COOKIE_SAMESITE selects the policy:
+//   - "none" (default) — required when the frontend and the Auth API are on
+//     different sites; SameSite=None forces Secure=true
+//   - "lax" / "strict" — same-site deployments
+//
+// Secure is always on in release mode.
+func oauthStateCookieAttrs() (secure bool, sameSite http.SameSite) {
+	secure = gin.Mode() == gin.ReleaseMode
+
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("OAUTH_STATE_COOKIE_SAMESITE"))) {
+	case "lax":
+		sameSite = http.SameSiteLaxMode
+	case "strict":
+		sameSite = http.SameSiteStrictMode
+	default:
+		sameSite = http.SameSiteNoneMode
+		secure = true
+	}
+	return secure, sameSite
 }

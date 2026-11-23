@@ -39,6 +39,8 @@ Complete documentation for the Authentication API.
 | [Makefile Reference](makefile-reference.md) | All available make commands |
 | [Contributing](../CONTRIBUTING.md) | Contribution process and standards |
 | [Code of Conduct](../CODE_OF_CONDUCT.md) | Community guidelines |
+| [Roadmap](../ROADMAP.md) | What ships next and how work is prioritised |
+| [Governance](../GOVERNANCE.md) | Maintainers, decisions and release policy |
 
 ---
 

@@ -1,0 +1,67 @@
+name: Feature request
+description: Propose a capability or an improvement
+title: "[feature] "
+labels: ["feature", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening a request, check the
+        [roadmap](https://github.com/gjovanovicst/golang-auth-api/blob/main/ROADMAP.md) and the
+        existing issues — the feature may already be planned.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today? Describe the use case, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: The API/UX you would like to see. Include request/response shapes if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches, workarounds, or how other projects solve it.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - API (endpoints, middleware)
+        - Authentication (login, register, tokens)
+        - 2FA / passkeys
+        - Admin GUI
+        - Email / SMTP
+        - OIDC / SSO / session groups
+        - Multi-tenancy / RBAC
+        - Deployment (Docker, migrations, configuration)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - label: This would change the public API (breaking change)
+        - label: This needs a database migration
+        - label: This needs documentation (user guide and/or API reference)
+        - label: I can help implement it
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links, screenshots, or references.

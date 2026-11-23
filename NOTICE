@@ -1,0 +1,7 @@
+Authentication and Authorization API
+Copyright (c) 2025 Goran Jovanović
+
+This product includes software developed by the project contributors and
+third-party open-source projects. Third-party licenses remain with their
+respective owners; see `go.mod`, `go.sum` and the SBOM published with each
+release.

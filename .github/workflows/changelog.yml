@@ -1,0 +1,54 @@
+name: changelog
+
+# Fails a PR that changes code without updating CHANGELOG.md.
+# Opt out with the "skip-changelog" label (docs-only or CI-only changes are
+# skipped automatically because no code path is touched).
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  entry:
+    name: changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a CHANGELOG entry for code changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -eu
+
+          if echo "$LABELS" | grep -q '"skip-changelog"'; then
+            echo "skip-changelog label present — skipping the check."
+            exit 0
+          fi
+
+          git fetch --no-tags origin "$BASE_REF"
+          changed=$(git diff --name-only "origin/$BASE_REF...HEAD")
+          echo "Changed files:"
+          echo "$changed"
+
+          code=$(echo "$changed" | grep -E '^(internal/|cmd/|pkg/|web/|migrations/)' || true)
+          if [ -z "$code" ]; then
+            echo "No application code changed — nothing to check."
+            exit 0
+          fi
+
+          if echo "$changed" | grep -qx 'CHANGELOG.md'; then
+            echo "CHANGELOG.md updated."
+            exit 0
+          fi
+
+          echo "::error::Code changed but CHANGELOG.md was not updated. Add an entry under '## [Unreleased]' or add the 'skip-changelog' label."
+          exit 1

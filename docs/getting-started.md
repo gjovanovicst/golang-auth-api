@@ -67,6 +67,32 @@ The default Application ID `00000000-0000-0000-0000-000000000001` is created aut
 
 ---
 
+## Dev Users (optional)
+
+`scripts/seed-dev-users.ps1` creates two deterministic application users for local
+testing. The API must be running and `psql` must be available.
+
+| Email | Password | Setup |
+|---|---|---|
+| `dev@example.com` | `Dev!Pass-2026-alpha` | verified email, no 2FA |
+| `dev-2fa@example.com` | `Dev!Pass-2026-bravo` | verified email, TOTP 2FA, verified phone `+381600000001` |
+
+```powershell
+./scripts/seed-dev-users.ps1
+
+# against another port / database
+./scripts/seed-dev-users.ps1 -BaseUrl http://localhost:8090 -DbPort 5433
+```
+
+Registration goes through `POST /register` (so hashing and password policy stay in the
+app); email/phone verification and the TOTP secret are applied directly in PostgreSQL
+because no SMTP/SMS provider is configured locally. The script is idempotent and prints
+the credentials, the TOTP secret (`JBSWY3DPEHPK3PXP`) and an `otpauth://` URI.
+
+> These are dev-only credentials — delete the accounts before deploying anywhere.
+
+---
+
 ## Next Steps
 
 | Topic | Link |

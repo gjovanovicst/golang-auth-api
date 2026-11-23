@@ -2,22 +2,43 @@
 
 ## Supported Versions
 
+This project is in pre-release (`1.0.0-alpha.N`), so there are no stable release branches yet.
+Security fixes land on `main` and ship in the next milestone.
+
 | Version | Supported |
 |---------|-----------|
-| 3.x     | Yes       |
-| 2.x     | Security fixes only |
-| 1.x     | No        |
+| `main` (next `1.0.0-alpha.N`) | Yes |
+| Older alpha milestones | No |
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please report it responsibly:
+Please **do not** open a public issue, pull request or discussion for a security problem.
 
-1. **Do not** disclose the vulnerability publicly until it has been addressed.
-2. Open a private security advisory or contact the maintainer directly.
-3. Provide as much detail as possible: reproduction steps, affected versions, and potential impact.
+**Preferred channel:** open a private report through GitHub's
+[private vulnerability reporting](https://github.com/gjovanovicst/golang-auth-api/security/advisories/new)
+(Security → Advisories → Report a vulnerability). The report, the discussion and the fix stay
+private until an advisory is published.
 
-We aim to acknowledge reports within 48 hours and provide a fix or mitigation plan within 7 days.
+**Alternative:** email the maintainer at **gjovanovic.st@gmail.com** with the subject line
+`SECURITY: golang-auth-api`.
 
+Please include:
+
+- the affected component/endpoint and the commit or version you tested
+- reproduction steps or a proof of concept
+- the potential impact and any suggested remediation
+- whether you want to be credited, and under which name/handle
+
+What to expect:
+
+- acknowledgement within 48 hours
+- an initial assessment and a remediation plan within 7 days
+- coordinated disclosure: an advisory is published and a CVE is requested through GitHub Security
+  Advisories by the maintainer once the fix is available — normally within 90 days of the report
+- credit in the published advisory unless you ask to stay anonymous
+
+Recent advisories are listed on the repository's
+[Security Advisories](https://github.com/gjovanovicst/golang-auth-api/security/advisories) page.
 ## Security Architecture
 
 ### Authentication

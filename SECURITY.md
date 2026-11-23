@@ -69,6 +69,8 @@ All responses include the following security headers:
 - **Parameterized Queries** — All database queries use GORM's parameterized query builder (no raw SQL concatenation)
 - **Multi-Tenant Isolation** — All user data scoped by `app_id` at the database level
 - **Encrypted OAuth Secrets** — OAuth client secrets stored with `json:"-"` tag, never exposed in API responses
+- **Signed, Single-Use OAuth State** — OAuth `state` tokens are HMAC-SHA256 signed, expire after 10 minutes, can be redeemed exactly once (nonce tracked server-side), and are bound to the initiating browser with an `HttpOnly` cookie — preventing state forgery, account-linking takeover, state replay and login CSRF
+- **Bind Checks** — Signature comparison uses `hmac.Equal` and cookie comparison uses `crypto/subtle.ConstantTimeCompare` (no `==` on secrets)
 
 ### CORS
 

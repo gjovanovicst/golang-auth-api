@@ -87,6 +87,24 @@ GITHUB_CLIENT_SECRET=your-github-client-secret
 GITHUB_REDIRECT_URL=http://localhost:8080/auth/github/callback
 ```
 
+### OAuth State Hardening
+
+OAuth `state` tokens are always HMAC-SHA256 signed and single-use. These optional
+variables tune the browser binding and the signing key.
+
+```bash
+# HMAC key for OAuth state tokens (min 32 bytes). Falls back to JWT_SECRET when empty.
+OAUTH_STATE_SECRET=
+
+# Bind a state token to the browser that started the flow (default: true).
+# Set to false only for non-browser clients that cannot keep cookies.
+OAUTH_STATE_COOKIE_BINDING=true
+
+# SameSite policy for the binding cookie: none (cross-site frontends, default),
+# lax or strict (same-site deployments). SameSite=None always forces Secure=true.
+OAUTH_STATE_COOKIE_SAMESITE=none
+```
+
 ## Application Settings
 
 ```bash

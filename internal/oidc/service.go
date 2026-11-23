@@ -491,7 +491,7 @@ func generateClientSecret() (plain, hash string, err error) {
 		return "", "", err
 	}
 	plain = hex.EncodeToString(b)
-	hashed, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+	hashed, err := bcrypt.GenerateFromPassword([]byte(plain), 12)
 	if err != nil {
 		return "", "", err
 	}

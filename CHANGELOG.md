@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Future enhancements planned for the `1.0.0` official release._
 
+### Security
+- **bcrypt cost 12 for admin passwords and OIDC client secrets** — admin password changes (`internal/admin`) and OIDC client-secret generation (`internal/oidc`) now hash with bcrypt cost 12 instead of `bcrypt.DefaultCost` (10), matching the rest of the codebase (`bcryptCost` in `internal/user` and `cmd/setup`) and the policy documented in `SECURITY.md`. Existing cost-10 hashes still verify, so no migration is required. Thanks to [@saaa99999999](https://github.com/saaa99999999) for the report and fix ([#16](https://github.com/gjovanovicst/golang-auth-api/pull/16)).
+
+- **OAuth state hardened** — social login and account-linking `state` tokens are now HMAC-SHA256 signed, expire after 10 minutes, can be redeemed exactly once and are bound to the initiating browser with an `HttpOnly` cookie. Closes a state-forgery path in the account-linking flow where a tampered `user_id` could attach an attacker's social account to another user and take over the account (CWE-639), plus state replay and login CSRF ([#17](https://github.com/gjovanovicst/golang-auth-api/pull/17)). Thanks to Rathnadeepan (HotWater) for the responsible disclosure.
+
 ### Planned — Application-Level Customization
 - Custom login page branding per app (logo, colors)
 - Configurable password policies per app (min length, complexity, history)

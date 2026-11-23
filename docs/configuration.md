@@ -76,6 +76,30 @@ GITHUB_CLIENT_SECRET=your_github_client_secret
 GITHUB_REDIRECT_URL=http://localhost:8080/auth/github/callback
 ```
 
+### OAuth State Hardening
+
+OAuth `state` tokens are always HMAC-SHA256 signed, valid for 10 minutes, redeemable
+exactly once and bound to the browser that started the flow. The values below are
+optional tuning knobs:
+
+```bash
+# Optional: dedicated HMAC key for state tokens (min 32 bytes).
+# Falls back to JWT_SECRET when unset.
+OAUTH_STATE_SECRET=
+
+# Bind the state token to the initiating browser (default: true).
+# Disable only for clients that cannot keep cookies.
+OAUTH_STATE_COOKIE_BINDING=true
+
+# Cookie SameSite policy: none (default, cross-site frontends),
+# lax or strict (same-site deployments). SameSite=None forces Secure=true.
+OAUTH_STATE_COOKIE_SAMESITE=none
+```
+
+Cross-site frontends must start the flow with cookies enabled
+(`fetch(..., { credentials: 'include' })`), otherwise the callback is rejected with
+`state is not bound to this browser`.
+
 ### Database Configuration (Recommended for Multi-Tenant)
 
 Migrate existing env var credentials to the database:

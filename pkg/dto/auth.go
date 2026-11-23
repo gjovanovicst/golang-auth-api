@@ -53,6 +53,10 @@ type TwoFARequiredResponse struct {
 	Message       string `json:"message"`
 	TempToken     string `json:"temp_token"`
 	Method        string `json:"method"` // "totp" or "email" - indicates which 2FA method the user has configured
+	// SMSRecoveryAvailable is true when the user can bypass the primary 2FA method by
+	// requesting a one-time code via SMS (POST /2fa/sms/recovery/send). Requires the app
+	// to have SMS 2FA enabled, a configured SMS provider, and a verified phone number.
+	SMSRecoveryAvailable bool `json:"sms_recovery_available,omitempty"`
 }
 
 // TwoFASetupRequiredResponse represents response when 2FA setup is mandatory for the application
@@ -70,9 +74,13 @@ type TwoFAVerifyRequest struct {
 
 // TwoFALoginRequest represents the request payload for 2FA login verification
 type TwoFALoginRequest struct {
-	TempToken      string `json:"temp_token" validate:"required"`
-	Code           string `json:"code,omitempty"`
-	RecoveryCode   string `json:"recovery_code,omitempty"`
+	TempToken    string `json:"temp_token" validate:"required"`
+	Code         string `json:"code,omitempty"`
+	RecoveryCode string `json:"recovery_code,omitempty"`
+	// Method optionally forces how the submitted code is verified. Leave empty to use the
+	// user's primary 2FA method. "sms_recovery" verifies a one-time code sent to the user's
+	// verified phone number via POST /2fa/sms/recovery/send.
+	Method         string `json:"method,omitempty"`
 	RememberDevice bool   `json:"remember_device,omitempty"` // When true, create a trusted device record
 	DeviceName     string `json:"device_name,omitempty"`     // Human-readable label for the trusted device
 }

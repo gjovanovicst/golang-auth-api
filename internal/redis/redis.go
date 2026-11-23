@@ -948,6 +948,27 @@ func Delete2FASMSCode(appID, userID string) error {
 	return Rdb.Del(ctx, key).Err()
 }
 
+// Set2FASMSRecoveryCode stores a 6-digit SMS recovery code (5-minute TTL).
+// Unlike Set2FASMSCode, this code is used as a *fallback* when the user's primary
+// 2FA method (e.g. a TOTP authenticator) is unavailable, so it lives under its own
+// key namespace to keep the two flows independent.
+func Set2FASMSRecoveryCode(appID, userID, code string) error {
+	key := fmt.Sprintf("app:%s:2fa_sms_recovery:%s", appID, userID)
+	return Rdb.Set(ctx, key, code, 5*time.Minute).Err()
+}
+
+// Get2FASMSRecoveryCode retrieves a stored SMS recovery code.
+func Get2FASMSRecoveryCode(appID, userID string) (string, error) {
+	key := fmt.Sprintf("app:%s:2fa_sms_recovery:%s", appID, userID)
+	return Rdb.Get(ctx, key).Result()
+}
+
+// Delete2FASMSRecoveryCode removes an SMS recovery code after successful verification (one-time use).
+func Delete2FASMSRecoveryCode(appID, userID string) error {
+	key := fmt.Sprintf("app:%s:2fa_sms_recovery:%s", appID, userID)
+	return Rdb.Del(ctx, key).Err()
+}
+
 // SetBackupEmail2FACode stores a 6-digit code sent to the backup email during login (5-minute TTL).
 func SetBackupEmail2FACode(appID, userID, code string) error {
 	key := fmt.Sprintf("app:%s:2fa_backup_email:%s", appID, userID)

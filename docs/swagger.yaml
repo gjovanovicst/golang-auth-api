@@ -1327,6 +1327,12 @@ definitions:
       device_name:
         description: Human-readable label for the trusted device
         type: string
+      method:
+        description: |-
+          Method optionally forces how the submitted code is verified. Leave empty to use the
+          user's primary 2FA method. "sms_recovery" verifies a one-time code sent to the user's
+          verified phone number via POST /2fa/sms/recovery/send.
+        type: string
       recovery_code:
         type: string
       remember_device:
@@ -1370,6 +1376,12 @@ definitions:
           configured'
         type: string
       requires_2fa:
+        type: boolean
+      sms_recovery_available:
+        description: |-
+          SMSRecoveryAvailable is true when the user can bypass the primary 2FA method by
+          requesting a one-time code via SMS (POST /2fa/sms/recovery/send). Requires the app
+          to have SMS 2FA enabled, a configured SMS provider, and a verified phone number.
         type: boolean
       temp_token:
         type: string
@@ -2340,6 +2352,52 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Enable SMS-based 2FA
+      tags:
+      - 2FA
+  /2fa/sms/recovery/send:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Send a one-time recovery code via SMS during login. This is a fallback for
+        users whose primary 2FA method (e.g. an authenticator app) is unavailable.
+        Requires: SMS 2FA enabled for the application, a configured SMS provider,
+        2FA active on the user, and a verified phone number. The code is valid for
+        5 minutes and must be submitted to POST /2fa/login-verify with method="sms_recovery".
+      parameters:
+      - description: Temporary login token
+        in: body
+        name: recovery
+        required: true
+        schema:
+          properties:
+            temp_token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Send an SMS recovery code
       tags:
       - 2FA
   /2fa/sms/resend:

@@ -376,6 +376,19 @@ func (h *Handler) VerifyLogin(c *gin.Context) {
 		if parseErr == nil {
 			log.LogRecoveryCodeUsed(appID, userUUID, ipAddress, userAgent)
 		}
+	} else if req.Method == "sms_recovery" && req.Code != "" {
+		// SMS fallback: the code was delivered to the user's verified phone number by
+		// POST /2fa/sms/recovery/send. This works regardless of the primary 2FA method
+		// (typically TOTP), so it is only accepted when explicitly requested.
+		method = "sms_recovery"
+		verificationErr = h.Service.VerifySMSRecoveryCode(appID, userID, req.Code)
+
+		if verificationErr == nil {
+			userUUID, parseErr := uuid.Parse(userID)
+			if parseErr == nil {
+				log.LogSMSRecoveryCodeUsed(appID, userUUID, ipAddress, userAgent)
+			}
+		}
 	} else if req.Code != "" {
 		// Determine the user's 2FA method to decide how to verify the code
 		userMethod, methodErr := h.Service.GetUserTwoFAMethod(userID)
@@ -856,6 +869,57 @@ func (h *Handler) ResendSMS2FACode(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, dto.MessageResponse{Message: "SMS 2FA code resent successfully"})
+}
+
+// @Summary Send an SMS recovery code
+// @Description Send a one-time recovery code via SMS during login. This is a fallback for
+// @Description users whose primary 2FA method (e.g. an authenticator app) is unavailable.
+// @Description Requires: SMS 2FA enabled for the application, a configured SMS provider,
+// @Description 2FA active on the user, and a verified phone number. The code is valid for
+// @Description 5 minutes and must be submitted to POST /2fa/login-verify with method="sms_recovery".
+// @Tags 2FA
+// @Accept json
+// @Produce json
+// @Param   recovery  body  object{temp_token=string}  true  "Temporary login token"
+// @Success 200 {object} dto.MessageResponse
+// @Failure 400 {object} dto.ErrorResponse
+// @Failure 401 {object} dto.ErrorResponse
+// @Failure 403 {object} dto.ErrorResponse
+// @Failure 500 {object} dto.ErrorResponse
+// @Router /2fa/sms/recovery/send [post]
+func (h *Handler) SendSMSRecoveryCode(c *gin.Context) {
+	var req struct {
+		TempToken string `json:"temp_token" validate:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, dto.ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	appIDVal, exists := c.Get("app_id")
+	if !exists {
+		c.JSON(http.StatusInternalServerError, dto.ErrorResponse{Error: "App ID missing from context"})
+		return
+	}
+	appID := appIDVal.(uuid.UUID)
+
+	userID, err := getUserIDFromTempSession(appID.String(), req.TempToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, dto.ErrorResponse{Error: "Invalid or expired temporary token"})
+		return
+	}
+
+	ipAddress, userAgent := util.GetClientInfo(c)
+	if !h.checkIPAccess(c, appID, ipAddress, userAgent) {
+		return
+	}
+
+	if appErr := h.Service.SendSMSRecoveryCode(appID, userID); appErr != nil {
+		c.JSON(appErr.Code, dto.ErrorResponse{Error: appErr.Message})
+		return
+	}
+
+	c.JSON(http.StatusOK, dto.MessageResponse{Message: "SMS recovery code sent successfully"})
 }
 
 // ============================================================================

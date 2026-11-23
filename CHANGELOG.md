@@ -17,13 +17,36 @@ _Future enhancements planned for the `1.0.0` official release._
 
 - **OAuth state hardened** — social login and account-linking `state` tokens are now HMAC-SHA256 signed, expire after 10 minutes, can be redeemed exactly once and are bound to the initiating browser with an `HttpOnly` cookie. Closes a state-forgery path in the account-linking flow where a tampered `user_id` could attach an attacker's social account to another user and take over the account (CWE-639), plus state replay and login CSRF ([#17](https://github.com/gjovanovicst/golang-auth-api/pull/17)). Thanks to Rathnadeepan (HotWater) for the responsible disclosure.
 
-### Planned — Application-Level Customization
-- Custom login page branding per app (logo, colors)
-- Configurable password policies per app (min length, complexity, history)
-- Configurable token TTLs per application (currently global)
+### Added — Per-application customization
 
-### Planned — Multi-Factor Recovery
-- SMS-based recovery (even if not primary 2FA method)
+The "Planned — Application-Level Customization" items are available in the application
+model and Admin GUI; documented here to close them out:
+
+- **Login page branding per app** — `login_logo_url`, `login_display_name`,
+  `login_primary_color`, `login_secondary_color` and `login_theme` on the `Application`
+  model (`pkg/models/application.go`), editable in the Admin GUI application form, exposed
+  publicly via `GET /app-config/:app_id`, and applied to the hosted OIDC pages
+  (`oidc_login.tmpl`, `oidc_consent.tmpl`, `oidc_logout.tmpl`, `oidc_error.tmpl`).
+- **Password policies per app** — `pw_min_length`, `pw_max_length`, `pw_require_upper`,
+  `pw_require_lower`, `pw_require_digit`, `pw_require_symbol`, `pw_history_count` and
+  `pw_max_age_days`, enforced by `ValidatePasswordPolicy`, `CheckPasswordHistory` and
+  `IsPasswordExpired` on registration, password reset and password change
+  (`internal/user/password_policy.go`).
+- **Token TTLs per app** — `access_token_ttl_minutes` and `refresh_token_ttl_hours`,
+  resolved by `ResolveTokenTTLs` and applied to password login, refresh-token rotation,
+  social login, 2FA verification, passkey login, SSO and OIDC token issuance.
+
+### Added — SMS-based multi-factor recovery
+
+- **`POST /2fa/sms/recovery/send`** — sends a one-time recovery code to the user's verified
+  phone number during login, as a fallback when the primary 2FA method (e.g. a TOTP
+  authenticator app) is unavailable. Gated by the application's `sms_2fa_enabled` switch, a
+  configured SMS provider, 2FA being active on the user and a verified phone number.
+- **`POST /2fa/login-verify`** accepts `method: "sms_recovery"` to redeem that code
+  (5-minute TTL, single-use, constant-time comparison).
+- The `/login` 2FA challenge response now includes `sms_recovery_available` so clients can
+  offer the fallback only when it can actually work.
+- Recovery-code usage is logged as `RECOVERY_CODE_USED` with `details.method = "sms_recovery"`.
 
 ---
 

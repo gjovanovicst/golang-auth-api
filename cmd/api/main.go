@@ -375,6 +375,8 @@ func main() {
 		public.POST("/2fa/email/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendEmail2FACode)
 		// 2FA SMS code resend (public because it needs temp token during login)
 		public.POST("/2fa/sms/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendSMS2FACode)
+		// 2FA SMS recovery code (fallback when the primary 2FA method is unavailable)
+		public.POST("/2fa/sms/recovery/send", middleware.API2FAVerifyRateLimit(), twofaHandler.SendSMSRecoveryCode)
 		// 2FA backup email code resend (public because it needs temp token during login)
 		public.POST("/2fa/backup-email/resend", middleware.API2FAVerifyRateLimit(), twofaHandler.ResendBackupEmail2FACode)
 		// Backup email verification (public — token sent by email, no auth required)

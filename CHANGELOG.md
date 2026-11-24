@@ -48,6 +48,19 @@ model and Admin GUI; documented here to close them out:
   offer the fallback only when it can actually work.
 - Recovery-code usage is logged as `RECOVERY_CODE_USED` with `details.method = "sms_recovery"`.
 
+### Added — Public documentation site
+
+- **Static documentation site** (`site/`) — product landing page, a task-oriented user
+  guide in `docs/user/` (start → integrate → deploy) and an API reference generated from
+  `docs/swagger.json`. The generator (`scripts/build_user_docs.py`) has no third-party
+  dependencies and runs offline.
+- **`make docs-site`** builds the site; **`make site-serve`** previews it at
+  <http://localhost:4173>.
+- **GitHub Pages deployment** via `.github/workflows/pages.yml`, gated by the
+  `PAGES_ENABLED` repository variable so it stays inert until Pages is enabled.
+- **Real admin GUI screenshots** captured at 2× and exported as 720/1440/2880 WebP
+  variants, with an in-page lightbox; the pipeline is documented in `site/README.md`.
+
 ---
 
 ## [1.0.0-alpha.7] - 2026-04-01

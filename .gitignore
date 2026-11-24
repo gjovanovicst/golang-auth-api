@@ -90,3 +90,5 @@ cache/
 *.backups
 *~
 backups/
+# Generated documentation site (built from docs/user + swagger.json)
+site/docs/

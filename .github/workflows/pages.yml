@@ -1,0 +1,51 @@
+name: pages
+
+# Builds the public documentation site (user guide + API reference) and deploys it
+# to GitHub Pages. Enable Pages in the repository settings and set the repository
+# variable PAGES_ENABLED=true; until then the workflow is skipped instead of failing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/user/**"
+      - "docs/swagger.json"
+      - "scripts/build_user_docs.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: vars.PAGES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build user docs and API reference
+        run: python3 scripts/build_user_docs.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

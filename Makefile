@@ -1,6 +1,10 @@
 # Auth API Makefile
 
-.PHONY: build run dev test clean air setup-admin
+.PHONY: build run dev test clean air setup-admin docs-site site-serve
+
+# Python interpreter used to build the documentation site.
+# Windows: `make docs-site PYTHON=python`
+PYTHON ?= python3
 
 # Build the application
 build:
@@ -109,6 +113,14 @@ docker-run:
 # Generate documentation using Swagger
 swag-init:
 	swag init -g cmd/api/main.go -o docs
+
+# Build the static documentation site (user guide + API reference)
+docs-site:
+	$(PYTHON) scripts/build_user_docs.py
+
+# Build and preview the documentation site at http://localhost:4173
+site-serve: docs-site
+	cd site && $(PYTHON) -m http.server 4173
 
 # Database Migration commands
 

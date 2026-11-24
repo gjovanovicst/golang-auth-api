@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auth API — authentication, 2FA and OIDC for your applications</title>
+<meta name="description" content="A production-ready Go authentication and authorization API: password and social login, 2FA and passkeys, multi-tenancy, RBAC, OIDC provider and an admin GUI.">
+<meta property="og:title" content="Auth API">
+<meta property="og:description" content="Authentication, 2FA, multi-tenancy and OIDC for your applications.">
+<meta property="og:image" content="https://gjovanovicst.github.io/golang-auth-api/assets/screens/og-dashboard.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://gjovanovicst.github.io/golang-auth-api/assets/screens/og-dashboard.png">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html">
+    <span class="brand-mark">A</span>
+    <span class="brand-name">Auth API <span>docs</span></span>
+  </a>
+  <div class="topbar-links">
+    <a href="docs/overview.html">Guides</a>
+    <a href="docs/api.html">API reference</a>
+    <a href="https://github.com/gjovanovicst/golang-auth-api">GitHub</a>
+    <button class="theme-toggle" type="button" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
+
+<main class="landing">
+  <section class="hero">
+    <p class="eyebrow">Go · Gin · PostgreSQL · Redis</p>
+    <h1>Authentication your apps<br>can actually rely on.</h1>
+    <p>
+      A self-hosted auth API with password and social login, TOTP/email/SMS/passkey
+      two-factor, multi-tenant RBAC, an OIDC provider and an admin GUI — all behind
+      one small, auditable Go service.
+    </p>
+    <div class="hero-actions">
+      <a class="btn primary" href="docs/quickstart.html">Quickstart</a>
+      <a class="btn" href="docs/api.html">API reference</a>
+      <a class="btn" href="https://github.com/gjovanovicst/golang-auth-api">Source</a>
+    </div>
+
+    <figure class="shot hero-shot">
+      <img src="assets/screens/dashboard-1440.webp" data-full="assets/screens/dashboard-2880.webp"
+           srcset="assets/screens/dashboard-720.webp 720w, assets/screens/dashboard-1440.webp 1440w"
+           sizes="(max-width: 900px) 100vw, 1040px"
+           width="1440" height="900" alt="Admin dashboard: users, tenants, applications, active sessions and recent authentication activity">
+      <figcaption>The admin GUI that ships with the API — users, tenants, applications, sessions and a live activity feed.</figcaption>
+    </figure>
+  </section>
+
+  <section class="cards" aria-label="Documentation">
+    <a class="card" href="docs/overview.html">
+      <h3>Start here</h3>
+      <p>What the API is, how it is put together, and the five-minute path to a running instance.</p>
+    </a>
+    <a class="card" href="docs/authentication.html">
+      <h3>Integrate</h3>
+      <p>Registration, login, refresh rotation, 2FA, sessions, SSO and webhooks for your frontend.</p>
+    </a>
+    <a class="card" href="docs/configuration.html">
+      <h3>Deploy &amp; operate</h3>
+      <p>Configuration, email, migrations, backups and upgrades for a self-hosted deployment.</p>
+    </a>
+    <a class="card" href="docs/api.html">
+      <h3>API reference</h3>
+      <p>Every endpoint and schema, generated from the OpenAPI definition that ships with the service.</p>
+    </a>
+  </section>
+
+  <h2 class="section-title">In the box</h2>
+  <div class="cards">
+    <div class="card">
+      <h3>Password &amp; tokens</h3>
+      <p>Registration, login, refresh-token rotation, logout with Redis-backed JWT blacklisting, per-app password policies.</p>
+    </div>
+    <div class="card">
+      <h3>Social login</h3>
+      <p>Google, Facebook and GitHub with account linking, merge confirmation and HMAC-signed single-use OAuth state.</p>
+    </div>
+    <div class="card">
+      <h3>Two-factor</h3>
+      <p>TOTP, email, SMS, backup email and passkeys — plus recovery codes, trusted devices and SMS recovery fallback.</p>
+    </div>
+    <div class="card">
+      <h3>Multi-tenancy &amp; RBAC</h3>
+      <p>Tenants own applications; applications own users, roles, permissions, branding and settings.</p>
+    </div>
+    <div class="card">
+      <h3>OIDC &amp; SSO</h3>
+      <p>Act as an OpenID provider for a single app, or link apps in a session group with cross-app logout.</p>
+    </div>
+    <div class="card">
+      <h3>Operations</h3>
+      <p>Admin GUI, webhooks, activity logs with anomaly detection, health and Prometheus metrics.</p>
+    </div>
+  </div>
+
+  <h2 class="section-title" id="screens">A look inside</h2>
+  <div class="shot-grid">
+    <figure class="shot">
+      <img src="assets/screens/email-templates-1440.webp" data-full="assets/screens/email-templates-2880.webp"
+           srcset="assets/screens/email-templates-720.webp 720w, assets/screens/email-templates-1440.webp 1440w"
+           sizes="(max-width: 760px) 100vw, 520px"
+           width="1440" height="900" loading="lazy"
+           alt="Email templates page listing the global defaults with their engine, scope and active state">
+      <figcaption>Email templates — global or per application, three engines, preview before saving.</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="assets/screens/my-account-1440.webp" data-full="assets/screens/my-account-2880.webp"
+           srcset="assets/screens/my-account-720.webp 720w, assets/screens/my-account-1440.webp 1440w"
+           sizes="(max-width: 760px) 100vw, 520px"
+           width="1440" height="900" loading="lazy"
+           alt="My Account page with authenticator app, email 2FA, passkeys, backup email and magic link options">
+      <figcaption>Self-service security: authenticator, email 2FA, passkeys, backup email and magic links.</figcaption>
+    </figure>
+    <figure class="shot">
+      <img src="assets/screens/monitoring-1440.webp" data-full="assets/screens/monitoring-2880.webp"
+           srcset="assets/screens/monitoring-720.webp 720w, assets/screens/monitoring-1440.webp 1440w"
+           sizes="(max-width: 760px) 100vw, 520px"
+           width="1440" height="900" loading="lazy"
+           alt="System health page showing PostgreSQL and Redis up, authentication metrics and database pool usage">
+      <figcaption>Operations: PostgreSQL and Redis health, authentication metrics and the connection pool.</figcaption>
+    </figure>
+  </div>
+
+  <h2 class="section-title">Five minutes to a token</h2>
+  <div class="split">
+    <div>
+      <p>Start the stack with Docker Compose, apply the migrations and create the admin account:</p>
+      <ul class="feature-list">
+        <li>PostgreSQL and Redis come up with the compose file</li>
+        <li>The API auto-migrates the schema on boot</li>
+        <li>The admin GUI and the Swagger UI are served by the same process</li>
+      </ul>
+      <p><a href="docs/quickstart.html">Full quickstart →</a></p>
+    </div>
+    <div>
+<pre><code class="language-bash">docker compose up -d
+make setup-admin
+
+# register and log in
+curl -sX POST http://localhost:8080/register \
+  -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"Str0ng!Passw0rd"}'
+
+curl -sX POST http://localhost:8080/login \
+  -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"Str0ng!Passw0rd"}'</code></pre>
+    </div>
+  </div>
+</main>
+
+<footer class="footer">
+  <span>Auth API · MIT licensed · <a href="https://github.com/gjovanovicst/golang-auth-api">github.com/gjovanovicst/golang-auth-api</a></span>
+  <span><a href="docs/overview.html">Guides</a> · <a href="docs/api.html">API reference</a></span>
+</footer>
+<script src="main.js"></script>
+</body>
+</html>

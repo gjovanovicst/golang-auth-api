@@ -5,12 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **Pre-release note:** All versions below are pre-release development milestones
-> (`1.0.0-alpha.N`). The first official public release will be `1.0.0`.
-
 ## [Unreleased]
 
-_Future enhancements planned for the `1.0.0` official release._
+## [1.0.0] - 2026-11-24
 
 ### Security
 - **bcrypt cost 12 for admin passwords and OIDC client secrets** — admin password changes (`internal/admin`) and OIDC client-secret generation (`internal/oidc`) now hash with bcrypt cost 12 instead of `bcrypt.DefaultCost` (10), matching the rest of the codebase (`bcryptCost` in `internal/user` and `cmd/setup`) and the policy documented in `SECURITY.md`. Existing cost-10 hashes still verify, so no migration is required. Thanks to [@saaa99999999](https://github.com/saaa99999999) for the report and fix ([#16](https://github.com/gjovanovicst/golang-auth-api/pull/16)).

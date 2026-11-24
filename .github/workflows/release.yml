@@ -132,6 +132,9 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
+          # Only the binary archives: docker/build-push-action also stores a build
+          # record artifact, which must not be downloaded (or checksummed) here.
+          pattern: binaries-*
           path: dist
           merge-multiple: true
 

@@ -6,10 +6,13 @@
 
 A complete authentication and authorization system with multi-tenancy, social login, WebAuthn/passkeys, magic link login, role-based access control, two-factor authentication, session management, email verification, JWT tokens, admin GUI, and activity logging.
 
-[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 [![Swagger](https://img.shields.io/badge/API-Swagger-85EA2D?style=flat&logo=swagger)](http://localhost:8080/swagger/index.html)
+[![Release](https://img.shields.io/github/v/release/gjovanovicst/golang-auth-api?sort=semver)](https://github.com/gjovanovicst/golang-auth-api/releases)
+[![Docs](https://img.shields.io/badge/docs-github%20pages-4f46e5)](https://gjovanovicst.github.io/golang-auth-api/)
+[![GHCR](https://img.shields.io/badge/ghcr.io-golang--auth--api-2496ED?style=flat&logo=github)](https://github.com/gjovanovicst/golang-auth-api/pkgs/container/golang-auth-api)
 
 [Quick Start](#quick-start) · [Documentation](#documentation) · [Contributing](#contributing)
 
@@ -44,7 +47,20 @@ A complete authentication and authorization system with multi-tenancy, social lo
 
 ## Quick Start
 
-**Prerequisites:** Docker & Docker Compose (recommended), or Go 1.23+, PostgreSQL 13+, Redis 6+
+**Prerequisites:** Docker & Docker Compose (recommended), or Go 1.24+, PostgreSQL 13+, Redis 6+
+
+### Run the published image
+
+```bash
+docker pull ghcr.io/gjovanovicst/golang-auth-api:1.0.0
+docker run -p 8080:8080 --env-file .env ghcr.io/gjovanovicst/golang-auth-api:1.0.0
+```
+
+The image is multi-arch (`linux/amd64`, `linux/arm64`), signed with cosign and published
+with SBOM/provenance attestations — see the [release notes](docs/releases/v1.0.0.md) for
+verification commands.
+
+### From source
 
 ```bash
 # Clone and configure
@@ -64,7 +80,7 @@ Swagger docs at `http://localhost:8080/swagger/index.html`
 All API requests require the `X-App-ID` header. The default app ID `00000000-0000-0000-0000-000000000001` is created automatically.
 
 ```bash
-curl -X POST http://localhost:8080/auth/register \
+curl -X POST http://localhost:8080/register \
   -H "X-App-ID: 00000000-0000-0000-0000-000000000001" \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","password":"Pass123!@#"}'
@@ -91,6 +107,9 @@ For detailed setup instructions, see [Getting Started](docs/getting-started.md).
 | **[Architecture](docs/ARCHITECTURE.md)** | System design and patterns |
 | **[API Reference (detailed)](docs/API.md)** | Full request/response documentation |
 | **[Changelog](CHANGELOG.md)** | Version history and release notes |
+| **[Release Process](docs/release-process.md)** | How versions are cut, published and verified |
+| **[Release Notes](docs/releases/)** | Notes for each published version |
+| **[Public Docs Site](https://gjovanovicst.github.io/golang-auth-api/)** | User guide and generated API reference |
 
 For early fork users upgrading from before multi-tenancy was added, see the [Pre-Release Migration Reference](docs/BREAKING_CHANGES.md).
 
@@ -100,7 +119,7 @@ For early fork users upgrading from before multi-tenancy was added, see the [Pre
 
 | Category | Technology |
 |----------|-----------|
-| Language | Go 1.23+ |
+| Language | Go 1.24+ |
 | Web Framework | [Gin](https://github.com/gin-gonic/gin) |
 | Database | PostgreSQL 13+ with [GORM](https://gorm.io/) |
 | Cache/Sessions | Redis 6+ with [go-redis](https://github.com/redis/go-redis) |

@@ -51,10 +51,10 @@ distribution, documentation and repeatable operations.
 
 **Remaining for 1.0.0**
 
-- 🚧 Public documentation site: user guide (integrate + deploy tracks) and API
-  reference built from the OpenAPI spec
+- ✅ Public documentation site: user guide (integrate + deploy tracks) and API
+  reference built from the OpenAPI spec — <https://gjovanovicst.github.io/golang-auth-api/>
 - 🚧 Release automation: signed multi-arch images, binaries with checksums,
-  SBOM, release notes per tag
+  SBOM, release notes per tag (`docs/release-process.md`); the first stable tag is pending
 - 📋 Quality gates: `make check` aggregate, OpenAPI drift check, end-to-end smoke
   test, coverage threshold
 - 📋 Operations docs: runbook, upgrade guide, backup/restore procedure

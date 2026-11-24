@@ -38,7 +38,7 @@ import (
 )
 
 // @title           Authentication and Authorization API
-// @version         1.1.0
+// @version         1.0.0
 // @description     This is a sample authentication and authorization API built with Go and Gin.
 // @termsOfService  http://swagger.io/terms/
 
@@ -72,7 +72,17 @@ import (
 // @name X-App-API-Key
 // @description Per-application API Key for app-scoped routes
 
+// Build metadata, injected by the release workflow:
+//
+//	go build -ldflags "-X main.version=1.0.0 -X main.commit=abc1234"
+var (
+	version = "dev"
+	commit  = "none"
+)
+
 func main() {
+	log.Printf("Auth API %s (commit %s)", version, commit)
+
 	// Load environment variables from .env file
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, relying on environment variables")

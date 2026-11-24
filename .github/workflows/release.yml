@@ -1,0 +1,171 @@
+name: release
+
+# Publishing a tag (v1.0.0) produces:
+#   - multi-arch images on GHCR (1.0.0 / 1.0 / latest / sha-<commit>), signed with
+#     cosign (keyless) and published with provenance + SBOM attestations
+#   - archives for linux/darwin/windows with a checksums.txt
+#   - a GitHub Release whose body comes from docs/releases/<tag>.md
+#
+# Usage: git tag -a v1.0.0 -m "Auth API 1.0.0" && git push origin v1.0.0
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # create the release and upload assets
+  packages: write   # push the image to GHCR
+  id-token: write   # cosign keyless signing
+
+jobs:
+  binaries:
+    name: binaries (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          commit="${GITHUB_SHA::7}"
+          name="auth-api_${version}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/${name}"
+          bin="auth-api"
+          [ "${GOOS}" = "windows" ] && bin="auth-api.exe"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${version} -X main.commit=${commit}" \
+            -o "dist/${name}/${bin}" ./cmd/api
+          if [ "${GOOS}" = "windows" ]; then
+            (cd dist && zip -qr "${name}.zip" "${name}")
+          else
+            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          fi
+          rm -rf "dist/${name}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  image:
+    name: image
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+          provenance: true
+          sbom: true
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign the image (keyless)
+        run: cosign sign --yes "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}"
+
+      - name: Verify the signature
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}"
+
+  release:
+    name: release
+    needs: [binaries, image]
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+      DIGEST: ${{ needs.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Summarise the image
+        run: |
+          {
+            echo "### Container image"
+            echo ""
+            echo '```'
+            echo "docker pull ${IMAGE}:${GITHUB_REF_NAME#v}"
+            echo '```'
+            echo ""
+            echo "Digest: \`${DIGEST}\`"
+            echo ""
+            echo "Verify the signature:"
+            echo '```'
+            echo "cosign verify \\"
+            echo "  --certificate-identity-regexp \"^https://github.com/${GITHUB_REPOSITORY}/\" \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  ${IMAGE}@${DIGEST}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: docs/releases/${{ github.ref_name }}.md
+          files: dist/*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
